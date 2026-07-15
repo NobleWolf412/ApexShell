@@ -6,7 +6,8 @@
   "description": "Apex Shell — the standalone window for AI seats, terminals, viewers, and trackers.",
   "main": "main/main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test:persona-fixtures": "node test/persona-apex-fixtures.js"
   },
   "devDependencies": {
     "electron": "43.1.0"
