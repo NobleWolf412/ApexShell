@@ -9,6 +9,15 @@
 
 const { spawn } = require('child_process');
 
+// Apex's internal mode vocabulary keeps `manual` as the canonical "ask me every
+// time" name — the renderer dial, seats.js, seatHost, and the codex policy map
+// all speak it. The `claude` CLI names that same mode `default`, and as of the
+// 2.1.x line it HARD-REJECTS `manual` as a --permission-mode value ("argument
+// 'manual' is invalid", exit 1 on spawn — the "session closed" seat). Translate
+// ONLY here, at the CLI boundary; the rest of Apex keeps saying `manual`.
+const CLI_PERMISSION_MODE = { manual: 'default' };
+const toCliMode = (m) => CLI_PERMISSION_MODE[m] || m;
+
 // Every seat is told how its room works (J20) — without this, seats improvise
 // OS-level opens (`code -r`, the browser) when asked to "show" something.
 const SEAT_ENV_BRIEF =
@@ -60,7 +69,8 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
   if (effort) args.push('--effort', effort);
   // ALWAYS explicit (J21/J28) — and the fallback is `manual`, never a
   // don't-ask mode. The shipped-`auto` default was R20's whole story.
-  args.push('--permission-mode', permissionMode || 'manual');
+  // `manual` is Apex-internal; the CLI wants `default` (toCliMode).
+  args.push('--permission-mode', toCliMode(permissionMode || 'manual'));
   log(`spawn: claude ${args.join(' ')}  (cwd=${cwd})`);
 
   const child = spawn('claude', args, {
@@ -123,12 +133,14 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
      *  The launch flag is only a starting value — the official panel changes
      *  mode live via this same control subtype (verified in its 2.1.207 bundle:
      *  `setPermissionMode(m){ this.request({subtype:"set_permission_mode", mode:m}) }`).
-     *  Modes: 'manual' | 'auto' | 'acceptEdits' | 'bypassPermissions'. */
+     *  Modes (Apex-internal): 'manual' | 'auto' | 'acceptEdits' |
+     *  'bypassPermissions'. `manual` is mapped to the CLI's `default` at the
+     *  wire, same as the launch flag — the control channel rejects `manual` too. */
     setPermissionMode(mode) {
       write({
         type: 'control_request',
         request_id: `apex-mode-${Date.now()}`,
-        request: { subtype: 'set_permission_mode', mode },
+        request: { subtype: 'set_permission_mode', mode: toCliMode(mode) },
       });
     },
 
