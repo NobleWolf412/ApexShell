@@ -215,9 +215,27 @@ card so targeted revision remains possible:
   "communication": {},
   "boundaries": {},
   "working_method": {},
-  "action_posture": {}
+  "action_posture": {
+    "mode": "operator",
+    "actions": {
+      "read_files": "allowed",
+      "edit_files": "allowed",
+      "run_commands": "allowed",
+      "search_web": "allowed",
+      "use_connectors": "ask",
+      "send_external": "ask",
+      "change_system": "ask",
+      "delete_data": "blocked"
+    }
+  }
 }
 ```
+
+Action decisions are `allowed`, `ask`, or `blocked`. Portable action categories
+are `read_files`, `edit_files`, `run_commands`, `search_web`, `use_connectors`,
+`send_external`, `change_system`, and `delete_data`. These are behavioral
+expectations, not runtime grants; the seated provider still enforces its own
+permissions.
 
 No secret value, credential, provider binding, executable path, or machine path
 is stored in the blueprint.
