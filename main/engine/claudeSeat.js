@@ -7,6 +7,8 @@
 // control_request for permissions). stdin = user messages + control_responses.
 // Plain Node, zero Electron imports — must run under the headless harness.
 
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 // Apex's internal mode vocabulary keeps `manual` as the canonical "ask me every
@@ -54,7 +56,24 @@ const SEAT_WRAPUP_PROMPT =
  *   resume     — session id to continue (transcript backfill is the host's job).
  *   model / effort / permissionMode — per-persona launch config (J21).
  */
-function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissionMode }) {
+function resolveClaudeLaunch() {
+  if (process.platform !== 'win32') return { command: 'claude', shell: false };
+  const dirs = String(process.env.PATH || '').split(path.delimiter)
+    .map((entry) => entry.replace(/^"|"$/g, '')).filter(Boolean);
+  for (const ext of ['.exe', '.cmd', '.bat']) {
+    for (const dir of dirs) {
+      const candidate = path.join(dir, 'claude' + ext);
+      try {
+        if (fs.statSync(candidate).isFile())
+          return { command: candidate, shell: ext !== '.exe' };
+      } catch { /* keep searching PATH */ }
+    }
+  }
+  return { command: 'claude', shell: true };
+}
+
+function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools,
+                     shell }) {
   const args = [
     '-p',
     '--input-format', 'stream-json',
@@ -64,6 +83,12 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
     '--permission-prompt-tool', 'stdio',
     '--append-system-prompt', SEAT_ENV_BRIEF,
   ];
+  if (noSessionPersistence) args.push('--no-session-persistence');
+  // Native launches preserve an actual empty argv item. Legacy .cmd/.bat
+  // installs still need a shell, where a literal pair of quotes survives the
+  // join as the documented empty value instead of disappearing.
+  if (tools === '') args.push('--tools', shell ? '""' : '');
+  else if (tools !== undefined) args.push('--tools', tools);
   if (resume) args.push('--resume', resume);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
@@ -71,11 +96,21 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
   // don't-ask mode. The shipped-`auto` default was R20's whole story.
   // `manual` is Apex-internal; the CLI wants `default` (toCliMode).
   args.push('--permission-mode', toCliMode(permissionMode || 'manual'));
-  log(`spawn: claude ${args.join(' ')}  (cwd=${cwd})`);
+  return args;
+}
 
-  const child = spawn('claude', args, {
+function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissionMode,
+                     noSessionPersistence, tools }) {
+  const launch = resolveClaudeLaunch();
+  const args = buildArgs({
+    resume, model, effort, permissionMode, noSessionPersistence, tools, shell: launch.shell,
+  });
+  const shown = args.map((arg) => arg === '' ? '""' : arg).join(' ');
+  log(`spawn: ${launch.command} ${shown}  (cwd=${cwd})`);
+
+  const child = spawn(launch.command, args, {
     cwd,
-    shell: process.platform === 'win32', // claude is a .cmd shim on Windows
+    shell: launch.shell,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -185,4 +220,4 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
   };
 }
 
-module.exports = { startSeat, SEAT_ENV_BRIEF, SEAT_WRAPUP_PROMPT };
+module.exports = { startSeat, buildArgs, resolveClaudeLaunch, SEAT_ENV_BRIEF, SEAT_WRAPUP_PROMPT };

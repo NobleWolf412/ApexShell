@@ -1,0 +1,253 @@
+/* Persona Builder — scoped dock onboarding. */
+.personaBuilderBody { display: flex; flex-direction: column; align-items: flex-start;
+  padding: clamp(34px, 6vh, 72px) clamp(30px, 5vw, 82px) 34px 74px !important; }
+.personaBuilderKicker { color: var(--accent); font-size: 10px; font-weight: 700;
+  letter-spacing: .34em; margin-bottom: 12px; }
+.personaBuilderBody h2 { color: var(--text); font-size: clamp(24px, 3vw, 42px);
+  font-weight: 500; letter-spacing: -.025em; }
+.personaBuilderIntro { width: min(620px, 100%); color: var(--dim); font-size: 13px;
+  line-height: 1.65; margin-top: 12px; }
+.personaWorkspaceCard { width: min(680px, 100%); margin-top: 34px; padding: 20px 22px;
+  border: 1px solid var(--edge); border-radius: 12px; background: var(--surface); }
+.personaWorkspaceLabel { color: var(--faint); font-size: 9px; font-weight: 700;
+  letter-spacing: .28em; }
+.personaWorkspaceState { color: var(--text); font-size: 16px; margin-top: 9px; }
+.personaWorkspaceState[data-tone="good"] { color: var(--good); }
+.personaWorkspaceState[data-tone="warning"] { color: var(--warning); }
+.personaWorkspaceState[data-tone="quiet"] { color: var(--dim); }
+.personaWorkspacePath { color: var(--text); font: 11.5px/1.5 Consolas, monospace;
+  margin-top: 12px; overflow-wrap: anywhere; user-select: text; }
+.personaWorkspaceChecks { color: var(--faint); font-size: 11.5px; line-height: 1.5;
+  margin-top: 8px; }
+.personaWorkspaceChoose { margin-top: 18px; padding: 9px 14px; border: 1px solid var(--accent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text); font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+  cursor: pointer; }
+.personaWorkspaceChoose:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.personaWorkspaceChoose:disabled { cursor: default; opacity: .45; }
+.personaFoundationCard { width: min(760px, 100%); margin-top: 30px; padding-top: 26px;
+  border-top: 1px solid var(--edge); }
+.personaFoundationCard[hidden] { display: none; }
+.personaFoundationState { color: var(--text); font-size: 13px; line-height: 1.5;
+  margin-top: 9px; }
+.personaFoundationState[data-tone="good"] { color: var(--good); }
+.personaFoundationState[data-tone="warning"] { color: var(--warning); }
+.personaFoundationState[data-tone="quiet"] { color: var(--dim); }
+.personaFoundationHelp { width: min(680px, 100%); color: var(--faint); font-size: 11px;
+  line-height: 1.5; margin-top: 7px; }
+.personaFoundationEditor { display: block; width: 100%; min-height: 260px; resize: vertical;
+  margin-top: 14px; padding: 14px 16px; border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--surface); color: var(--text); font: 12px/1.55 Consolas, monospace;
+  user-select: text; }
+.personaFoundationEditor:focus { border-color: var(--accent); }
+.personaFoundationEditor:disabled { opacity: .5; }
+.personaFoundationAction { margin-top: 12px; padding: 9px 14px; border: 1px solid var(--accent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text); font-size: 10.5px; font-weight: 700; letter-spacing: .13em;
+  cursor: pointer; }
+.personaFoundationAction:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.personaFoundationAction:disabled { cursor: default; opacity: .45; }
+.personaFoundationConflict { display: inline-flex; gap: 8px; margin: 12px 0 0 10px; }
+.personaFoundationConflict[hidden] { display: none; }
+.personaFoundationConflict button { padding: 8px 11px; border: 1px solid var(--edge);
+  border-radius: 8px; background: transparent; color: var(--dim); font-size: 9.5px;
+  font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaFoundationConflict button:hover { color: var(--text); border-color: var(--accent); }
+.personaDraftHome, .personaInterview, .personaPreviewSetup, .personaPreviewReview {
+  width: min(900px, 100%); margin-top: 32px;
+  padding-top: 28px; border-top: 1px solid var(--edge); }
+.personaDraftHome[hidden], .personaInterview[hidden], .personaPreviewSetup[hidden],
+.personaPreviewReview[hidden] { display: none; }
+.personaDraftHome h3, .personaInterview h3, .personaPreviewSetup h3 {
+  color: var(--text); font-size: 20px;
+  font-weight: 500; margin-top: 10px; }
+.personaDraftHelp { width: min(680px, 100%); color: var(--dim); font-size: 11.5px;
+  line-height: 1.55; margin-top: 8px; }
+.personaFieldLabel { display: block; color: var(--faint); font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; margin-top: 18px; }
+.personaDraftName, .personaDraftUseCase, .personaInterviewAnswer, .personaDraftSelect {
+  width: 100%; margin-top: 7px; border: 1px solid var(--edge); border-radius: 9px;
+  background: var(--surface); color: var(--text); font: 12px/1.5 "Segoe UI", sans-serif;
+  padding: 10px 12px; user-select: text; }
+.personaDraftUseCase { min-height: 70px; resize: vertical; }
+.personaDraftName:focus, .personaDraftUseCase:focus, .personaInterviewAnswer:focus,
+.personaDraftSelect:focus { border-color: var(--accent); }
+.personaDraftCreate, .personaDraftResume, .personaInterviewNext { margin-top: 12px;
+  padding: 9px 14px; border: 1px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--text);
+  font-size: 10px; font-weight: 700; letter-spacing: .12em; cursor: pointer; }
+.personaDraftCreate:disabled, .personaDraftResume:disabled, .personaDraftDelete:disabled,
+.personaInterviewActions button:disabled { cursor: default; opacity: .4; }
+.personaDraftResumeBlock { margin-top: 30px; padding-top: 22px; border-top: 1px solid var(--edge); }
+.personaImportChoose { margin: 12px 0 0 8px; padding: 9px 12px; border: 1px solid var(--edge);
+  border-radius: 8px; background: transparent; color: var(--dim); font-size: 9.5px;
+  font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaImportAudit { margin-top: 20px; padding: 16px; border: 1px solid var(--edge);
+  border-radius: 10px; background: var(--surface); }
+.personaImportAudit[hidden] { display: none; }
+.personaImportSource { color: var(--faint); font: 10.5px/1.5 Consolas, monospace;
+  margin-top: 8px; overflow-wrap: anywhere; user-select: text; }
+.personaImportName, .personaImportUseCase { width: 100%; margin-top: 7px; padding: 9px 11px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--bg); color: var(--text);
+  user-select: text; }
+.personaImportUseCase { min-height: 62px; resize: vertical; }
+.personaImportFindings { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin-top: 12px; }
+.personaImportFindings[data-tone="warning"] { color: var(--warning); }
+.personaImportMappings { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+.personaImportMappings > div { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; color: var(--dim); font-size: 11px; }
+.personaImportMappings select { width: min(300px, 55%); padding: 7px 9px; border: 1px solid var(--edge);
+  border-radius: 7px; background: var(--bg); color: var(--text); }
+.personaImportCreate { margin-top: 14px; padding: 9px 13px; border: 1px solid var(--accent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaImportCreate:disabled { opacity: .4; cursor: default; }
+.personaDraftResumeLabel { color: var(--faint); font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; }
+.personaDraftSelect { width: min(520px, 100%); margin-right: 8px; }
+.personaDraftSelect[hidden] { display: none; }
+.personaDraftDelete, .personaInterviewDrafts, .personaInterviewBack { margin: 12px 0 0 8px;
+  padding: 9px 12px; border: 1px solid var(--edge); border-radius: 8px;
+  background: transparent; color: var(--dim); font-size: 9.5px; font-weight: 700;
+  letter-spacing: .1em; cursor: pointer; }
+.personaDraftWarnings, .personaInterviewError { color: var(--faint); font-size: 11px;
+  line-height: 1.5; margin-top: 10px; }
+.personaDraftWarnings[data-tone="warning"], .personaInterviewError { color: var(--warning); }
+.personaInterviewTop { display: flex; justify-content: space-between; gap: 20px;
+  color: var(--faint); font-size: 9.5px; font-weight: 700; letter-spacing: .16em; }
+.personaInterviewName { color: var(--accent); letter-spacing: .08em; }
+.personaInterviewQuestion { color: var(--text); font-size: 16px; line-height: 1.45;
+  margin-top: 10px; }
+.personaInterviewExplanation { color: var(--dim); font-size: 12px; line-height: 1.65;
+  margin-top: 10px; }
+.personaInterviewSubhead { color: var(--faint); font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; margin-top: 20px; }
+.personaInterviewInclude { color: var(--dim); font-size: 11.5px; line-height: 1.55;
+  margin: 8px 0 0 20px; }
+.personaInterviewInclude li { margin-top: 4px; }
+.personaInterviewSuggestions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.personaInterviewSuggestions span { padding: 5px 8px; border: 1px solid var(--edge);
+  border-radius: 999px; color: var(--dim); font-size: 10px; }
+.personaInterviewExample { margin-top: 9px; padding: 13px 15px; border-left: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--surface) 80%, transparent); color: var(--dim);
+  font-size: 11.5px; line-height: 1.6; user-select: text; }
+.personaInterviewAnswer { min-height: 190px; resize: vertical; font: 12px/1.55 Consolas, monospace; }
+.personaInterviewHelp { color: var(--accent); font-size: 10.5px; line-height: 1.5;
+  margin-top: 9px; }
+.personaInterviewActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.personaInterviewActions button { margin-left: 0; }
+.personaPreviewId, .personaPreviewMode, .personaActionGrid select, .personaSectionSelect {
+  margin-top: 7px; border: 1px solid var(--edge); border-radius: 8px; background: var(--surface);
+  color: var(--text); font: 11.5px "Segoe UI", sans-serif; padding: 8px 10px; }
+.personaPreviewId { width: min(420px, 100%); user-select: text; }
+.personaPreviewMode { display: block; width: min(320px, 100%); }
+.personaActionHeading { color: var(--faint); font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; margin-top: 22px; }
+.personaActionGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px; margin-top: 10px; }
+.personaActionGrid label { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; color: var(--dim); font-size: 11px; }
+.personaActionGrid select { width: 120px; margin-top: 0; }
+.personaCollaborationToggle { display: flex; align-items: center; gap: 9px; margin-top: 24px;
+  color: var(--text); font-size: 10px; font-weight: 700; letter-spacing: .11em; cursor: pointer; }
+.personaCollaborationToggle input { accent-color: var(--accent); }
+.personaCollaborationEditor { margin-top: 12px; padding: 4px 16px 16px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); }
+.personaCollaborationEditor[hidden], .personaCollaborationPreviewWrap[hidden] { display: none; }
+.personaCollaborationHelp { color: var(--dim); font-size: 11px; line-height: 1.55;
+  margin-top: 12px; }
+.personaCollaborationAccess { width: min(260px, 100%); margin-top: 7px; padding: 8px 10px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--bg); color: var(--text); }
+.personaCapabilities, .personaAccepts, .personaEmits { width: 100%; min-height: 76px;
+  margin-top: 7px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--bg); color: var(--text); font: 11.5px/1.5 Consolas, monospace;
+  resize: vertical; user-select: text; }
+.personaPreviewError, .personaPreviewEditState, .personaPreviewState { color: var(--faint);
+  font-size: 11px; line-height: 1.5; margin-top: 10px; }
+.personaPreviewError, .personaPreviewEditState[data-tone="warning"],
+.personaPreviewState[data-tone="warning"] { color: var(--warning); }
+.personaPreviewEditState[data-tone="good"], .personaPreviewState[data-tone="good"] { color: var(--good); }
+.personaPreviewGenerate, .personaCanonicalSave, .personaSectionRegenerate,
+.personaPreviewRegenerateAll { padding: 9px 13px; border: 1px solid var(--accent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text); font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+  cursor: pointer; }
+.personaPreviewSetupBack, .personaPreviewDrafts, .personaPreviewBack { padding: 9px 12px;
+  border: 1px solid var(--edge); border-radius: 8px; background: transparent;
+  color: var(--dim); font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+  cursor: pointer; }
+.personaBlueprintPreview, .personaCollaborationPreview { max-height: 330px; overflow: auto; margin-top: 9px;
+  padding: 14px 16px; border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--surface); color: var(--dim); font: 11px/1.5 Consolas, monospace;
+  white-space: pre-wrap; user-select: text; }
+.personaCanonicalPreview { display: block; width: 100%; min-height: 420px; resize: vertical;
+  margin-top: 8px; padding: 14px 16px; border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--surface); color: var(--text); font: 11.5px/1.55 Consolas, monospace;
+  user-select: text; }
+.personaCanonicalPreview:focus { border-color: var(--accent); }
+.personaCanonicalSave { margin-top: 10px; }
+.personaCanonicalRestore { margin: 10px 0 0 8px; padding: 9px 12px;
+  border: 1px solid var(--edge); border-radius: 8px; background: transparent;
+  color: var(--dim); font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+  cursor: pointer; }
+.personaCanonicalRestore:hover { color: var(--text); border-color: var(--accent); }
+.personaCanonicalSave:disabled, .personaPreviewGenerate:disabled { opacity: .4; cursor: default; }
+.personaSectionRegen { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.personaSectionSelect { flex: 1; margin-top: 0; }
+.personaValidationBlock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--edge); }
+.personaValidatePreview, .personaAcceptCanonical { padding: 9px 12px; border: 1px solid var(--accent);
+  border-radius: 8px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaAcceptCanonical { margin-left: 8px; border-color: var(--warning); }
+.personaAcceptCanonical[hidden] { display: none; }
+.personaValidationSummary { color: var(--faint); font-size: 11px; margin-top: 10px; }
+.personaValidationSummary[data-tone="good"] { color: var(--good); }
+.personaValidationSummary[data-tone="warning"] { color: var(--warning); }
+.personaValidationFindings { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.personaValidationFindings > div { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+.personaValidationFindings > div[data-tone="error"] { color: var(--critical); }
+.personaValidationFindings > div[data-tone="warning"] { color: var(--warning); }
+.personaTestBlock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--edge); }
+.personaTestExplain { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin: 8px 0 12px; }
+.personaTestPrepare, .personaTestStart, .personaTestStop { padding: 9px 12px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--text);
+  font-size: 9.5px; font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaTestStart, .personaTestStop { margin-left: 8px; }
+.personaTestStop { border-color: var(--warning); }
+.personaTestPrepare:disabled, .personaTestStart:disabled { opacity: .4; cursor: default; }
+.personaTestSummary { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin-top: 10px; }
+.personaTestSummary[data-tone="good"] { color: var(--good); }
+.personaTestSummary[data-tone="warning"] { color: var(--warning); }
+.personaTestResults { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.personaTestResults > section { padding: 12px; border: 1px solid var(--edge);
+  border-radius: 8px; background: var(--surface); }
+.personaTestResults > section[data-complete="true"] { border-color: color-mix(in srgb, var(--good) 45%, var(--edge)); }
+.personaTestResults [data-role="title"] { color: var(--text); font-size: 11px; font-weight: 700; }
+.personaTestResults [data-role="prompt"], .personaTestResults [data-role="expected"],
+.personaTestResults [data-role="observed"] { margin-top: 7px; color: var(--dim);
+  font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; user-select: text; }
+.personaTestResults [data-role="expected"] { color: var(--faint); }
+.personaTestResults [data-role="observed"] { color: var(--text); }
+.personaTestResults select { width: 100%; margin-top: 9px; padding: 7px 9px;
+  border: 1px solid var(--edge); border-radius: 7px; background: var(--bg); color: var(--text); }
+.personaCreateBlock { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--edge); }
+.personaCreateExplain { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin: 8px 0 12px; }
+.personaCreatePermanent { padding: 10px 14px; border: 1px solid var(--good);
+  border-radius: 8px; background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--text); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaCreatePermanent:disabled { opacity: .4; cursor: default; }
+.personaCreateSummary { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin-top: 10px;
+  overflow-wrap: anywhere; user-select: text; }
+.personaCreateSummary[data-tone="good"] { color: var(--good); }
+.personaCreateSummary[data-tone="warning"] { color: var(--warning); }
+@media (max-width: 720px) {
+  .personaActionGrid { grid-template-columns: 1fr; }
+}
+.personaBuilderFoot { width: min(680px, 100%); color: var(--faint); font-size: 10.5px;
+  line-height: 1.55; margin-top: auto; padding-top: 28px; }
+
+@media (max-width: 720px) {
+  .personaBuilderBody { padding-right: 22px !important; }
+}
+

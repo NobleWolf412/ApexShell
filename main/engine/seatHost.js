@@ -27,6 +27,7 @@ const { startPtySeat } = require('./ptySeat');
 const { backfill } = require('./transcripts');
 
 let nextId = 1;
+let nextDisposableId = 1;
 
 // Context windows learned from live results (modelUsage.contextWindow), keyed
 // by full model name. Transcripts carry per-message usage but NOT the window —
@@ -68,6 +69,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
   const wrapText = () =>
     (typeof wrapPrompt === 'function' ? wrapPrompt() : wrapPrompt) || SEAT_WRAPUP_PROMPT;
   const seats = new Map();   // id -> entry
+  const disposables = new Set();
   const transcriptsRoot = projectsRoot || path.join(os.homedir(), '.claude', 'projects');
   if (wf) {
     windowsFile = wf;
@@ -243,6 +245,58 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     return id;
   }
 
+  // Hidden, tool-disabled Claude session for bounded extension workflows such
+  // as Persona Builder behavior tests. It never joins the roster or history,
+  // and Claude is launched with session persistence disabled.
+  function createDisposable({ kickoff, model, effort, onEvent }) {
+    if (typeof onEvent !== 'function') throw new Error('Disposable seat requires an event sink.');
+    const label = 'disposable-' + nextDisposableId++;
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-disposable-'));
+    let closed = false;
+    let controller = null;
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* best effort */ }
+    };
+    const deliver = (message) => { if (!closed) onEvent(message); };
+    let seat;
+    try {
+      seat = startSeat({
+        cwd: scratch,
+        model,
+        effort,
+        permissionMode: 'manual',
+        noSessionPersistence: true,
+        tools: '',
+        log: (line) => log(`[${label}] ${line}`),
+        onEvent: (event) => routeEvt(event, deliver, log),
+        onExit: (code) => {
+          disposables.delete(controller);
+          cleanup();
+          deliver({ type: 'dead', code });
+        },
+      });
+    } catch (err) {
+      cleanup();
+      throw err;
+    }
+    controller = {
+      send(text) { if (!closed) seat.send(String(text || '')); },
+      stop() { if (!closed) seat.interrupt(); },
+      close() {
+        if (closed) return;
+        closed = true;
+        disposables.delete(controller);
+        seat.dispose();
+      },
+    };
+    disposables.add(controller);
+    if (kickoff) controller.send(kickoff);
+    return controller;
+  }
+
   /** Active chats for the rail dropdowns (and app-level verbs like hand-off). */
   function list() {
     return [...seats.entries()].map(([id, e]) =>
@@ -408,18 +462,22 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
   }
 
   function disposeAll() {
+    for (const controller of [...disposables]) controller.close();
     seats.forEach((e) => e.seat.dispose());
     seats.clear();
   }
 
-  return { create, handle, reannounce, disposeAll, list, pendingPermissions };
+  return { create, createDisposable, handle, reannounce, disposeAll, list, pendingPermissions };
 }
 
 // Raw stream-json events → the view vocabulary (unchanged from seats.js).
 function routeEvt(evt, post, log) {
   switch (evt.type) {
     case 'system':
-      if (evt.subtype === 'init') post({ type: 'init', sessionId: evt.session_id, model: evt.model });
+      if (evt.subtype === 'init') post({
+        type: 'init', sessionId: evt.session_id, model: evt.model,
+        tools: Array.isArray(evt.tools) ? evt.tools : null,
+      });
       // The CLI compacted the conversation (auto near the window, or manual
       // /compact): older detail was just summarized away. Binary-verified event
       // shape: compact_boundary + compact_metadata {trigger, pre_tokens}.
@@ -545,3 +603,4 @@ function summarizeInput(tool, input) {
 }
 
 module.exports = { createSeatHost };
+

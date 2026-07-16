@@ -17,14 +17,79 @@ const { createSeatHost } = require('./engine/seatHost');
 const presets = new Map();   // name -> { name, letter, title, kickoff, cwd }
 let cwdOverride = null;      // extension-set default cwd
 let wrapOverride = null;     // extension-set End-Session wrap prompt
+let announcePresets = () => {};
+
+function presetNameConflict(owner, name) {
+  const normalized = name.toLowerCase();
+  if (normalized === 'seat')
+    return { name, reason: 'reserved by Apex' };
+  for (const [existingName, preset] of presets) {
+    if (existingName.toLowerCase() === normalized && preset.owner !== owner)
+      return { name, reason: 'owned by another extension' };
+  }
+  return null;
+}
+
+function validatePresetNames(owner, names) {
+  if (typeof owner !== 'string' || !owner) throw new Error('Preset owner is required.');
+  if (!Array.isArray(names)) throw new Error('Preset names must be an array.');
+  return names.map((name) => {
+    if (typeof name !== 'string' || !name.trim())
+      throw new Error('Preset name must be a non-empty string.');
+    return name.trim();
+  });
+}
 
 const extensionApi = {
   registerPreset(p) {
-    if (p && typeof p.name === 'string' && p.name && p.name !== 'Seat')
+    if (p && typeof p.name === 'string' && p.name && p.name.toLowerCase() !== 'seat') {
       presets.set(p.name, p);
+      announcePresets();
+    }
+  },
+  checkPresetNames(owner, names) {
+    return validatePresetNames(owner, names)
+      .map((name) => presetNameConflict(owner, name))
+      .filter(Boolean);
+  },
+  replacePresetGroup(owner, items) {
+    if (!Array.isArray(items)) throw new Error('Preset group must be an array.');
+    const names = validatePresetNames(owner, items.map((preset) => preset && preset.name));
+    const accepted = [];
+    const skipped = [];
+    const seen = new Set();
+    for (let index = 0; index < items.length; index++) {
+      const preset = items[index];
+      if (!preset || typeof preset !== 'object')
+        throw new Error('Preset group contains an invalid preset.');
+      const name = names[index];
+      const normalized = name.toLowerCase();
+      const conflict = presetNameConflict(owner, name);
+      if (conflict) {
+        skipped.push(conflict);
+      } else if (seen.has(normalized)) {
+        skipped.push({ name, reason: 'duplicated in this preset group' });
+      } else {
+        accepted.push({ ...preset, name, owner });
+        seen.add(normalized);
+      }
+    }
+    for (const [name, preset] of presets) {
+      if (preset.owner === owner) presets.delete(name);
+    }
+    for (const preset of accepted) presets.set(preset.name, preset);
+    announcePresets();
+    return {
+      registered: accepted.map((preset) => preset.name),
+      skipped,
+    };
   },
   setDefaultCwd(dir) { if (dir && fs.existsSync(dir)) cwdOverride = dir; },
   setWrapPrompt(text) { if (typeof text === 'string' && text) wrapOverride = text; },
+  startDisposable(options) {
+    if (!host) throw new Error('Seat engine is unavailable.');
+    return host.createDisposable(options || {});
+  },
 };
 
 // Bare default: the configured workspace folder (seatconfig `_workspace`),
@@ -263,6 +328,7 @@ function register() {
       title: p.title || ('New chat - ' + p.name),
     })),
   });
+  announcePresets = () => { postPresets(); postCfg(readCfg()); };
   bus.on('seatPresets', postPresets);
   bus.on('seatConfigGet', () => postCfg(readCfg()));
   bus.on('seatConfigSet', (msg) => {
@@ -387,3 +453,4 @@ module.exports = {
   restoreChats,
   extensionApi,
 };
+

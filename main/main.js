@@ -110,7 +110,7 @@ function createWindow() {
   theme.register();
   monitors.register();
   seats.register();
-  extensions.register({ seats: seats.extensionApi });
+  extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
   terminal.register({ cwd: seats.defaultCwd });
   liveUpdate.register(() => win);
   liveUpdate.consumeRestore();
@@ -319,3 +319,4 @@ app.on('window-all-closed', () => {
   // the event loop alive, exit anyway — a zombie with the lock is worse
   setTimeout(() => process.exit(0), 3000).unref();
 });
+
