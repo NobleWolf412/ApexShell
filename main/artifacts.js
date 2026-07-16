@@ -7,6 +7,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const bus = require('./bus');
 
 const IMG_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico']);
@@ -50,12 +51,19 @@ function candidate(id, p) {
   if (cur && cur.watcher) try { cur.watcher.close(); } catch { /* gone */ }
   const entry = { path: p, watcher: null, t: null };
   current.set(id, entry);
+  // Watch the containing DIRECTORY, not the file: tools that save via atomic
+  // rename retire a file-bound watcher on Windows and the view silently stops
+  // refreshing — the exact failure liveUpdate documents for preload.js.
+  const base = path.basename(p).toLowerCase();
   try {
-    entry.watcher = fs.watch(p, () => {   // debounced live refresh
+    entry.watcher = fs.watch(path.dirname(p), (_event, filename) => {
+      // a null filename can't be attributed — refresh anyway (debounced, cheap)
+      if (filename && String(filename).toLowerCase() !== base) return;
       clearTimeout(entry.t);
       entry.t = setTimeout(() => show(id, p), 300);
     });
-  } catch { /* file may not exist yet (denied Write) — fail-safe, no watcher */ }
+    entry.watcher.on('error', () => { /* dir vanished — keep the last render */ });
+  } catch { /* directory may not exist — fail-safe, no watcher */ }
 }
 
 function seatClosed(id) {

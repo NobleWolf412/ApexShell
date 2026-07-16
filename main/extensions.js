@@ -61,6 +61,15 @@ function register(services) {
         if (typeof mod.register === 'function')
           mod.register({
             ...(services || {}),
+            // registerPreset carries WHO registered it — presets need an owner
+            // for conflict handling, and extensions can't be trusted to
+            // self-identify consistently (apex-personas never did).
+            ...(services && services.seats ? {
+              seats: {
+                ...services.seats,
+                registerPreset: (p) => services.seats.registerPreset(p, ext.name),
+              },
+            } : {}),
             bus,
             extDir: ext.dir,
             stateDir,

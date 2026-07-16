@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { dialog } = require('electron');
 const bus = require('./bus');
+const store = require('./store');
 
 const FILE = path.join(__dirname, '..', 'background.json');
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.svg']);
@@ -32,7 +33,7 @@ function load() {
 
 function save(state) {
   const clean = normalize(state);
-  fs.writeFileSync(FILE, JSON.stringify(clean, null, 2) + '\n');
+  store.writeJsonAtomic(FILE, clean);
   return clean;
 }
 

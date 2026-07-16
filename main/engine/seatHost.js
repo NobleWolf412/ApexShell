@@ -91,6 +91,9 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
       // boot-restored seat would otherwise sit blank until the user types
       // (the 2026-07-14 restore saga — replay had nothing to key on).
       sessionId: opts.resume || null, autoTitled: !!opts.resume, local: false,
+      // which repo/folder this seat works out of — rides every announcement so
+      // the view can badge and group chats by repo (multi-repo work)
+      cwd: opts.cwd || apexRoot,
       permQueue: [],           // pending can_use_tool requests — host-owned (R23)
       // the seat's CURRENT dials — host-owned truth (R26 pattern); launch
       // flags are only starting values
@@ -124,7 +127,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         // even when its chat was ✕'d at birth
         if (m.type === 'init' && !entry.local) {
           entry.sessionId = m.sessionId;
-          if (record) record(entry.persona, m.sessionId, entry.title);
+          if (record) record(entry.persona, m.sessionId, entry.title, entry.cwd);
         }
         return;
       }
@@ -157,7 +160,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         }
         if (entry.local) m.local = true;
         // local seats don't support --resume; keep them out of history
-        if (record && !entry.local) record(entry.persona, m.sessionId, entry.title);
+        if (record && !entry.local) record(entry.persona, m.sessionId, entry.title, entry.cwd);
       }
       if (m.type === 'permission') entry.permQueue.push(m);
       post({ type: 'seatEvt', id, m });
@@ -218,7 +221,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     post({ type: 'seatNew', id, title: entry.title, pty: !!entry.pty,
            local: entry.local, mode: entry.mode,
            model: entry.model, codexModel: entry.codexModel,
-           effort: entry.effort, sessionId: entry.sessionId });
+           effort: entry.effort, sessionId: entry.sessionId, cwd: entry.cwd });
     // `--resume` continues the session but replays NOTHING over the wire —
     // without a backfill the resumed chat opens blank (J26). The codex lane
     // does its OWN backfill (thread/read) — the Claude transcript store
@@ -302,7 +305,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     return [...seats.entries()].map(([id, e]) =>
       ({ id, title: e.title, persona: e.persona, local: e.local, pty: !!e.pty,
          sessionId: e.sessionId, mode: e.mode, model: e.model,
-         codexModel: e.codexModel, effort: e.effort, ts: e.ts }));
+         codexModel: e.codexModel, effort: e.effort, ts: e.ts, cwd: e.cwd }));
   }
 
   /** Pending permission requests for a seat (the host-owned queue, R23). */
@@ -347,13 +350,16 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
           entry.seat.send(msg.text);
         }
         // First real message names the chat: "Agent" → "Agent — fix the printer".
-        if (!entry.autoTitled && !msg.text.includes('[seat-launch]')) {
+        // (Kickoffs never route through seatSend — create() sends them
+        // directly — so no [seat-launch] sniff is needed here. transcripts.js
+        // still filters the marker on backfill, where kickoffs DO appear.)
+        if (!entry.autoTitled) {
           const snip = msg.text.replace(/\s+/g, ' ').trim().slice(0, 30);
           entry.title = entry.persona + ' — ' + snip + (msg.text.length > 30 ? '…' : '');
           entry.autoTitled = true;
           post({ type: 'seatTitle', id: msg.id, title: entry.title });
           if (entry.sessionId && record && !entry.local)
-            record(entry.persona, entry.sessionId, entry.title);
+            record(entry.persona, entry.sessionId, entry.title, entry.cwd);
           changed();
         }
         break;
@@ -427,7 +433,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
       case 'seatMode': {
         // R26 — live permission-mode change on a running seat. Mode names are
         // an allowlist: this wire reaches the CLI's own control channel.
-        const MODES = new Set(['manual', 'auto', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'plan']);
+        const MODES = new Set(['manual', 'auto', 'acceptEdits', 'dontAsk', 'bypassPermissions']);
         if (entry.local || entry.pty || !MODES.has(msg.mode) || !entry.seat.setPermissionMode) break;
         // Bypass is LAUNCH-ONLY — the CLI refuses it mid-session unless the
         // process started with --dangerously-skip-permissions (which we will
@@ -456,7 +462,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
       post({ type: 'seatNew', id, title: e.title, pty: !!e.pty,
              local: e.local, mode: e.mode, model: e.model,
              codexModel: e.codexModel, effort: e.effort,
-             sessionId: e.sessionId });
+             sessionId: e.sessionId, cwd: e.cwd });
       for (const p of e.permQueue) post({ type: 'seatEvt', id, m: p });
     }
   }

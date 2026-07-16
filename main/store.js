@@ -18,13 +18,20 @@ function ensure(dir) { try { fs.mkdirSync(dir, { recursive: true }); } catch { /
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
+// Atomic: a crash mid-write must not truncate the file (readers fall back to
+// {} and the state silently vanishes). Same tmp+rename as liveUpdate's
+// restore file — the one place in the tree that already did this right.
 function writeJson(file, obj) {
   ensure(path.dirname(file));
-  fs.writeFileSync(file, JSON.stringify(obj, null, 2));
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  fs.rmSync(file, { force: true });
+  fs.renameSync(tmp, file);
 }
 
-/** Record (or retitle) a chat in the history index. */
-function recordChat(persona, sessionId, title) {
+/** Record (or retitle) a chat in the history index. `cwd` = the repo/folder
+ *  the seat worked out of — powers repo grouping and repo-faithful resume. */
+function recordChat(persona, sessionId, title, cwd) {
   const h = readJson(HISTORY_FILE, {});
   const list = h[persona] || (h[persona] = []);
   const hit = list.find((e) => e.sessionId === sessionId);
@@ -35,10 +42,13 @@ function recordChat(persona, sessionId, title) {
   if (hit) {
     const placeholder = !title || title === persona;
     if (!placeholder || !hit.title || hit.title === persona) hit.title = title;
+    if (typeof cwd === 'string' && cwd) hit.cwd = cwd;
     hit.ts = Date.now();
   }
   else {
-    list.unshift({ sessionId, title, ts: Date.now() });
+    const entry = { sessionId, title, ts: Date.now() };
+    if (typeof cwd === 'string' && cwd) entry.cwd = cwd;
+    list.unshift(entry);
     if (list.length > HISTORY_CAP) list.length = HISTORY_CAP;
   }
   writeJson(HISTORY_FILE, h);
@@ -57,4 +67,4 @@ function openLog(name) {
   };
 }
 
-module.exports = { recordChat, chatHistory, openLog };
+module.exports = { recordChat, chatHistory, openLog, writeJsonAtomic: writeJson };

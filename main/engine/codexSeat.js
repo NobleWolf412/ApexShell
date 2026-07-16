@@ -308,6 +308,9 @@ function startCodexSeat({ cwd, log, onEvent, onExit, resume, effort, permissionM
   });
   child.stderr.on('data', (c) => log('E ' + c.toString('utf8').trim().slice(0, 500)));
   child.on('exit', (code) => { if (!disposed) onExit(code); });
+  // Same duty as the Claude lane: an unhandled 'error' event (spawn failure,
+  // EACCES) throws in the main process and takes the whole app down.
+  child.on('error', (err) => { log('spawn error: ' + err.message); if (!disposed) onExit(-1); });
 
   // ---- handshake ----
   const { approvalPolicy, sandbox } = policyFor(permissionMode);

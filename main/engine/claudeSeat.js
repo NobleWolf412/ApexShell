@@ -60,20 +60,51 @@ function resolveClaudeLaunch() {
   if (process.platform !== 'win32') return { command: 'claude', shell: false };
   const dirs = String(process.env.PATH || '').split(path.delimiter)
     .map((entry) => entry.replace(/^"|"$/g, '')).filter(Boolean);
-  for (const ext of ['.exe', '.cmd', '.bat']) {
+  const findOnPath = (name) => {
     for (const dir of dirs) {
-      const candidate = path.join(dir, 'claude' + ext);
-      try {
-        if (fs.statSync(candidate).isFile())
-          return { command: candidate, shell: ext !== '.exe' };
-      } catch { /* keep searching PATH */ }
+      const candidate = path.join(dir, name);
+      try { if (fs.statSync(candidate).isFile()) return candidate; }
+      catch { /* keep searching PATH */ }
     }
+    return null;
+  };
+  const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+  const exe = findOnPath('claude.exe');
+  if (exe) return { command: exe, shell: false };
+  for (const ext of ['.cmd', '.bat']) {
+    const shim = findOnPath('claude' + ext);
+    if (!shim) continue;
+    // npm shim install. Prefer spawning what the shim wraps DIRECTLY —
+    // shell:true joins argv unquoted, so cmd.exe re-splits multi-word args
+    // (the --append-system-prompt brief). Two known package layouts (this
+    // machine ships the bundled-exe one — shim body verified 2026-07-16):
+    const pkg = path.join(path.dirname(shim),
+      'node_modules', '@anthropic-ai', 'claude-code');
+    const bundledExe = path.join(pkg, 'bin', 'claude.exe');
+    if (isFile(bundledExe)) return { command: bundledExe, shell: false };
+    const cli = path.join(pkg, 'cli.js');
+    const node = findOnPath('node.exe');
+    if (node && isFile(cli)) return { command: node, argsPrefix: [cli], shell: false };
+    return { command: shim, shell: true };
   }
   return { command: 'claude', shell: true };
 }
 
-function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools,
-                     shell }) {
+// cmd.exe path only: Node's shell:true joins argv with spaces and never quotes
+// items. Quote per CommandLineToArgvW rules — the CLI is a Node program parsing
+// standard argv, so backslash-doubling before an embedded quote is correct.
+// Residual hazard (documented, accepted): %VAR% expands inside cmd quotes; no
+// seat arg carries a literal % today.
+function quoteForCmd(arg) {
+  const s = String(arg);
+  if (s === '') return '""';
+  if (!/[\s"^&|<>()]/.test(s)) return s;
+  // double backslash-runs before an embedded quote, escape the quote; then
+  // double a trailing run so it can't swallow the closing quote we add.
+  return '"' + s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
+}
+
+function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools }) {
   const args = [
     '-p',
     '--input-format', 'stream-json',
@@ -84,11 +115,10 @@ function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence
     '--append-system-prompt', SEAT_ENV_BRIEF,
   ];
   if (noSessionPersistence) args.push('--no-session-persistence');
-  // Native launches preserve an actual empty argv item. Legacy .cmd/.bat
-  // installs still need a shell, where a literal pair of quotes survives the
-  // join as the documented empty value instead of disappearing.
-  if (tools === '') args.push('--tools', shell ? '""' : '');
-  else if (tools !== undefined) args.push('--tools', tools);
+  // buildArgs stays pure argv — an empty --tools value is a real empty item
+  // here. The shell:true fallback path quotes EVERY arg at spawn (quoteForCmd),
+  // which turns the empty item into the literal "" the join needs.
+  if (tools !== undefined) args.push('--tools', tools);
   if (resume) args.push('--resume', resume);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
@@ -102,13 +132,15 @@ function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence
 function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissionMode,
                      noSessionPersistence, tools }) {
   const launch = resolveClaudeLaunch();
-  const args = buildArgs({
-    resume, model, effort, permissionMode, noSessionPersistence, tools, shell: launch.shell,
-  });
+  const args = [
+    ...(launch.argsPrefix || []),   // node.exe shim bypass: [cli.js] rides in front
+    ...buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools }),
+  ];
+  const spawnArgs = launch.shell ? args.map(quoteForCmd) : args;
   const shown = args.map((arg) => arg === '' ? '""' : arg).join(' ');
   log(`spawn: ${launch.command} ${shown}  (cwd=${cwd})`);
 
-  const child = spawn(launch.command, args, {
+  const child = spawn(launch.command, spawnArgs, {
     cwd,
     shell: launch.shell,
     windowsHide: true,
@@ -220,4 +252,5 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
   };
 }
 
-module.exports = { startSeat, buildArgs, resolveClaudeLaunch, SEAT_ENV_BRIEF, SEAT_WRAPUP_PROMPT };
+module.exports = { startSeat, buildArgs, resolveClaudeLaunch, quoteForCmd,
+                   SEAT_ENV_BRIEF, SEAT_WRAPUP_PROMPT };

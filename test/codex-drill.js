@@ -84,9 +84,18 @@ function finish(code) {
   ok('2 streamed turn — deltas + final text', sawDelta && finalText.includes('DRILL-OK'));
 
   // -- 3: approval round-trip
+  // The command must be UNIQUE per run: stage 3c answers with codex's own
+  // "remember this approval" choice, which the server PERSISTS as a
+  // prefix_rule in ~/.codex/rules/default.rules — a repeated command is then
+  // auto-approved and this stage times out waiting for a card that never
+  // comes (found 2026-07-16: the drill poisoned its own machine).
   events.length = 0;
+  const a = 100 + Math.floor(Math.random() * 900);
+  const b = 100 + Math.floor(Math.random() * 900);
+  const product = String(a * b);
   host.handle({ type: 'seatSend', id,
-    text: 'Run this exact shell command and report its raw output: node -e "console.log(6*7)"' });
+    text: 'Run this exact shell command and report its raw output: node -e "console.log(' +
+      a + '*' + b + ')"' });
   const perm = await waitFor((m) => m.id === id && m.m.type === 'permission', 90000, 'approval request');
   ok('3a permission card raised — ' + perm.m.tool,
      !!perm.m.requestId && /codex/i.test(perm.m.tool));
@@ -97,13 +106,18 @@ function finish(code) {
     allow: true, choice: remember.id });
   await waitFor((m) => m.id === id && m.m.type === 'result', 120000, 'turn2 result');
   const answer = events.filter((m) => m.m.type === 'text').map((m) => m.m.text).join(' ');
-  ok('3d remembered approval ran command — answer carries 42', answer.includes('42'));
+  ok('3d remembered approval ran command — answer carries ' + product, answer.includes(product));
   ok('3e provider decision rode the wire', wire.some((l) =>
     l.includes('acceptWithExecpolicyAmendment') || l.includes('acceptForSession')));
   ok('3f queue drained after answer', host.pendingPermissions(id).length === 0);
 
   // -- 4: resume + replay
   host.handle({ type: 'seatClose', id });
+  // Past the kill backstop before respawning (same 2.5s the app's seatRelaunch
+  // uses): the dying app-server still holds the ~/.codex sqlite state lock,
+  // and a resume spawned into that window dies with "failed to initialize
+  // sqlite state runtime" (caught 2026-07-16, intermittent).
+  await new Promise((r) => setTimeout(r, 2500));
   events.length = 0;
   const id2 = host.create(null, 'codex-drill-resumed',
     { persona: 'codex-drill', cwd: scratch, resume: sessionId,
