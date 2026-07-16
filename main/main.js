@@ -13,6 +13,7 @@ const theme = require('./theme');
 const monitors = require('./monitors');
 const seats = require('./seats');
 const tasks = require('./tasks');
+const auditWatch = require('./audit');
 const terminal = require('./terminal');
 const artifacts = require('./artifacts');
 const extensions = require('./extensions');
@@ -113,6 +114,7 @@ function createWindow() {
   seats.register();
   extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
   tasks.register();   // after extensions — routes validate against live presets
+  auditWatch.register();   // live-auditor watch manager (opt-in per seat)
   terminal.register({ cwd: seats.defaultCwd });
   liveUpdate.register(() => win);
   liveUpdate.consumeRestore();
@@ -313,6 +315,7 @@ app.on('window-all-closed', () => {
   try { liveUpdate.dispose(); } catch (e) { console.error('liveUpdate.dispose:', e.message); }
   try { monitors.dispose(); } catch (e) { console.error('monitors.dispose:', e.message); }
   try { tasks.dispose(); } catch (e) { console.error('tasks.dispose:', e.message); }
+  try { auditWatch.dispose(); } catch (e) { console.error('audit.dispose:', e.message); }
   try { seats.dispose(); } catch (e) { console.error('seats.dispose:', e.message); }
   try { terminal.dispose(); } catch (e) { console.error('terminal.dispose:', e.message); }
   try { artifacts.dispose(); } catch (e) { console.error('artifacts.dispose:', e.message); }

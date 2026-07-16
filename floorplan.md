@@ -28,6 +28,8 @@ ApexShell/
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
 │   ├── tasks.js           the WORKFLOW LAYER: task board store + persona
 │   │                      delegation chains (routes, handoff gates, bounce)
+│   ├── audit.js           the LIVE AUDITOR: opt-in per-seat shadow review —
+│   │                      watches a seat, runs a haiku disposable per turn
 │   ├── engine/            THE ENGINE (Electron-free, harness-gated)
 │   │   ├── seatHost.js    seat roster/truth; create/close/wrap/permissions
 │   │   ├── claudeSeat.js  Claude stream-json lane (spawns `claude -p`)
@@ -36,6 +38,8 @@ ApexShell/
 │   │   ├── ptySeat.js     ConPTY lane (any terminal CLI, xterm-rendered)
 │   │   ├── handoff.js     apex-handoff packet contract (parse + strict
 │   │   │                  allowlist validation of untrusted seat output)
+│   │   ├── audit.js       apex-audit finding contract (parse + validate the
+│   │   │                  shadow auditor's untrusted output)
 │   │   └── transcripts.js transcript backfill parser (resume support)
 │   ├── monitors/          tracker data plane
 │   │   ├── index.js       config load + source lifecycle (panes.json →
@@ -55,6 +59,7 @@ ApexShell/
 │   │                      zoom, close gates
 │   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel
 │   ├── taskBoard.js       the TASKS dock pane (workflow-layer projection)
+│   ├── auditPane.js       the AUDIT dock pane (live-auditor projection)
 │   ├── termView.js        xterm mount for PTY seats
 │   ├── terminalDock.js    built-in TERMINAL dock projection
 │   ├── monitors.js        tracker grid renderer (widget kinds)
@@ -168,8 +173,26 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   keeps parsing every later result.
 - Memory stays SILOED per persona; handoffs carry packets, never shared
   context. seats.js exposes a narrow internal seam for this module
-  (`observeSeats`, `createTaskSeat`, `presetInfo/Names`, `seatCommand`,
-  `seatEntry`, `closeSeat`) — deliberately NOT part of the extension ctx.
+  (`observeSeats`, `createTaskSeat`, `startDisposable`, `presetInfo/Names`,
+  `seatCommand`, `seatEntry`, `closeSeat`) — deliberately NOT part of the
+  extension ctx. `observeSeats` also sees a synthetic `seatUserSend` (a normal
+  seatSend the view never echoes) so observers get both sides of a chat.
+
+## The live auditor — opt-in shadow review
+
+`main/audit.js` (watch manager) + `renderer/auditPane.js` (AUDIT dock pane) +
+`main/engine/audit.js` (pure apex-audit contract).
+
+- Off by default; a per-seat toggle in the AUDIT pane. While a seat is watched,
+  each completed turn feeds a rolling transcript window (both sides) to a hidden
+  **haiku disposable** seat that returns an `apex-audit` block — at most 3
+  findings, validated by the same untrusted-output discipline as handoff.js.
+- Cost-bounded: cheap model, ~4s debounce, small window, opt-in only. The
+  auditor sees the transcript ONLY, never the watched persona's memory —
+  independence, same principle as the delegation audit step.
+- Findings render as severity cards (risk/warn/info) with "send to chat"
+  (drops into the seat's composer via `ApexChat.fillComposer`) and dismiss; a
+  👁 chip marks a watched tab.
 
 ## Verification duties (inherited by anyone who edits)
 
@@ -179,6 +202,9 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   launcher stub (`node_modules/electron/dist/resources/app` — it hijacks
   every electron invocation to main.js), then `npx electron test/live-chain`
   runs a REAL 2-step haiku chain end-to-end (~2 short sessions).
+- Live-auditor change → `node test/audit-drill.js` (contract + watch state
+  machine). Full-stack proof: park the stub, `npx electron test/live-audit`
+  (real haiku auditor on a watched seat + a risky transcript; ~3 sessions).
 - Window change → `APEX_SMOKE=1` smoke (exit 0 = no renderer errors).
   Affordances: `APEX_SMOKE_DOCK=<tab>` opens a pane, `APEX_SMOKE_SHOT=x.png`
   screenshots, `APEX_SMOKE_PTY=1` mounts a ConPTY seat, `APEX_SMOKE_CFG=1`

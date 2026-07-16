@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="styles/chat.css">
 <link rel="stylesheet" href="lib/xterm/xterm.css">
 <link rel="stylesheet" href="styles/taskboard.css">
+<link rel="stylesheet" href="styles/audit.css">
 <link rel="stylesheet" href="styles/theme.css">
 </head>
 <body>
@@ -104,6 +105,18 @@
     </div>
     <div class="dockTab" data-tab="tasks">TASKS<span class="tkDot" hidden></span></div>
   </div>
+  <!-- Live auditor: opt-in shadow review of a seat, rendered here. -->
+  <div class="sidePane dockPane" id="dock-audit" data-tab="audit" data-order="18">
+    <div class="paneBody auditPane">
+      <div class="auHead"><span class="auTitle">AUDIT</span>
+        <span class="auNote">a live second opinion &#8212; haiku, opt-in per seat</span></div>
+      <div class="auWatch"></div>
+      <div class="auFindings"><div class="paneNote">Turn on a watch for a running chat to get a
+        live, independent second opinion on its work &#8212; risky actions, shaky assumptions,
+        drift from the ask. It runs a cheap haiku pass after each turn; toggle it off any time.</div></div>
+    </div>
+    <div class="dockTab" data-tab="audit">AUDIT<span class="auDot" hidden></span></div>
+  </div>
 
   <div class="sidePane aiPane" id="aiPane">
     <div class="aiRail" id="aiRail">
@@ -154,6 +167,7 @@
 <script src="linkify.js"></script>
 <script src="chatView.js"></script>
 <script src="taskBoard.js"></script>
+<script src="auditPane.js"></script>
 <script src="viewer.js"></script>
 <script src="usage.js"></script>
 <script src="shell.js"></script>

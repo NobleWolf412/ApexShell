@@ -343,6 +343,14 @@ window.ApexChat = (function () {
         repo.style.borderColor = 'hsl(' + repoHue(c.cwd) + ' 45% 45%)';
         label.appendChild(repo);
       }
+      // live-audit chip: this seat has a shadow auditor watching it
+      if (c.watching) {
+        const eye = document.createElement('span');
+        eye.className = 'watchBadge';
+        eye.textContent = '👁';
+        eye.title = 'a live auditor is watching this chat';
+        label.appendChild(eye);
+      }
       // chain chip (task board): "⛓ 2/3" on a seat running a route step
       if (c.chainBadge) {
         const chip = document.createElement('span');
@@ -921,6 +929,10 @@ window.ApexChat = (function () {
   ApexBus.on('seatGone', (m) => {          // hand-off or relaunch — old card leaves
     removeChat(m.id);
   });
+  ApexBus.on('auditState', (m) => {        // live-auditor watch chip on the tab
+    const c = chats.get(m.id);
+    if (c) { c.watching = !!m.on; renderTabs(); }
+  });
   ApexBus.on('seatTitle', (m) => retitle(m.id, m.title));
   ApexBus.on('seatList', (m) => {
     const live = new Set(m.seats.map((s) => s.id));
@@ -1312,6 +1324,15 @@ window.ApexChat = (function () {
            },
            focusSeat: (id) => { if (chats.has(id)) switchTo(id); },
            hasSeat: (id) => chats.has(id),
+           // audit "send to chat": drop a finding into a seat's composer
+           fillComposer: (id, text) => {
+             const c = chats.get(id);
+             if (!c || !c.ta) return;
+             switchTo(id);
+             c.ta.value = (c.ta.value ? c.ta.value + '\n' : '') + text;
+             c.ta.focus();
+             c.ta.dispatchEvent(new Event('input', { bubbles: true }));
+           },
            // for Safe quit: chats mid-turn or waiting on a permission answer
            busyCount: () => [...chats.values()]
              .filter((c) => !c.dead && (c.busy || c.permQueue.length)).length };

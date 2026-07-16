@@ -162,6 +162,11 @@ function observeSeats(fn) {
   seatObservers.add(fn);
   return () => seatObservers.delete(fn);
 }
+function notifyObservers(m) {
+  for (const fn of seatObservers) {
+    try { fn(m); } catch (e) { console.error('[seats] observer:', e.message); }
+  }
+}
 
 /** Create a chain-step seat and RETURN its id (createFromMessage discards it).
  *  Launch dials come from the persona's own config; `launch` overrides win. */
@@ -182,6 +187,13 @@ function createTaskSeat({ persona, title, cwd, kickoff, resume, launch }) {
   if (resume && merged.model === 'codex') delete merged.model;   // dial must not leak
   return host.create(resume ? null : (kickoff || null), seatTitle,
     { persona: name, cwd: dir, launch: merged, resume });
+}
+
+/** Hidden, tool-disabled seat for bounded core workflows (the live auditor).
+ *  Same plumbing extensions get via startDisposable, exposed to core modules. */
+function startDisposable(opts) {
+  if (!host) throw new Error('Seat engine is unavailable.');
+  return host.createDisposable(opts || {});
 }
 
 const presetInfo = (name) => {
@@ -209,9 +221,7 @@ function register() {
       // workflow-layer tap: observers see EVERY projection message (they need
       // text/result/dead for packet parsing). Try-wrapped and cheap — a
       // broken observer must never take the wire down.
-      for (const fn of seatObservers) {
-        try { fn(m); } catch (e) { console.error('[seats] observer:', e.message); }
-      }
+      notifyObservers(m);
       if (m.type === 'seatEvt' && m.m.type === 'artifactCandidate') {
         artifacts.candidate(m.id, m.m.path);       // app-level concern, not engine
         return;
@@ -241,7 +251,14 @@ function register() {
   for (const t of ['seatSend', 'seatPerm', 'seatStop', 'seatMode',
                    'seatModel', 'seatPtyInput', 'seatPtyResize', 'seatReplay',
                    'seatWrap'])
-    bus.on(t, (msg) => host.handle(msg));
+    bus.on(t, (msg) => {
+      // a normal seatSend never echoes a view 'user' event (the view draws its
+      // own bubble). Observers (the live auditor) still need the user's words —
+      // give them a synthetic, non-view tap so the auditor sees both sides.
+      if (t === 'seatSend' && msg && typeof msg.text === 'string' && msg.text)
+        notifyObservers({ type: 'seatUserSend', id: msg.id, text: msg.text });
+      host.handle(msg);
+    });
   bus.on('seatClose', (msg) => { artifacts.seatClosed(msg.id); host.handle(msg); });
 
   createFromMessage = (msg) => {
@@ -537,6 +554,7 @@ module.exports = {
   // workflow-layer seam (main/tasks.js) — internal, not part of the ctx surface
   observeSeats,
   createTaskSeat,
+  startDisposable,
   presetInfo,
   presetNames,
   seatCommand,
