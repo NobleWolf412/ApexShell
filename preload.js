@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('apex', {
     write: (text) => ipcRenderer.invoke('clip:write', String(text == null ? '' : text)),
   },
 
+  attachments: {
+    pick: (seatId) => ipcRenderer.invoke('attachment:pick', String(seatId || 'session')),
+  },
+
   // Window caption controls — plain ipc, not bus verbs (they exist pre-boot).
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

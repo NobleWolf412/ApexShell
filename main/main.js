@@ -3,7 +3,7 @@
 // Renderer is sandboxed; the preload contextBridge is the only door (plan §3).
 'use strict';
 
-const { app, BrowserWindow, ipcMain, protocol, net, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
@@ -208,6 +208,34 @@ app.on('second-instance', () => {
 const { clipboard } = require('electron');
 ipcMain.handle('clip:read', () => clipboard.readText());
 ipcMain.handle('clip:write', (_e, t) => { clipboard.writeText(String(t || '')); });
+
+// Copy selected attachments into stable, Apex-owned storage for this seat.
+ipcMain.handle('attachment:pick', async (_e, seatId) => {
+  const picked = await dialog.showOpenDialog(win || undefined, {
+    title: 'Attach photos or files', properties: ['openFile', 'multiSelections'],
+  });
+  if (picked.canceled) return [];
+  const safeSeat = String(seatId || 'session').replace(/[^a-zA-Z0-9_-]/g, '_');
+  const dir = path.join(app.getPath('userData'), 'attachments', safeSeat);
+  fs.mkdirSync(dir, { recursive: true });
+  const results = [];
+  for (const source of picked.filePaths) {
+    const stat = fs.statSync(source);
+    if (!stat.isFile()) continue;
+    const parsed = path.parse(source);
+    let dest = path.join(dir, parsed.base), n = 2;
+    while (fs.existsSync(dest)) dest = path.join(dir, `${parsed.name} (${n++})${parsed.ext}`);
+    fs.copyFileSync(source, dest);
+    const mediaTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif', '.webp': 'image/webp' };
+    const mediaType = mediaTypes[parsed.ext.toLowerCase()] || '';
+    const item = { name: path.basename(dest), path: dest, size: stat.size, mediaType };
+    if (mediaType && stat.size <= 4 * 1024 * 1024)
+      item.data = fs.readFileSync(dest).toString('base64');
+    results.push(item);
+  }
+  return results;
+});
 
 // Window caption controls — plain ipc, not bus verbs (they exist pre-boot).
 ipcMain.on('win:minimize', () => win && win.minimize());

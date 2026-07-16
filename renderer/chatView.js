@@ -134,6 +134,7 @@ window.ApexChat = (function () {
         '<div class="ctxBar"><div class="fill"></div></div>' +
         '<div class="composer"><div class="stage-row"></div>' +
           '<div class="crow"><textarea rows="2" placeholder="Message the seat — Enter to send, Shift+Enter for a new line"></textarea>' +
+          '<button class="cattach" type="button" title="Attach photos or files" aria-label="Attach photos or files">&#128206;</button>' +
           '<button class="csend">Send</button></div></div>' +
       '</div>';
     mainEl.appendChild(wrap);
@@ -168,7 +169,8 @@ window.ApexChat = (function () {
       c.ta.style.height = Math.min(c.ta.scrollHeight, 180) + 'px';
     });
     if (window.ApexImageStaging)
-      c.staging = ApexImageStaging({ textarea: c.ta, stageRow: wrap.querySelector('.stage-row') });
+      c.staging = ApexImageStaging({ textarea: c.ta, stageRow: wrap.querySelector('.stage-row'),
+        attachButton: wrap.querySelector('.cattach'), seatId: c.id });
     // pin/unpin: scrolling up disengages autoscroll; returning to the bottom re-engages
     // + mark the user bubble currently stuck to the top (sticky is pure CSS;
     //   the class only drives the lifted shadow)
@@ -769,14 +771,17 @@ window.ApexChat = (function () {
   function send(c) {
     if (c.dead) return;
     const text = c.ta.value.trim();
-    const imgs = c.staging ? c.staging.list() : [];
-    if (!text && !imgs.length) return;
+    const staged = c.staging ? c.staging.list() : { images: [], files: [] };
+    const imgs = staged.images || [];
+    const files = staged.files || [];
+    if (!text && !imgs.length && !files.length) return;
     const thumbs = imgs.map((i) => 'data:' + i.mediaType + ';base64,' + i.data);
     // typing again after a wrap-up = the session continues; un-arm the close
     // (setStatus below re-renders the tab row, which relabels the End button)
     if (c.wrapping || c.wrapped) { c.wrapping = false; c.wrapped = false; }
-    ApexBus.post('seatSend', { id: c.id, text, images: imgs });
-    addUser(c, text || '(see attached)', thumbs);
+    ApexBus.post('seatSend', { id: c.id, text, images: imgs, files });
+    const fileNote = files.length ? '\n' + files.map((f) => 'attachment: ' + f.name).join('\n') : '';
+    addUser(c, (text || '(see attached)') + fileNote, thumbs);
     c.ta.value = ''; c.ta.style.height = 'auto';
     if (c.staging) c.staging.clear();
     c.everSent = true;

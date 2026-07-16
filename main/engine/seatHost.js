@@ -271,6 +271,12 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
       case 'seatSend': {
         // Images ride the message as base64 content blocks (J19: paste/drop).
         // The view renders its own user bubble at send time — no echo here.
+        if (msg.files && msg.files.length) {
+          const paths = msg.files.map((f) => '- ' + f.path).join('\n');
+          msg = Object.assign({}, msg, { text: (msg.text || '') +
+            '\n\n<apex-session-attachments>\nThe user attached local copies of these files:\n' +
+            paths + '\n</apex-session-attachments>' });
+        }
         if (entry.needsEnvBrief && !entry.local && !entry.pty) {
           entry.needsEnvBrief = false;
           msg = Object.assign({}, msg, {

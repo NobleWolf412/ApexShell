@@ -7,8 +7,31 @@ window.ApexImageStaging = (function() {
   function attach(opts) {
     const textarea = opts.textarea;
     const stageRow = opts.stageRow;
+    const attachButton = opts.attachButton;
     const onChange = opts.onChange || function() {};
     const staged = [];
+
+    function remove(entry, div) {
+      const index = staged.indexOf(entry);
+      if (index === -1) return;
+      staged.splice(index, 1);
+      div.remove();
+      onChange(staged.length);
+    }
+
+    function renderFile(entry) {
+      staged.push(entry);
+      const div = document.createElement('div');
+      div.className = 'stagedFile';
+      div.title = entry.path;
+      div.textContent = 'attachment: ' + entry.name;
+      const btn = document.createElement('button');
+      btn.title = 'remove'; btn.textContent = 'x';
+      btn.onclick = () => remove(entry, div);
+      div.appendChild(btn);
+      stageRow.appendChild(div);
+      onChange(staged.length);
+    }
 
     function handleFiles(files) {
       Array.from(files).filter(Boolean).forEach(file => {
@@ -24,7 +47,7 @@ window.ApexImageStaging = (function() {
           if (!match) return;
           const mediaType = match[1];
           const data = match[2];
-          const entry = { mediaType, data };
+          const entry = { kind: 'image', name: file.name || 'image', mediaType, data };
           staged.push(entry);
           const div = document.createElement('div');
           div.className = 'stagedImg';
@@ -43,11 +66,7 @@ window.ApexImageStaging = (function() {
           btn.title = 'remove';
           btn.textContent = '✕';
           btn.onclick = function() {
-            const index = staged.indexOf(entry);
-            if (index === -1) return;
-            staged.splice(index, 1);
-            div.remove();
-            onChange(staged.length);
+            remove(entry, div);
           };
           div.appendChild(img);
           div.appendChild(btn);
@@ -75,9 +94,32 @@ window.ApexImageStaging = (function() {
       });
     });
 
+    if (attachButton) attachButton.onclick = async function() {
+      attachButton.disabled = true;
+      try {
+        const picked = await apex.attachments.pick(opts.seatId);
+        for (const item of picked || []) {
+          if (item.data && item.mediaType) {
+            const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
+            handleFiles([new File([bytes], item.name, { type: item.mediaType })]);
+          } else {
+            renderFile(Object.assign({ kind: 'file' }, item));
+          }
+        }
+      } catch (e) {
+        window.ApexToast && ApexToast('could not attach files: ' + e.message);
+      } finally {
+        attachButton.disabled = false;
+      }
+    };
+
     return {
       list() {
-        return staged.slice();
+        return {
+          images: staged.filter((x) => x.kind === 'image'),
+          files: staged.filter((x) => x.kind === 'file').map((x) =>
+            ({ name: x.name, path: x.path, size: x.size }))
+        };
       },
       clear() {
         staged.length = 0;

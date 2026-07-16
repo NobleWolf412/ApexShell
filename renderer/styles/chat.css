@@ -371,15 +371,21 @@
 }
 .composer .stage-row { display: flex; gap: 6px; margin-bottom: 6px; }
 .composer .stage-row:empty { display: none; }
-.composer .stagedImg { position: relative; }
+.composer .stagedImg, .composer .stagedFile { position: relative; }
 .composer .stagedImg img { height: 46px; border-radius: 4px; border: 1px solid var(--edge); }
-.composer .stagedImg button {
+.composer .stagedFile { max-width: 210px; padding: 8px 25px 8px 9px; border-radius: 5px;
+  border: 1px solid var(--edge); color: var(--text); font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer .stagedImg button, .composer .stagedFile button {
   position: absolute; top: -6px; right: -6px;
   width: 16px; height: 16px; line-height: 13px; font-size: 10px;
   border-radius: 50%; border: 1px solid var(--edge);
   background: var(--bg); color: var(--critical); cursor: pointer; padding: 0;
 }
 .composer .crow { display: flex; align-items: flex-end; gap: 10px; }
+.composer .cattach { border: 0; background: transparent; color: var(--dim); cursor: pointer;
+  font-size: 18px; line-height: 28px; padding: 0 2px 3px; }
+.composer .cattach:hover { color: var(--accent); }
 .composer .csend {
   border: 1px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
