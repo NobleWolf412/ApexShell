@@ -28,6 +28,9 @@
           '<button class="personaFoundationLoadDisk" type="button">LOAD DISK VERSION</button>' +
           '<button class="personaFoundationKeepEdit" type="button">KEEP MY EDIT</button>' +
         '</div>' +
+        '<label class="personaFieldLabel" for="personaProjectContext">WHAT ARE YOU BUILDING? — OPTIONAL</label>' +
+        '<textarea class="personaProjectContext" id="personaProjectContext" maxlength="8000" placeholder="A sentence or two about the system this team of personas works on. Used only to tailor relationship suggestions — never injected into a persona’s identity."></textarea>' +
+        '<button class="personaProjectContextSave" type="button">SAVE PROJECT CONTEXT</button>' +
       '</section>' +
       '<section class="personaDraftHome" hidden>' +
         '<div class="personaWorkspaceLabel">PERSONA DRAFTS</div>' +
@@ -108,6 +111,16 @@
           '<label class="personaFieldLabel" for="personaCapabilities">CAPABILITIES — ONE PER LINE</label><textarea class="personaCapabilities" id="personaCapabilities" maxlength="12000"></textarea>' +
           '<label class="personaFieldLabel" for="personaAccepts">ACCEPTS — ONE INPUT TYPE PER LINE</label><textarea class="personaAccepts" id="personaAccepts" maxlength="12000"></textarea>' +
           '<label class="personaFieldLabel" for="personaEmits">EMITS — ONE OUTPUT TYPE PER LINE</label><textarea class="personaEmits" id="personaEmits" maxlength="12000"></textarea>' +
+        '</div>' +
+        '<div class="personaRelBlock">' +
+          '<div class="personaInterviewSubhead">RELATIONSHIP SUGGESTIONS</div>' +
+          '<p class="personaRelHelp">Who should this persona work with? Suggestions come from the roles already in this workspace; accepting one fills the collaboration contract, and suggested routes become one-click Task Board templates.</p>' +
+          '<div class="personaRelActions">' +
+            '<button class="personaRelSuggest" type="button">SUGGEST RELATIONSHIPS</button>' +
+            '<button class="personaRelSuggestLlm" type="button" title="Runs one hidden, tool-disabled Claude session to tailor suggestions to your project context.">AI SUGGEST (USES A SESSION)</button>' +
+          '</div>' +
+          '<div class="personaRelStatus"></div>' +
+          '<div class="personaRelList"></div>' +
         '</div>' +
         '<div class="personaPreviewError"></div>' +
         '<div class="personaInterviewActions"><button class="personaPreviewSetupBack" type="button">BACK TO INTERVIEW</button><button class="personaPreviewGenerate" type="button">GENERATE PREVIEW</button></div>' +
@@ -210,6 +223,12 @@
     'use_connectors', 'send_external', 'change_system', 'delete_data'];
   const actionSelects = Object.fromEntries(actionCategories.map((category) =>
     [category, pane.querySelector('.personaAction-' + category)]));
+  const projectContext = pane.querySelector('.personaProjectContext');
+  const projectContextSave = pane.querySelector('.personaProjectContextSave');
+  const relSuggest = pane.querySelector('.personaRelSuggest');
+  const relSuggestLlm = pane.querySelector('.personaRelSuggestLlm');
+  const relStatus = pane.querySelector('.personaRelStatus');
+  const relList = pane.querySelector('.personaRelList');
   const collaborationEnabled = pane.querySelector('.personaCollaborationEnabled');
   const collaborationEditor = pane.querySelector('.personaCollaborationEditor');
   const collaborationAccess = pane.querySelector('.personaCollaborationAccess');
@@ -281,6 +300,7 @@
     if (foundationWorkspace !== status.workspace) {
       foundationCard.hidden = true;
       ApexBus.post('personaFoundationGet', {});
+      ApexBus.post('personaProjectContextGet', {});
     }
   }
 
@@ -944,6 +964,147 @@
   collaborationCapabilities.addEventListener('input', setPreviewSetupState);
   collaborationAccepts.addEventListener('input', setPreviewSetupState);
   collaborationEmits.addEventListener('input', setPreviewSetupState);
+
+  // ---- relationship suggestions (accept-to-apply chips) ----
+  const appendContractLine = (textarea, line) => {
+    const lines = textarea.value.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.some((l) => l.toLowerCase() === line.toLowerCase())) {
+      lines.push(line);
+      textarea.value = lines.join('\n');
+    }
+    if (!collaborationEnabled.checked) {
+      collaborationEnabled.checked = true;
+      collaborationEditor.hidden = false;
+    }
+    setPreviewSetupState();
+  };
+  function renderRelSuggestions(message) {
+    if (message.draftId && currentDraft && message.draftId !== currentDraft.id) return;
+    relSuggestLlm.disabled = false;
+    relStatus.textContent = message.error
+      ? 'No suggestions: ' + message.error
+      : ((message.suggestions || []).length || (message.routes || []).length)
+        ? (message.source === 'llm' ? 'AI suggestions' : 'Role-based suggestions') +
+          ' — nothing applies until you accept it.'
+        : 'No suggestions yet — add detail to the mission card, or create teammate personas first.';
+    relList.textContent = '';
+    for (const s of message.suggestions || []) {
+      const isNew = s.with.startsWith('NEW:');
+      const partner = isNew ? s.with.slice(4).trim() : s.with;
+      const row = document.createElement('div');
+      row.className = 'personaRelRow';
+      const text = document.createElement('div');
+      text.className = 'personaRelText';
+      text.textContent = (s.direction === 'sends-to' ? 'Sends ' : 'Receives ') +
+        (s.packet || 'work') +
+        (s.direction === 'sends-to' ? ' to ' : ' from ') +
+        (isNew ? 'a NEW ' + partner + ' persona' : partner);
+      if (s.why) {
+        const why = document.createElement('div');
+        why.className = 'personaRelWhy';
+        why.textContent = s.why;
+        text.appendChild(why);
+      }
+      row.appendChild(text);
+      const actions = document.createElement('div');
+      actions.className = 'personaRelRowActions';
+      const apply = document.createElement('button');
+      apply.type = 'button';
+      apply.textContent = 'APPLY';
+      apply.title = s.direction === 'sends-to'
+        ? 'add to EMITS (this persona produces it)'
+        : 'add to ACCEPTS (this persona consumes it)';
+      apply.addEventListener('click', () => {
+        appendContractLine(
+          s.direction === 'sends-to' ? collaborationEmits : collaborationAccepts,
+          s.packet || ('handoff with ' + partner));
+        row.remove();
+      });
+      actions.appendChild(apply);
+      if (isNew) {
+        const prefill = document.createElement('button');
+        prefill.type = 'button';
+        prefill.textContent = 'PREFILL DRAFT';
+        prefill.title = 'pre-fill the new-draft form with this role — finish this persona first, then start it';
+        prefill.addEventListener('click', () => {
+          draftName.value = partner.replace(/(^|\s)\w/g, (c) => c.toUpperCase());
+          draftUseCase.value = (s.direction === 'sends-to'
+            ? 'Receive and independently handle: ' : 'Produce for handoff: ') +
+            (s.packet || 'work from ' + (currentDraft ? currentDraft.name : 'the team'));
+          draftName.dispatchEvent(new Event('input', { bubbles: true }));
+          draftUseCase.dispatchEvent(new Event('input', { bubbles: true }));
+          relStatus.textContent = 'New-draft form pre-filled with "' + draftName.value +
+            '" — finish this persona, then start the interview from PERSONA DRAFTS.';
+        });
+        actions.appendChild(prefill);
+      }
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.textContent = '✕';
+      dismiss.title = 'dismiss';
+      dismiss.addEventListener('click', () => row.remove());
+      actions.appendChild(dismiss);
+      row.appendChild(actions);
+      relList.appendChild(row);
+    }
+    for (const r of message.routes || []) {
+      const row = document.createElement('div');
+      row.className = 'personaRelRow personaRelRoute';
+      const text = document.createElement('div');
+      text.className = 'personaRelText';
+      text.textContent = 'Route "' + r.name + '": ' + r.steps.join(' → ');
+      const why = document.createElement('div');
+      why.className = 'personaRelWhy';
+      why.textContent = 'saving makes this a one-click route template on the Task Board';
+      text.appendChild(why);
+      row.appendChild(text);
+      const actions = document.createElement('div');
+      actions.className = 'personaRelRowActions';
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = 'SAVE ROUTE';
+      save.addEventListener('click', () => {
+        ApexBus.post('taskRouteSave', { name: r.name, steps: r.steps });
+        save.textContent = 'SAVED ✓';
+        save.disabled = true;
+      });
+      actions.appendChild(save);
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.textContent = '✕';
+      dismiss.title = 'dismiss';
+      dismiss.addEventListener('click', () => row.remove());
+      actions.appendChild(dismiss);
+      row.appendChild(actions);
+      relList.appendChild(row);
+    }
+  }
+  relSuggest.addEventListener('click', () => {
+    if (!currentDraft) return;
+    relStatus.textContent = 'Looking at the roles in this workspace…';
+    ApexBus.post('personaRelSuggest', { id: currentDraft.id });
+  });
+  relSuggestLlm.addEventListener('click', () => {
+    if (!currentDraft || relSuggestLlm.disabled) return;
+    relSuggestLlm.disabled = true;
+    relStatus.textContent = 'AI suggestion pass starting (one hidden, tool-disabled session)…';
+    ApexBus.post('personaRelSuggestLlm', { id: currentDraft.id, approved: true });
+  });
+  projectContextSave.addEventListener('click', () => {
+    ApexBus.post('personaProjectContextSave', { content: projectContext.value });
+  });
+  ApexBus.on('personaRelStatus', () => {
+    relStatus.textContent = 'AI suggestion pass running…';
+  });
+  ApexBus.on('personaRelSuggestions', renderRelSuggestions);
+  ApexBus.on('personaProjectContext', (m) => {
+    if (m.error) return;
+    if (!m.saved) projectContext.value = m.content || '';
+    else {
+      projectContextSave.textContent = 'SAVED ✓';
+      setTimeout(() => { projectContextSave.textContent = 'SAVE PROJECT CONTEXT'; }, 1500);
+    }
+  });
   previewSetupBack.addEventListener('click', () =>
     renderDraftStatus({ draft: currentDraft, cards: interviewCards, suggestedPersonaId }));
   previewGenerate.addEventListener('click', () => {

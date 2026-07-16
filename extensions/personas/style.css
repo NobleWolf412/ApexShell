@@ -247,6 +247,40 @@
 .personaBuilderFoot { width: min(680px, 100%); color: var(--faint); font-size: 10.5px;
   line-height: 1.55; margin-top: auto; padding-top: 28px; }
 
+/* ---- project context (workspace card) ---- */
+.personaProjectContext { width: 100%; min-height: 54px; margin-top: 6px; padding: 8px 10px;
+  border: 1px solid var(--edge); border-radius: 7px; background: var(--bg);
+  color: var(--text); font-size: 11px; line-height: 1.5; resize: vertical; }
+.personaProjectContextSave { margin-top: 8px; padding: 7px 11px; border: 1px solid var(--edge);
+  border-radius: 7px; background: var(--surface); color: var(--dim); font-size: 9.5px;
+  font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaProjectContextSave:hover { color: var(--text); border-color: var(--accent); }
+
+/* ---- relationship suggestions (collaboration step) ---- */
+.personaRelBlock { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--edge); }
+.personaRelHelp { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin: 8px 0 10px; }
+.personaRelActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.personaRelActions button { padding: 8px 12px; border: 1px solid var(--edge);
+  border-radius: 7px; background: var(--surface); color: var(--dim); font-size: 9.5px;
+  font-weight: 700; letter-spacing: .1em; cursor: pointer; }
+.personaRelActions button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.personaRelActions button:disabled { opacity: .4; cursor: default; }
+.personaRelStatus { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin-top: 9px;
+  user-select: text; }
+.personaRelList { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.personaRelRow { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); }
+.personaRelRow.personaRelRoute { border-style: dashed; }
+.personaRelText { flex: 1; color: var(--text); font-size: 11px; line-height: 1.5;
+  user-select: text; }
+.personaRelWhy { color: var(--faint); font-size: 10px; line-height: 1.45; margin-top: 4px; }
+.personaRelRowActions { display: flex; gap: 6px; flex-wrap: wrap; }
+.personaRelRowActions button { padding: 5px 9px; border: 1px solid var(--edge);
+  border-radius: 6px; background: none; color: var(--dim); font-size: 9px; font-weight: 700;
+  letter-spacing: .08em; cursor: pointer; }
+.personaRelRowActions button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.personaRelRowActions button:disabled { opacity: .5; cursor: default; }
+
 @media (max-width: 720px) {
   .personaBuilderBody { padding-right: 22px !important; }
 }

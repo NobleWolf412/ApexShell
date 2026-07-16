@@ -1,6 +1,15 @@
 # Persona Builder v1 — Build Specification
 
-Status: design locked; implementation not started.
+Status: implemented (workspace/foundation/interview/preview/validation/
+disposable test/permanent creation/import all live in `extensions/personas/`),
+plus one post-v1 addition this spec did not cover: **relationship
+recommendations** (`lib/relationships.js`) — on the collaboration step the
+builder suggests who the new persona should work with (heuristic role
+pairings, optional disposable-seat AI pass tailored by an optional
+workspace `project-context.md`); accepted suggestions fill accepts/emits and
+suggested routes save as Task Board templates (`taskRouteSave`). The "later
+workflow layer" this spec deferred now exists: `main/tasks.js` +
+`renderer/taskBoard.js` (see floorplan.md § The workflow layer).
 
 ## Outcome
 
@@ -9,9 +18,9 @@ creates their own cast. No Apex persona (Mox, Jinx, Iris, Clio, Drafty, Sable,
 Doc, or any successor) ships with the product.
 
 The builder creates identities. Runtime/provider configuration seats those
-identities. A later workflow layer coordinates teams. A later wiki extension
-provides intake, compilation, query, and analysis. These remain cleanly
-separated.
+identities. The workflow layer (`main/tasks.js`) coordinates teams. A later
+wiki extension provides intake, compilation, query, and analysis. These remain
+cleanly separated.
 
 ## Non-goals for v1
 

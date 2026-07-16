@@ -1,6 +1,8 @@
-// Persona Builder — runtime workspace selection and read-only status.
-// Persona package creation arrives in a later slice; this module writes only
-// its own ignored shell state after an explicit directory-picker action.
+// Persona Builder — the full guided flow: workspace selection, shared
+// foundation, interview drafts, preview/validation, disposable behavior
+// tests, atomic permanent package creation, and relationship
+// recommendations (lib/relationships.js). Shell state (workspace choice)
+// is written only after an explicit directory-picker action.
 'use strict';
 
 const fs = require('fs');
@@ -13,6 +15,7 @@ const previewValidator = require('./lib/validator');
 const importer = require('./lib/importer');
 const tester = require('./lib/tester');
 const creator = require('./lib/creator');
+const relationships = require('./lib/relationships');
 
 const CONFIG_FILE = 'workspace.json';
 const TEST_PREPARE_TTL_MS = 5 * 60 * 1000;
@@ -657,6 +660,95 @@ function register(ctx) {
     } catch (err) {
       ctx.bus.post('personaCreateResult', { ok: false, error: err.message });
       ctx.bus.post('toast', { text: 'Permanent persona was not created: ' + err.message });
+    }
+  });
+
+  // ---- relationship recommendations (accepted chips fill the collaboration
+  // contract; accepted routes land as Task Board templates via taskRouteSave) ----
+  let activeRelSeat = null;   // one LLM suggestion pass at a time
+
+  ctx.bus.on('personaProjectContextGet', () => {
+    try {
+      const workspace = selectedWorkspace(ctx.stateDir);
+      ctx.bus.post('personaProjectContext', {
+        content: relationships.readProjectContext(workspace), error: null });
+    } catch (err) {
+      ctx.bus.post('personaProjectContext', { content: '', error: err.message });
+    }
+  });
+
+  ctx.bus.on('personaProjectContextSave', (message) => {
+    try {
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const content = relationships.saveProjectContext(workspace, message && message.content);
+      ctx.bus.post('personaProjectContext', { content, error: null, saved: true });
+    } catch (err) {
+      ctx.bus.post('toast', { text: 'Project context was not saved: ' + err.message });
+    }
+  });
+
+  ctx.bus.on('personaRelSuggest', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      const workspace = interviewWorkspace(ctx.stateDir);
+      const summaries = relationships.personaSummaries(workspace, creator);
+      const { suggestions, routes } = relationships.heuristicSuggestions(draft, summaries);
+      ctx.bus.post('personaRelSuggestions', {
+        draftId: draft.id, suggestions, routes, source: 'heuristic', error: null });
+    } catch (err) {
+      ctx.bus.post('personaRelSuggestions', {
+        draftId: message && message.id, suggestions: [], routes: [],
+        source: 'heuristic', error: err.message });
+    }
+  });
+
+  ctx.bus.on('personaRelSuggestLlm', (message) => {
+    try {
+      if (!message || message.approved !== true)
+        throw new Error('The AI suggestion pass runs a hidden Claude session — it needs explicit approval.');
+      if (activeRelSeat) throw new Error('An AI suggestion pass is already running.');
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+      const draft = currentWorkspaceDraft(message.id);
+      const workspace = interviewWorkspace(ctx.stateDir);
+      const summaries = relationships.personaSummaries(workspace, creator);
+      const knownNames = [draft.name, ...summaries.map((s) => s.name)];
+      const prompt = relationships.buildPrompt(draft, summaries,
+        relationships.readProjectContext(workspace));
+      let finalText = '';
+      const done = (payload) => {
+        if (!activeRelSeat) return;
+        const seat = activeRelSeat;
+        activeRelSeat = null;
+        clearTimeout(seat.backstop);
+        try { seat.controller.close(); } catch { /* already gone */ }
+        ctx.bus.post('personaRelSuggestions', {
+          draftId: draft.id, source: 'llm', suggestions: [], routes: [], error: null,
+          ...payload });
+      };
+      const controller = ctx.seats.startDisposable({
+        kickoff: prompt,
+        onEvent: (event) => {
+          if (!activeRelSeat) return;
+          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
+          else if (event.type === 'result') {
+            const parsed = relationships.parseLlmReply(finalText, knownNames);
+            done(parsed.error ? { error: parsed.error }
+                              : { suggestions: parsed.suggestions, routes: parsed.routes });
+          } else if (event.type === 'dead') {
+            done({ error: 'the suggestion seat exited before answering' });
+          }
+        },
+      });
+      activeRelSeat = {
+        controller,
+        backstop: setTimeout(() => done({ error: 'the suggestion pass timed out' }), 120000),
+      };
+      ctx.bus.post('personaRelStatus', { phase: 'running' });
+    } catch (err) {
+      ctx.bus.post('personaRelSuggestions', {
+        draftId: message && message.id, suggestions: [], routes: [],
+        source: 'llm', error: err.message });
     }
   });
 

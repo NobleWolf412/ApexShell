@@ -1028,7 +1028,7 @@ function completeDisposableTest(bus, draft, disposableSeat) {
       const hostPath = require.resolve('../main/engine/seatHost');
       const actualClaude = require(claudePath);
       const disposableArgs = actualClaude.buildArgs({
-        noSessionPersistence: true, tools: '', permissionMode: 'manual', shell: false,
+        noSessionPersistence: true, tools: '', permissionMode: 'manual',
       });
       const toolsIndex = disposableArgs.indexOf('--tools');
       assert.notEqual(toolsIndex, -1);
@@ -1036,8 +1036,18 @@ function completeDisposableTest(bus, draft, disposableSeat) {
       // Apex keeps `manual` internally; claudeSeat translates it to the CLI's
       // accepted spelling at the process boundary.
       assert.deepEqual(disposableArgs.slice(-2), ['--permission-mode', 'default']);
-      const shellArgs = actualClaude.buildArgs({ tools: '', permissionMode: 'manual', shell: true });
-      assert.equal(shellArgs[shellArgs.indexOf('--tools') + 1], '""');
+      // The shell:true fallback quotes at spawn time: EVERY arg goes through
+      // quoteForCmd, so the empty --tools value and the multi-word system
+      // brief both survive the cmd.exe join.
+      assert.equal(actualClaude.quoteForCmd(''), '""');
+      assert.equal(actualClaude.quoteForCmd('plain'), 'plain');
+      assert.equal(actualClaude.quoteForCmd('two words'), '"two words"');
+      assert.equal(actualClaude.quoteForCmd('say "hi"'), '"say \\"hi\\""');
+      assert.equal(actualClaude.quoteForCmd('dir\\ trailing\\'), '"dir\\ trailing\\\\"');
+      // the brief has no backslashes, so quoting it = escape its quotes + wrap
+      assert.equal(
+        actualClaude.quoteForCmd(actualClaude.SEAT_ENV_BRIEF),
+        '"' + actualClaude.SEAT_ENV_BRIEF.replace(/"/g, '\\"') + '"');
       const resolvedClaude = actualClaude.resolveClaudeLaunch();
       if (process.platform === 'win32' && resolvedClaude.command.toLowerCase().endsWith('.exe'))
         assert.equal(resolvedClaude.shell, false);
@@ -1392,7 +1402,10 @@ function completeDisposableTest(bus, draft, disposableSeat) {
         });
         assert.equal(nodes.get('.personaWorkspaceState').textContent, 'Ready for setup');
         assert.match(nodes.get('.personaWorkspaceChecks').textContent, /2 persona packages/);
-        assert.equal(posts.at(-1).type, 'personaFoundationGet');
+        // a workspace change asks for BOTH the foundation and the project
+        // context (relationship-suggestion input)
+        assert.equal(posts.at(-1).type, 'personaProjectContextGet');
+        assert.equal(posts.at(-2).type, 'personaFoundationGet');
 
         handlers.get('personaFoundationStatus')({
           workspace: path.join(scratch, 'ui-workspace'),
