@@ -16,8 +16,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M';  // the proven local coder
-const FALLBACK_MODEL = 'qwen3:8b';                   // if the 30B isn't pulled
+const MODEL = 'gpt-oss:20b';          // MoE (~3.6B active) — CPU-friendly coder
+const FALLBACK_MODEL = 'llama3.1:8b'; // dense 8B fallback if the 20B isn't pulled
 const ENDPOINT = 'http://localhost:11434';
 const KEEP_ALIVE = '30m';
 const MAX_TOOL_ROUNDS = 8;
@@ -129,14 +129,27 @@ async function webFetch(url) {
   return 'HTTP ' + status + '\n' + t;
 }
 
-// Qwen3 residue scrub (unopened </think> heads, stray /think echoes).
-function cleanQwen(s) {
+// Reasoning/format residue scrub — two model families:
+//   Qwen3     — <think>…</think> blocks, unopened </think> heads, /think echoes.
+//   gpt-oss   — the "harmony" channel format (<|channel|>analysis…). Ollama
+//               normally routes analysis into the `thinking` field, so this is
+//               a belt-and-suspenders pass for markup that leaks into content.
+// All patterns are no-ops on already-clean text, so a model that emits neither
+// family passes through untouched.
+function cleanReasoning(s) {
   return s
+    // -- Qwen3 --
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .replace(/^[\s\S]*?<\/think>/, '')
     .replace(/<\/?think>/g, '')
     .replace(/^\s*\/(no_)?think\b/, '')
     .replace(/\s*\/(no_)?think\s*$/, '')
+    // -- gpt-oss harmony --
+    // drop analysis/commentary channel segments whole (with any role header)
+    .replace(/(?:<\|start\|>\w+)?<\|channel\|>(?:analysis|commentary)[\s\S]*?(?:<\|end\|>|<\|return\|>|$)/g, '')
+    // unwrap the final channel header, then strip any leftover special tokens
+    .replace(/(?:<\|start\|>\w+)?<\|channel\|>final<\|message\|>/g, '')
+    .replace(/<\|[^|]*\|>/g, '')
     .trim();
 }
 
@@ -231,7 +244,7 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
       if (res.status === 404 && model !== FALLBACK_MODEL && /not found/i.test(body)) {
         log(`model ${model} not pulled — falling back to ${FALLBACK_MODEL}`);
         model = FALLBACK_MODEL;
-        onEvent({ type: 'text', text: '⚠ the 30B coder isn\'t pulled in Ollama — using ' +
+        onEvent({ type: 'text', text: '⚠ ' + MODEL + ' isn\'t pulled in Ollama — using ' +
           FALLBACK_MODEL + '. For the real coder: `ollama pull ' + MODEL + '`' });
         return callModel();
       }
@@ -267,7 +280,7 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
                     promptTokens: j.prompt_eval_count || 0, evalTokens: j.eval_count || 0 });
       }
     }
-    return { text: cleanQwen(visible), toolCalls };
+    return { text: cleanReasoning(visible), toolCalls };
   }
 
   // ---- the turn loop: model → tools → model, until text with no calls ----

@@ -12,3 +12,6 @@ main/monitors/panes.json
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Tooling caches
+.serena/

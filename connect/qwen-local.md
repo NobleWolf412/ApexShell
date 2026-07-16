@@ -9,10 +9,15 @@ lane, not the judgment lane.
 - Ollama serving at `http://localhost:11434` (`ollama --version`, then
   `curl localhost:11434` answers).
 - Models (first is the wired default, second the fallback):
-  - `ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M` — the proven local
-    coder (needs the RAM/VRAM for a 30B-A3B; on smaller machines pull only
-    the fallback and edit `MODEL` in `main/engine/localSeat.js`)
-  - `ollama pull qwen3:8b`
+  - `ollama pull gpt-oss:20b` — a MoE coder (~3.6B active of 20B), so it
+    runs at usable speed on CPU-only boxes; ~14GB. Native tool-calling.
+    On smaller machines pull only the fallback and edit `MODEL` in
+    `main/engine/localSeat.js`.
+  - `ollama pull llama3.1:8b`
+  - Any Ollama model with native tool-calling works here — the lane is
+    vendor-neutral. Avoid dense models ≥13B on CPU-only boxes (too slow),
+    and plain code models (codellama/codestral/deepseek-coder) or Gemma,
+    which don't emit `tool_calls` and so break the gated file tools.
 
 ## What the shell does
 
