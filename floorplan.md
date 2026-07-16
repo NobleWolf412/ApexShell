@@ -26,12 +26,16 @@ ApexShell/
 │   ├── bus.js             typed message bus (renderer⇄main), register('type', fn)
 │   ├── seats.js           seat lifecycle, presets, launch config, restore
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
+│   ├── tasks.js           the WORKFLOW LAYER: task board store + persona
+│   │                      delegation chains (routes, handoff gates, bounce)
 │   ├── engine/            THE ENGINE (Electron-free, harness-gated)
 │   │   ├── seatHost.js    seat roster/truth; create/close/wrap/permissions
 │   │   ├── claudeSeat.js  Claude stream-json lane (spawns `claude -p`)
 │   │   ├── codexSeat.js   Codex app-server lane (JSON-RPC; owned chat, R33)
 │   │   ├── localSeat.js   Ollama lane (chat + gated file tools)
 │   │   ├── ptySeat.js     ConPTY lane (any terminal CLI, xterm-rendered)
+│   │   ├── handoff.js     apex-handoff packet contract (parse + strict
+│   │   │                  allowlist validation of untrusted seat output)
 │   │   └── transcripts.js transcript backfill parser (resume support)
 │   ├── monitors/          tracker data plane
 │   │   ├── index.js       config load + source lifecycle (panes.json →
@@ -50,6 +54,7 @@ ApexShell/
 │   ├── shell.js           blinds/tabs geometry, dock registration, menu,
 │   │                      zoom, close gates
 │   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel
+│   ├── taskBoard.js       the TASKS dock pane (workflow-layer projection)
 │   ├── termView.js        xterm mount for PTY seats
 │   ├── terminalDock.js    built-in TERMINAL dock projection
 │   ├── monitors.js        tracker grid renderer (widget kinds)
@@ -132,9 +137,48 @@ Launch dial resolution: seat `current` → seat `default` → `_default` →
 hard `manual`. `_workspace` sets the bare default cwd; preset `cwd` and
 `setDefaultCwd` override.
 
+## The workflow layer — tasks, routes, delegation
+
+`main/tasks.js` (core module, registered after extensions so routes can
+validate against live presets) + `renderer/taskBoard.js` (the TASKS dock
+pane) + `main/engine/handoff.js` (pure packet contract).
+
+- A **task** = title + repo cwd + a **route** of persona presets
+  (`Architect → Auditor → Coder`). State: `state/tasks.json`; saved route
+  templates: `state/routes.json`. Tasks group per repo on the board.
+- Each **step** runs in its own seat, launched with a composed kickoff:
+  `[seat-launch]` + the persona's own kickoff + an `<apex-task>` block
+  carrying the repo cwd, the PERSONA HOME (absolute — task cwd overrides
+  the preset cwd, so relative memory paths would otherwise orphan), the
+  previous step's packet, and the completion contract.
+- A step signals completion by ending its final message with one fenced
+  ```apex-handoff``` JSON block: `status done | needs-decision | bounce`,
+  plus summary/findings/decision/artifacts. The content is UNTRUSTED —
+  `handoff.js` validates against a strict allowlist; a packet can never
+  name a target, route, cwd, or permission (targets come only from the
+  task's stored route).
+- **Manual tasks**: the packet lands on the card; Delegate → advances.
+  **Auto tasks** (`auto` flag): done → wrap+close the seat, launch the next
+  step unasked; bounce → resume the PREVIOUS step's session with the
+  findings (max 2 bounces; review steps are always fresh seats —
+  independence preserved); needs-decision → pause for the user.
+- **Gates** (chain stops, tab dot pulses, toast): malformed/missing packet,
+  step error/seat death, decision needed, bounce limit, chain complete.
+  The seat stays open on packet gates — answer in its chat and the observer
+  keeps parsing every later result.
+- Memory stays SILOED per persona; handoffs carry packets, never shared
+  context. seats.js exposes a narrow internal seam for this module
+  (`observeSeats`, `createTaskSeat`, `presetInfo/Names`, `seatCommand`,
+  `seatEntry`, `closeSeat`) — deliberately NOT part of the extension ctx.
+
 ## Verification duties (inherited by anyone who edits)
 
 - Engine change → `node test/engine-harness.js` must pass whole.
+- Workflow-layer change → `node test/taskboard-drill.js` (headless state
+  machine + packet contract). Full-stack proof on demand: park the electron
+  launcher stub (`node_modules/electron/dist/resources/app` — it hijacks
+  every electron invocation to main.js), then `npx electron test/live-chain`
+  runs a REAL 2-step haiku chain end-to-end (~2 short sessions).
 - Window change → `APEX_SMOKE=1` smoke (exit 0 = no renderer errors).
   Affordances: `APEX_SMOKE_DOCK=<tab>` opens a pane, `APEX_SMOKE_SHOT=x.png`
   screenshots, `APEX_SMOKE_PTY=1` mounts a ConPTY seat, `APEX_SMOKE_CFG=1`

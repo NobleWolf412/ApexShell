@@ -31,6 +31,17 @@ window.ApexChat = (function () {
 
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // ---------- repo identity (multi-repo work) ----------
+  // A chat's repo shows as a small tab chip, hue derived from the path so the
+  // same repo always wears the same color — scannable at a glance.
+  const repoName = (cwd) => (String(cwd || '').split(/[\\/]/).filter(Boolean).pop() || '');
+  const repoHue = (cwd) => {
+    let h = 0;
+    const s = String(cwd || '').toLowerCase();
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 360;
+  };
+
   // Markdown-lite over ESCAPED text — fenced code, inline code, bold,
   // heading lines. Model output never reaches innerHTML unescaped. The shared
   // linkifier recognizes bounded Windows paths and visible-target HTTP(S).
@@ -322,6 +333,24 @@ window.ApexChat = (function () {
       const label = document.createElement('span');
       label.className = 't';
       label.textContent = c.title;
+      // repo chip: which folder this chat works out of (hue is repo-stable)
+      if (c.cwd) {
+        const repo = document.createElement('span');
+        repo.className = 'repoBadge';
+        repo.textContent = repoName(c.cwd);
+        repo.title = 'working directory: ' + c.cwd;
+        repo.style.color = 'hsl(' + repoHue(c.cwd) + ' 55% 72%)';
+        repo.style.borderColor = 'hsl(' + repoHue(c.cwd) + ' 45% 45%)';
+        label.appendChild(repo);
+      }
+      // chain chip (task board): "⛓ 2/3" on a seat running a route step
+      if (c.chainBadge) {
+        const chip = document.createElement('span');
+        chip.className = 'chainBadge';
+        chip.textContent = c.chainBadge;
+        chip.title = 'this seat is running a task-board step';
+        label.appendChild(chip);
+      }
       const x = document.createElement('button');
       x.className = 'x'; x.textContent = '✕'; x.title = 'Close now (no wrap-up)';
       x.onclick = (e) => { e.stopPropagation(); ApexBus.post('seatClose', { id }); removeChat(id); };
@@ -804,6 +833,8 @@ window.ApexChat = (function () {
 
   function mountSeat(m) {
     const c = createChat(m.id, m.title, m.pty);
+    // which repo this seat works out of — badges the tab; multi-repo truth
+    if (m.cwd && c.cwd !== m.cwd) { c.cwd = m.cwd; renderTabs(); }
     if (c.pty) return;
     // seed the session id early — a resumed CLI is MUTE until first input
     // (J8), so no init ever comes to fill it (the header that displayed it is
@@ -1060,9 +1091,30 @@ window.ApexChat = (function () {
     }
     const hist = (history[persona || 'Seat'] || history[persona] || []);
     if (hist.length && persona) {
-      add('HISTORY — resume', null, true);
-      for (const h of hist.slice(0, 12))
-        add(h.title, () => ApexBus.post('seatCreate', { persona, resume: h.sessionId }));
+      // Grouped by repo when the history spans more than one — a resume
+      // carries its recorded cwd back so the chat reopens IN ITS OWN REPO
+      // (main validates the path; unrecorded/legacy entries fall through to
+      // the persona default, same as before).
+      const repos = new Set(hist.slice(0, 12).map((h) => h.cwd || ''));
+      if (repos.size > 1) {
+        const groups = new Map();
+        for (const h of hist.slice(0, 12)) {
+          const key = h.cwd || '';
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(h);
+        }
+        for (const [cwd, entries] of groups) {
+          add('RESUME — ' + (cwd ? repoName(cwd).toUpperCase() : 'UNKNOWN REPO'), null, true);
+          for (const h of entries)
+            add(h.title, () => ApexBus.post('seatCreate',
+              { persona, resume: h.sessionId, cwd: h.cwd }));
+        }
+      } else {
+        add('HISTORY — resume', null, true);
+        for (const h of hist.slice(0, 12))
+          add(h.title, () => ApexBus.post('seatCreate',
+            { persona, resume: h.sessionId, cwd: h.cwd }));
+      }
     }
     const r = btn.getBoundingClientRect();
     railMenu.hidden = false;
@@ -1251,6 +1303,15 @@ window.ApexChat = (function () {
   return { openRailMenu, scheduleHide, hideRailMenu,
            showDefaults: (persona) => { if (cfgShow) cfgShow(persona); },
            newSeat: (persona) => ApexBus.post('seatCreate', { persona }),
+           // task board hooks: chain chip on the tab + focus a step's seat
+           setSeatBadge: (id, text) => {
+             const c = chats.get(id);
+             if (!c) return;
+             c.chainBadge = text || '';
+             renderTabs();
+           },
+           focusSeat: (id) => { if (chats.has(id)) switchTo(id); },
+           hasSeat: (id) => chats.has(id),
            // for Safe quit: chats mid-turn or waiting on a permission answer
            busyCount: () => [...chats.values()]
              .filter((c) => !c.dead && (c.busy || c.permQueue.length)).length };

@@ -1,0 +1,552 @@
+// Apex — the workflow layer (Task Board + delegation). A task is a per-repo
+// work item that follows a ROUTE of personas (Architect → Auditor → Coder);
+// each step runs in its own seat, launched with a composed kickoff, and
+// signals completion with an apex-handoff packet (main/engine/handoff.js).
+//
+// CORE module, not an extension: it must observe every seat projection event,
+// create seats and learn their ids, and drive seat verbs — none of which the
+// extension ctx exposes. It rides the narrow seam seats.js exports for it.
+//
+// Memory stays SILOED per persona — handoffs carry structured packets, never
+// shared context. The Auditor's independence is the point of the second
+// opinion; a bounce resumes the previous step's session (the coder keeps its
+// context) while every review step is always a fresh seat.
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const store = require('./store');
+const handoff = require('./engine/handoff');
+
+const DONE_CAP = 50;          // pruned done/failed tasks kept for the history
+const TEXT_TAIL_CAP = 64 * 1024;   // per-turn text accumulator (keep the tail)
+const WRAP_BACKSTOP_MS = 12000;    // close a wrapped seat even if no result lands
+const MAX_ROUTE = 8;
+
+// Gates — every reason the chain stops for the user.
+// malformed-packet | no-packet | step-error | decision | bounce-limit | complete
+
+let api = null;               // { bus, seats } — injected for the headless drill
+let TASKS_FILE = null;
+let ROUTES_FILE = null;
+let tasks = [];
+let routes = [];
+const bindings = new Map();   // seatId -> { taskId, stepIndex, buf }
+const wraps = new Map();      // seatId -> backstop timer (wrap sent, close pending)
+let unobserve = null;
+
+const now = () => Date.now();
+const newId = () => 't-' + now() + '-' + Math.random().toString(36).slice(2, 6);
+const byId = (id) => tasks.find((t) => t.id === id) || null;
+const toast = (text) => api.bus.post('toast', { text });
+
+function save() {
+  store.writeJsonAtomic(TASKS_FILE, { schema: 1, tasks });
+}
+function publish() {
+  save();
+  api.bus.post('taskList', { tasks });
+}
+function publishRoutes() {
+  store.writeJsonAtomic(ROUTES_FILE, { schema: 1, routes });
+  api.bus.post('taskRoutes', { routes });
+}
+
+function attention(task, reason, detail) {
+  task.status = 'needs-attention';
+  task.attention = { reason, detail: String(detail || '') };
+  task.updatedAt = now();
+  toast('task "' + task.title + '" needs you — ' + reason +
+        (detail ? ': ' + String(detail).slice(0, 120) : ''));
+  publish();
+}
+
+// ---------- kickoff composition ----------
+function composeKickoff(task, stepIndex) {
+  const step = task.steps[stepIndex];
+  const total = task.steps.length;
+  const preset = api.seats.presetInfo(step.persona) || {};
+  const routeStr = task.steps.map((s) => s.persona).join(' → ');
+  const prev = stepIndex > 0 ? task.steps[stepIndex - 1] : null;
+  const lines = [
+    '<apex-task id="' + task.id + '" step="' + (stepIndex + 1) + '/' + total + '">',
+    'TASK: ' + task.title,
+    'REPO (your working directory): ' + task.cwd,
+  ];
+  // Persona kickoffs may reference memory/ RELATIVELY — under a task-cwd
+  // override that would orphan the persona's memory. Hand it home explicitly.
+  if (preset.cwd && preset.cwd !== task.cwd)
+    lines.push('PERSONA HOME (your memory/ and log/ live HERE — always use these absolute paths): ' + preset.cwd);
+  lines.push('You are step ' + (stepIndex + 1) + ' of ' + total + ' on the route: ' + routeStr + '.');
+  if (prev && prev.packet) {
+    lines.push('', handoff.renderPacket(prev.packet, prev.persona), '');
+  }
+  // A retried/fresh-relaunched step that was bounced carries the reviewer's
+  // findings so the rework brief survives losing the original session.
+  if (step.bounceFindings && step.bounceFindings.findings) {
+    lines.push('', '--- REVIEW FINDINGS from ' + step.bounceFindings.from +
+      ' (address these) ---', step.bounceFindings.findings, '--- END FINDINGS ---', '');
+  }
+  lines.push(handoff.contractText(stepIndex > 0));
+  lines.push('</apex-task>');
+  return '[seat-launch] ' + (preset.kickoff ? preset.kickoff + '\n\n' : '') + lines.join('\n');
+}
+
+function bounceText(task, fromPersona, packet, stepIndex) {
+  return [
+    '<apex-task-bounce id="' + task.id + '">',
+    'The next step (' + fromPersona + ') returned this task to you for rework.',
+    'FINDINGS (what must change):',
+    packet.findings || '(none given)',
+    packet.artifacts && packet.artifacts.length
+      ? 'Artifacts:\n' + packet.artifacts.map((a) => '- ' + a).join('\n') : null,
+    '',
+    'Address the findings, then hand off again.',
+    handoff.contractText(stepIndex > 0),
+    '</apex-task-bounce>',
+  ].filter((l) => l !== null).join('\n');
+}
+
+// ---------- step lifecycle ----------
+function startStep(task) {
+  const step = task.steps[task.currentStep];
+  if (!api.seats.presetInfo(step.persona)) {
+    step.status = 'failed';
+    attention(task, 'step-error', 'persona "' + step.persona + '" is not registered');
+    return;
+  }
+  let seatId;
+  try {
+    seatId = api.seats.createTaskSeat({
+      persona: step.persona,
+      title: step.persona + ' ⛓ ' + task.title.slice(0, 30),
+      cwd: task.cwd,
+      kickoff: composeKickoff(task, task.currentStep),
+    });
+  } catch (e) {
+    step.status = 'failed';
+    attention(task, 'step-error', 'seat launch failed: ' + e.message);
+    return;
+  }
+  bindings.set(seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+  Object.assign(step, { status: 'running', seatId, sessionId: null, packet: null,
+                        packetError: null, startedAt: now(), endedAt: 0, waiting: null });
+  task.status = 'running';
+  task.attention = null;
+  task.updatedAt = now();
+  publish();
+}
+
+/** Wrap-then-close a finished step's seat: the persona writes its memory and
+ *  reflection, then the seat closes on its wrap turn's result (backstopped). */
+function wrapAndClose(seatId) {
+  if (!api.seats.seatEntry(seatId)) return;
+  api.seats.seatCommand({ type: 'seatWrap', id: seatId });
+  wraps.set(seatId, setTimeout(() => finishWrap(seatId), WRAP_BACKSTOP_MS));
+}
+function finishWrap(seatId) {
+  const timer = wraps.get(seatId);
+  if (timer) clearTimeout(timer);
+  wraps.delete(seatId);
+  bindings.delete(seatId);
+  api.seats.closeSeat(seatId);
+}
+
+function advance(task) {
+  const step = task.steps[task.currentStep];
+  step.status = 'done';
+  step.endedAt = now();
+  step.waiting = null;
+  if (step.seatId != null) wrapAndClose(step.seatId);
+  task.currentStep++;
+  if (task.currentStep < task.steps.length) {
+    startStep(task);
+  } else {
+    task.status = 'done';
+    task.attention = { reason: 'complete', detail: 'chain complete — review the result' };
+    task.updatedAt = now();
+    toast('chain complete: ' + task.title);
+    publish();
+  }
+}
+
+function bounce(task, fromIndex, packet) {
+  task.bounces++;
+  if (task.bounces > task.maxBounces) {
+    attention(task, 'bounce-limit',
+      'bounced ' + task.bounces + ' times (max ' + task.maxBounces + ') — settle it by hand');
+    return;
+  }
+  const from = task.steps[fromIndex];
+  from.status = 'bounced';
+  from.endedAt = now();
+  if (from.seatId != null) wrapAndClose(from.seatId);
+  task.currentStep = fromIndex - 1;
+  const prev = task.steps[task.currentStep];
+  prev.bounceFindings = { from: from.persona,
+                          findings: packet.findings, artifacts: packet.artifacts };
+  Object.assign(prev, { status: 'running', startedAt: now(), endedAt: 0,
+                        packet: null, packetError: null, waiting: null });
+  // Resume the previous step's SESSION — the worker keeps its full context.
+  // (Review steps are always fresh seats; independence is preserved because
+  // only the WORKER's session round-trips.)
+  if (prev.sessionId && api.seats.presetInfo(prev.persona)) {
+    try {
+      const seatId = api.seats.createTaskSeat({
+        persona: prev.persona,
+        title: prev.persona + ' ⛓ ' + task.title.slice(0, 30),
+        cwd: task.cwd,
+        resume: prev.sessionId,
+      });
+      prev.seatId = seatId;
+      bindings.set(seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+      const text = bounceText(task, from.persona, packet, task.currentStep);
+      api.seats.seatCommand({ type: 'seatSend', id: seatId, text });
+      // seatSend never echoes (the view draws its own bubble at send time) —
+      // same manual user-event post the engine's seatWrap does.
+      api.bus.post('seatEvt', { id: seatId, m: { type: 'user', text } });
+      task.status = 'running';
+      task.attention = null;
+      task.updatedAt = now();
+      publish();
+      return;
+    } catch (e) { /* fall through to the fresh relaunch */ }
+  }
+  prev.sessionId = null;
+  startStep(task);   // fresh seat — composeKickoff folds bounceFindings in
+}
+
+function onPacket(task, stepIndex, packet) {
+  const step = task.steps[stepIndex];
+  step.packet = packet;
+  step.packetError = null;
+  task.updatedAt = now();
+  if (packet.status === 'needs-decision') {
+    // seat stays open — the user answers in its chat; the chain resumes on
+    // the next valid packet (the observer keeps parsing this seat's results).
+    attention(task, 'decision', packet.decision);
+    return;
+  }
+  if (task.status === 'paused') { publish(); return; }
+  if (packet.status === 'bounce') {
+    if (task.auto) { bounce(task, stepIndex, packet); return; }
+    attention(task, 'decision',
+      step.persona + ' wants to bounce this back — findings: ' + packet.findings);
+    return;
+  }
+  // done
+  if (task.auto) { advance(task); return; }
+  toast('task "' + task.title + '": ' + step.persona + ' finished — ready to delegate');
+  publish();
+}
+
+// ---------- the seat observer (the whole trick) ----------
+function onSeatMessage(m) {
+  // wrap-close handshake first: a wrapped seat's next result closes it,
+  // regardless of task binding state.
+  if (m.type === 'seatEvt' && m.m && m.m.type === 'result' && wraps.has(m.id)) {
+    finishWrap(m.id);
+    return;
+  }
+  if (m.type === 'seatGone') { bindings.delete(m.id); return; }
+  if (m.type !== 'seatEvt') return;
+  const b = bindings.get(m.id);
+  if (!b) return;
+  const task = byId(b.taskId);
+  if (!task) { bindings.delete(m.id); return; }
+  const step = task.steps[b.stepIndex];
+  if (!step || step.seatId !== m.id) return;
+  const ev = m.m;
+
+  if (ev.type === 'init' && ev.sessionId) {
+    step.sessionId = ev.sessionId;
+    save();
+    return;
+  }
+  if (ev.type === 'text' && typeof ev.text === 'string') {
+    b.buf += ev.text + '\n';
+    if (b.buf.length > TEXT_TAIL_CAP) b.buf = b.buf.slice(-TEXT_TAIL_CAP);
+    return;
+  }
+  if (ev.type === 'permission') {
+    // informational — the chat card is answerable; the card + badge just say
+    // WHY nothing is moving. Truly unattended chains want acceptEdits/dontAsk.
+    step.waiting = 'permission';
+    publish();
+    return;
+  }
+  if (ev.type === 'dead') {
+    if (step.status === 'running') {
+      step.status = 'failed';
+      step.endedAt = now();
+      bindings.delete(m.id);
+      attention(task, 'step-error', 'seat exited (code ' + ev.code + ') — Retry relaunches the step');
+    }
+    return;
+  }
+  if (ev.type === 'result') {
+    const turnText = b.buf;
+    b.buf = '';
+    step.waiting = null;
+    if (step.status !== 'running') return;
+    const { raw, error } = handoff.extractPacket(turnText);
+    if (error === 'no-packet') {
+      step.packetError = 'no-packet';
+      // Pause loudly only for AUTO chains mid-run; a manual task just shows
+      // "no packet yet" on its card — the operator may be chatting with it.
+      if (task.auto && task.status === 'running')
+        attention(task, 'no-packet',
+          'the seat finished a turn without a handoff packet — reply in its chat or Retry');
+      else publish();
+      return;
+    }
+    if (error) {
+      step.packetError = error;
+      attention(task, 'malformed-packet', error);
+      return;
+    }
+    const v = handoff.validatePacket(raw, { canBounce: b.stepIndex > 0 });
+    if (!v.packet) {
+      step.packetError = v.error;
+      attention(task, 'malformed-packet', v.error);
+      return;
+    }
+    onPacket(task, b.stepIndex, v.packet);
+  }
+}
+
+// ---------- verbs ----------
+function normalizeRoute(input) {
+  if (!Array.isArray(input)) return null;
+  const steps = input
+    .map((s) => typeof s === 'string' ? s : (s && s.persona))
+    .filter((p) => typeof p === 'string' && p.trim())
+    .map((p) => p.trim());
+  if (!steps.length || steps.length > MAX_ROUTE) return null;
+  return steps;
+}
+
+function taskCreate(msg) {
+  const title = (typeof msg.title === 'string' ? msg.title.trim() : '').slice(0, 200);
+  if (!title) { toast('a task needs a title'); return; }
+  const cwd = typeof msg.cwd === 'string' ? msg.cwd.trim() : '';
+  if (!cwd || !path.isAbsolute(cwd) || !fs.existsSync(cwd)) {
+    toast('task repo folder must be an existing absolute path');
+    return;
+  }
+  let routeSteps = null;
+  if (msg.routeName) {
+    const r = routes.find((x) => x.name === msg.routeName);
+    if (r) routeSteps = normalizeRoute(r.steps);
+  }
+  if (!routeSteps) routeSteps = normalizeRoute(msg.route);
+  if (!routeSteps) { toast('a task needs a route of 1–' + MAX_ROUTE + ' personas'); return; }
+  const known = api.seats.presetNames();
+  const unknown = routeSteps.filter((p) => !known.includes(p));
+  if (unknown.length)
+    toast('route names unregistered personas (they will fail to launch): ' + unknown.join(', '));
+  const task = {
+    id: newId(),
+    title,
+    cwd,
+    status: 'open',
+    auto: !!msg.auto,
+    route: routeSteps.map((persona) => ({ persona })),
+    currentStep: 0,
+    bounces: 0,
+    maxBounces: 2,
+    steps: routeSteps.map((persona, index) => ({
+      index, persona, status: 'pending', seatId: null, sessionId: null,
+      packet: null, packetError: null, bounceFindings: null, waiting: null,
+      startedAt: 0, endedAt: 0,
+    })),
+    attention: null,
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  tasks.unshift(task);
+  prune();
+  if (msg.start) startStep(task);
+  else publish();
+}
+
+function prune() {
+  const settled = tasks.filter((t) => t.status === 'done' || t.status === 'failed');
+  if (settled.length <= DONE_CAP) return;
+  const drop = new Set(settled.slice(DONE_CAP).map((t) => t.id));
+  tasks = tasks.filter((t) => !drop.has(t.id));
+}
+
+function taskStart(msg) {
+  const task = byId(msg.id);
+  if (!task) return;
+  const step = task.steps[task.currentStep];
+  if (!step || step.status === 'running') return;
+  if (task.status === 'done') return;
+  startStep(task);
+}
+
+function taskDelegate(msg) {
+  const task = byId(msg.id);
+  if (!task || task.status === 'done') return;
+  const step = task.steps[task.currentStep];
+  if (!step) return;
+  if (step.status === 'pending') { startStep(task); return; }   // Delegate on a fresh task = start it
+  let ok = step.packet && step.packet.status === 'done';
+  if (!ok && typeof msg.summary === 'string' && msg.summary.trim()) {
+    // the operator's own words stand in for a missing packet — manual fallback
+    step.packet = { status: 'done', summary: msg.summary.trim().slice(0, handoff.TEXT_CAP),
+                    findings: '', decision: '', artifacts: [] };
+    ok = true;
+  }
+  if (!ok) {
+    toast('no completed handoff packet yet — let the seat finish, or type a summary to hand off manually');
+    return;
+  }
+  advance(task);
+}
+
+function taskRetry(msg) {
+  const task = byId(msg.id);
+  if (!task || task.status === 'done') return;
+  const step = task.steps[task.currentStep];
+  if (!step) return;
+  if (step.seatId != null && api.seats.seatEntry(step.seatId)) {
+    bindings.delete(step.seatId);
+    api.seats.closeSeat(step.seatId);
+  }
+  Object.assign(step, { seatId: null, packet: null, packetError: null, waiting: null });
+  startStep(task);
+}
+
+function taskPause(msg) {
+  const task = byId(msg.id);
+  if (!task || task.status === 'done' || task.status === 'failed') return;
+  task.status = 'paused';
+  task.updatedAt = now();
+  publish();
+}
+
+function taskResume(msg) {
+  const task = byId(msg.id);
+  if (!task || task.status !== 'paused') return;
+  const step = task.steps[task.currentStep];
+  task.status = step && step.status === 'running' ? 'running' : 'open';
+  task.attention = null;
+  task.updatedAt = now();
+  // a done-packet that landed while paused advances now (auto chains)
+  if (task.auto && step && step.packet && step.packet.status === 'done'
+      && step.status === 'running') { advance(task); return; }
+  publish();
+}
+
+function taskUpdate(msg) {
+  const task = byId(msg.id);
+  if (!task || !msg.patch || typeof msg.patch !== 'object') return;
+  // allowlisted keys only — the bus is not a free write path into the store
+  if (typeof msg.patch.title === 'string' && msg.patch.title.trim())
+    task.title = msg.patch.title.trim().slice(0, 200);
+  if (typeof msg.patch.auto === 'boolean') task.auto = msg.patch.auto;
+  task.updatedAt = now();
+  publish();
+}
+
+function taskDelete(msg) {
+  const task = byId(msg.id);
+  if (!task) return;
+  for (const [seatId, b] of bindings) if (b.taskId === task.id) bindings.delete(seatId);
+  tasks = tasks.filter((t) => t.id !== task.id);
+  publish();
+}
+
+function taskRouteSave(msg) {
+  const name = (typeof msg.name === 'string' ? msg.name.trim() : '').slice(0, 60);
+  const steps = normalizeRoute(msg.steps);
+  if (!name || !steps) { toast('a route needs a name and 1–' + MAX_ROUTE + ' personas'); return; }
+  routes = routes.filter((r) => r.name !== name);
+  routes.push({ name, steps: steps.map((persona) => ({ persona })) });
+  publishRoutes();
+}
+
+function taskRouteDelete(msg) {
+  routes = routes.filter((r) => r.name !== msg.name);
+  publishRoutes();
+}
+
+// ---------- registration ----------
+function register(deps) {
+  api = {
+    bus: (deps && deps.bus) || require('./bus'),
+    seats: (deps && deps.seats) || require('./seats'),
+  };
+  const stateDir = (deps && deps.stateDir) || path.join(__dirname, '..', 'state');
+  TASKS_FILE = path.join(stateDir, 'tasks.json');
+  ROUTES_FILE = path.join(stateDir, 'routes.json');
+
+  const savedTasks = readState(TASKS_FILE);
+  tasks = Array.isArray(savedTasks.tasks) ? savedTasks.tasks : [];
+  const savedRoutes = readState(ROUTES_FILE);
+  routes = Array.isArray(savedRoutes.routes) ? savedRoutes.routes : [];
+
+  // Boot reconciliation: a step left 'running' has no live seat anymore (seat
+  // ids never survive a restart — only sessionIds do). Surface it, don't guess.
+  for (const task of tasks) {
+    let touched = false;
+    for (const step of task.steps || []) {
+      if (step.status === 'running') {
+        step.status = 'failed';
+        step.seatId = null;
+        step.waiting = null;
+        touched = true;
+      }
+    }
+    if (touched && task.status !== 'done') {
+      task.status = 'needs-attention';
+      task.attention = { reason: 'step-error', detail: 'app restarted mid-step — Retry relaunches it' };
+    }
+  }
+  save();
+
+  unobserve = api.seats.observeSeats(onSeatMessage);
+
+  const verbs = { taskCreate, taskStart, taskDelegate, taskPause, taskResume,
+                  taskRetry, taskUpdate, taskDelete, taskRouteSave, taskRouteDelete };
+  for (const [type, fn] of Object.entries(verbs))
+    api.bus.on(type, (msg) => { try { fn(msg || {}); } catch (e) { console.error('[tasks] ' + type + ':', e.message); } });
+
+  // pull-based reads (a reloaded renderer asks) + the ready push
+  api.bus.on('taskList', () => api.bus.post('taskList', { tasks }));
+  api.bus.on('taskRoutes', () => api.bus.post('taskRoutes', { routes }));
+  api.bus.on('taskPickCwd', async () => {
+    let picked;
+    try {
+      // Electron resolved lazily — headless drills never touch it
+      const { dialog } = require('electron');
+      picked = await dialog.showOpenDialog({
+        title: 'Choose the task\'s repo folder', properties: ['openDirectory'],
+      });
+    } catch (e) { toast('could not open the folder picker: ' + e.message); return; }
+    if (!picked.canceled && picked.filePaths[0])
+      api.bus.post('taskCwdPicked', { path: picked.filePaths[0] });
+  });
+  api.bus.on('ready', () => {
+    api.bus.post('taskList', { tasks });
+    api.bus.post('taskRoutes', { routes });
+  });
+}
+
+function readState(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
+}
+
+function dispose() {
+  for (const timer of wraps.values()) clearTimeout(timer);
+  wraps.clear();
+  bindings.clear();
+  if (unobserve) unobserve();
+}
+
+// exposed for the headless drill only
+const _test = { get tasks() { return tasks; }, byId, composeKickoff, onSeatMessage };
+
+module.exports = { register, dispose, _test };

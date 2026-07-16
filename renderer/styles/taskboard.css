@@ -1,0 +1,98 @@
+/* Apex — the TASKS dock pane (workflow layer). Same visual family as the
+   viewer/terminal panes: surface + edge chrome, dim labels, accent activity. */
+
+.tasksPane { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+
+.tasksPane .tkHead { display: flex; align-items: center; gap: 10px; }
+.tasksPane .tkTitle { font-size: 11px; letter-spacing: .2em; font-weight: 600;
+  color: var(--dim); flex: 1; }
+.tasksPane .tkNew { border: 1px solid var(--edge); background: var(--surface);
+  color: var(--text); border-radius: 7px; padding: 4px 10px; font-size: 11px;
+  cursor: pointer; }
+.tasksPane .tkNew:hover { border-color: var(--accent); }
+
+/* tab activity dot — needs-attention tasks pulse like the viewer's vDot */
+.dockTab .tkDot { position: absolute; right: 7px; bottom: 10px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--warning, var(--accent));
+  animation: vDotPulse 1.4s ease-in-out infinite; }
+.dockTab .tkDot[hidden] { display: none; }
+
+/* ---------- new-task form ---------- */
+.tasksPane .tkForm { display: flex; flex-direction: column; gap: 8px;
+  border: 1px solid var(--edge); border-radius: 10px; padding: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent) 4%); }
+.tasksPane .tkForm[hidden] { display: none; }
+.tasksPane .tkForm input[type="text"], .tasksPane .tkForm select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; min-width: 0; }
+.tasksPane .tkRow { display: flex; gap: 8px; align-items: center; }
+.tasksPane .tkRow > input, .tasksPane .tkRow > select { flex: 1; }
+.tasksPane .tkForm button { border: 1px solid var(--edge); background: var(--surface);
+  color: var(--dim); border-radius: 6px; padding: 4px 9px; font-size: 11px; cursor: pointer; }
+.tasksPane .tkForm button:hover { color: var(--text); border-color: var(--accent); }
+.tasksPane .tkCreate { color: var(--text) !important; border-color: var(--accent) !important; }
+.tasksPane .tkChips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  min-height: 24px; }
+.tasksPane .tkChip { display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--edge); border-radius: 999px; padding: 2px 4px 2px 10px;
+  font-size: 11px; color: var(--text); background: var(--bg); }
+.tasksPane .tkChip button { border: 0; background: none; color: var(--dim);
+  cursor: pointer; font-size: 10px; padding: 0 4px; }
+.tasksPane .tkChip button:hover { color: var(--critical); }
+.tasksPane .tkArrow, .tasksPane .tkChipsEmpty { color: var(--faint); font-size: 11px; }
+.tasksPane .tkAuto { display: flex; align-items: center; gap: 5px; font-size: 11px;
+  color: var(--dim); flex: 1; }
+.tasksPane .tkHintTx { border: 1px solid var(--edge); border-radius: 50%;
+  width: 14px; height: 14px; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 9px; color: var(--faint); cursor: help; }
+.tasksPane .tkFormFoot { justify-content: flex-end; }
+
+/* ---------- repo groups + task cards ---------- */
+.tasksPane .tkList { display: flex; flex-direction: column; gap: 8px; }
+.tasksPane .tkGroup { font-size: 10.5px; letter-spacing: .18em; font-weight: 600;
+  color: var(--dim); text-transform: uppercase; border-bottom: 1px solid var(--edge);
+  padding: 8px 0 4px; }
+.tasksPane .tkCard { border: 1px solid var(--edge); border-radius: 10px;
+  padding: 10px 12px; background: var(--surface); display: flex;
+  flex-direction: column; gap: 6px; }
+.tasksPane .tkCard.tk-needs-attention { border-color: var(--warning, var(--accent)); }
+.tasksPane .tkCard.tk-done { opacity: .62; }
+.tasksPane .tkCardHead { display: flex; align-items: baseline; gap: 8px; }
+.tasksPane .tkCardTitle { flex: 1; font-size: 12.5px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tasksPane .tkBadge { font-size: 10px; letter-spacing: .06em; color: var(--dim);
+  border: 1px solid var(--edge); border-radius: 999px; padding: 1px 8px;
+  white-space: nowrap; }
+.tasksPane .tk-needs-attention .tkBadge { color: var(--warning, var(--accent));
+  border-color: var(--warning, var(--accent)); }
+.tasksPane .tk-running .tkBadge { color: var(--accent); border-color: var(--accent); }
+.tasksPane .tkRoute { font-size: 11px; color: var(--dim); letter-spacing: .04em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tasksPane .tkStep { font-size: 11px; color: var(--faint); }
+.tasksPane .tkAttention { font-size: 11px; color: var(--warning, var(--accent));
+  border-left: 2px solid var(--warning, var(--accent)); padding-left: 8px; }
+.tasksPane .tkBtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.tasksPane .tkBtns button { border: 1px solid var(--edge); background: none;
+  color: var(--dim); border-radius: 6px; padding: 3px 8px; font-size: 10.5px;
+  cursor: pointer; }
+.tasksPane .tkBtns button:hover { color: var(--text); border-color: var(--accent); }
+.tasksPane .tkBtns .tkGo { color: var(--text); border-color: var(--accent); }
+.tasksPane .tkBtns .tkX { margin-left: auto; }
+.tasksPane .tkBtns .tkX:hover { color: var(--critical); border-color: var(--critical); }
+.tasksPane .tkFold { font-size: 11px; }
+.tasksPane .tkFoldBtn { border: 0; background: none; color: var(--faint);
+  cursor: pointer; font-size: 10.5px; padding: 0; }
+.tasksPane .tkFoldBtn:hover { color: var(--dim); }
+.tasksPane .tkFoldRow { color: var(--dim); padding: 3px 0 0 12px;
+  border-left: 1px solid var(--edge); margin-left: 3px; margin-top: 4px; }
+
+/* chain chip on a chat tab — the seat is running a task-board step */
+.chatTab .chainBadge { margin-left: 6px; font-size: 9.5px; color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+
+/* repo chip on a chat tab — which folder the seat works out of (hue is
+   repo-stable, set inline from the path hash) */
+.chatTab .repoBadge { margin-left: 6px; font-size: 9px; letter-spacing: .04em;
+  border: 1px solid var(--edge); border-radius: 999px; padding: 0 6px;
+  white-space: nowrap; opacity: .9; }

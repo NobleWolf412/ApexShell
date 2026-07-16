@@ -40,12 +40,27 @@ function validatePresetNames(owner, names) {
   });
 }
 
+// A preset that loses a name conflict must not vanish silently (it did — the
+// second extension's persona just never appeared). Queue the story; replayed
+// as toasts once a renderer exists, same pattern as the extension-load
+// failures (R32).
+const presetConflicts = [];
+
 const extensionApi = {
-  registerPreset(p) {
-    if (p && typeof p.name === 'string' && p.name && p.name.toLowerCase() !== 'seat') {
-      presets.set(p.name, p);
-      announcePresets();
+  registerPreset(p, owner) {
+    if (!p || typeof p.name !== 'string' || !p.name || p.name.toLowerCase() === 'seat') return;
+    const who = (typeof owner === 'string' && owner) ? owner : 'unknown';
+    const conflict = presetNameConflict(who, p.name);
+    if (conflict) {
+      // First registration wins — extension load order is readdir(), which is
+      // deterministic. Losing is fine; losing SILENTLY was the bug.
+      const text = 'Persona "' + p.name + '" from ' + who + ' skipped: ' + conflict.reason + '.';
+      presetConflicts.push(text);
+      console.error('[seats] ' + text);
+      return;
     }
+    presets.set(p.name, { ...p, owner: who });
+    announcePresets();
   },
   checkPresetNames(owner, names) {
     return validatePresetNames(owner, names)
@@ -136,12 +151,67 @@ function launchFor(persona) {
 let host = null;
 let createFromMessage = null;
 
+// ---- workflow-layer internal API (main/tasks.js) ----------------------------
+// The chain engine must observe every seat projection event, create seats and
+// learn their ids, and drive seat verbs — none of which the extension ctx
+// exposes (deliberately: that surface is a public commitment; this one is a
+// narrow in-house seam).
+const seatObservers = new Set();
+function observeSeats(fn) {
+  if (typeof fn !== 'function') return () => {};
+  seatObservers.add(fn);
+  return () => seatObservers.delete(fn);
+}
+
+/** Create a chain-step seat and RETURN its id (createFromMessage discards it).
+ *  Launch dials come from the persona's own config; `launch` overrides win. */
+function createTaskSeat({ persona, title, cwd, kickoff, resume, launch }) {
+  if (!host) throw new Error('Seat engine is unavailable.');
+  const name = persona || 'Seat';
+  const merged = Object.assign(launchFor(name), launch || {});
+  const dir = (cwd && fs.existsSync(cwd)) ? cwd : seatCwd(name);
+  const seatTitle = title || name;
+  // Same lane routing as createFromMessage: codex ids are "codex:"-prefixed.
+  const codexResume = resume && String(resume).startsWith('codex:');
+  if (codexResume || (merged.model === 'codex' && !resume)) {
+    return host.create(resume ? null : (kickoff || null), seatTitle,
+      { persona: name, cwd: dir, resume,
+        launch: { model: 'codex', codexModel: merged.codexModel,
+                  effort: merged.effort, permissionMode: merged.permissionMode } });
+  }
+  if (resume && merged.model === 'codex') delete merged.model;   // dial must not leak
+  return host.create(resume ? null : (kickoff || null), seatTitle,
+    { persona: name, cwd: dir, launch: merged, resume });
+}
+
+const presetInfo = (name) => {
+  const p = presets.get(name);
+  return p ? { name: p.name, cwd: p.cwd || null, kickoff: p.kickoff || null,
+               letter: p.letter || null } : null;
+};
+const presetNames = () => [...presets.keys()];
+const seatCommand = (msg) => { if (host) host.handle(msg); };
+const seatEntry = (id) => host ? host.list().find((s) => s.id === id) || null : null;
+/** Close a seat the way the renderer's ✕ does — artifact cleanup included. */
+function closeSeat(id) {
+  if (!host) return;
+  artifacts.seatClosed(id);
+  host.handle({ type: 'seatClose', id });
+  bus.post('seatGone', { id });
+}
+
 function register() {
   const wireLog = store.openLog('seats');
   host = createSeatHost({
     apexRoot: defaultCwd(),          // fallback only — every create passes cwd
     wrapPrompt: () => wrapOverride,  // lazy: extensions register after us
     emit: (m) => {
+      // workflow-layer tap: observers see EVERY projection message (they need
+      // text/result/dead for packet parsing). Try-wrapped and cheap — a
+      // broken observer must never take the wire down.
+      for (const fn of seatObservers) {
+        try { fn(m); } catch (e) { console.error('[seats] observer:', e.message); }
+      }
       if (m.type === 'seatEvt' && m.m.type === 'artifactCandidate') {
         artifacts.candidate(m.id, m.m.path);       // app-level concern, not engine
         return;
@@ -154,8 +224,8 @@ function register() {
       bus.post(m.type, m);
     },
     log: (l) => wireLog(l),
-    record: (persona, sessionId, title) => {
-      store.recordChat(persona, sessionId, title);
+    record: (persona, sessionId, title, cwd) => {
+      store.recordChat(persona, sessionId, title, cwd);
       // push, don't wait for a reload — the rail dropdown reads live state
       bus.post('seatHistory', { history: store.chatHistory() });
     },
@@ -189,6 +259,13 @@ function register() {
     }
     const persona = msg.persona || '';
     const launch = Object.assign(launchFor(persona || 'Seat'), msg.launch || {});
+    // Repo-faithful resume: a chat that ran in repo X must reopen in repo X,
+    // not the persona's default home — otherwise the session's relative work
+    // (and the persona's project-scoped memory rules) silently jump repos.
+    // The renderer passes the history entry's recorded cwd; validate before
+    // trusting anything off the wire.
+    const msgCwd = (typeof msg.cwd === 'string' && path.isAbsolute(msg.cwd) &&
+                    fs.existsSync(msg.cwd)) ? msg.cwd : null;
     // blank seat configured to `agy` = the Gemini terminal (PTY is agy's only
     // viable shape — issue #76). The permissions dial maps to agy's OWN
     // verified flags (platform-watch, v1.1.1): manual = ask in-terminal
@@ -215,7 +292,7 @@ function register() {
       host.create(
         (p && !msg.resume) ? (p.kickoff || null) : null,
         ctitle,
-        { persona: persona || 'Seat', cwd: seatCwd(persona), resume: msg.resume,
+        { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), resume: msg.resume,
           launch: { model: 'codex', codexModel: launch.codexModel,
                     effort: launch.effort,
                     permissionMode: launch.permissionMode } });
@@ -255,7 +332,7 @@ function register() {
     host.create(
       (preset && !msg.resume) ? (preset.kickoff || null) : null,
       title,
-      { persona: persona || 'Seat', cwd: seatCwd(persona), launch, resume: msg.resume });
+      { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), launch, resume: msg.resume });
   };
   bus.on('seatCreate', createFromMessage);
 
@@ -280,7 +357,7 @@ function register() {
     if (msg.effort && !EFFORTS.has(msg.effort)) return;
     if (msg.permissions && !PERMS.has(msg.permissions)) return;
     if (!msg.effort && !msg.permissions) return;
-    const { sessionId, persona, title, mode, model, codexModel, effort } = entry;
+    const { sessionId, persona, title, mode, model, codexModel, effort, cwd } = entry;
     artifacts.seatClosed(msg.id);
     host.handle({ type: 'seatClose', id: msg.id });
     bus.post('seatGone', { id: msg.id });
@@ -290,7 +367,9 @@ function register() {
       if (codexModel) launch.codexModel = codexModel;   // tier survives a codex relaunch
       const eff = msg.effort || effort;      // a permissions restart must not drop effort
       if (eff) launch.effort = eff;
-      host.create(null, title, { persona, cwd: seatCwd(persona), resume: sessionId, launch });
+      // a relaunch must stay in the seat's OWN repo, not the persona default —
+      // an effort/bypass restart mid-task silently jumped repos otherwise
+      host.create(null, title, { persona, cwd: cwd || seatCwd(persona), resume: sessionId, launch });
     }, 2500);
   });
 
@@ -299,7 +378,7 @@ function register() {
   // only; the panel shows RESOLVED values (current → default → _default).
   const readCfg = () => { try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; } };
   const writeCfg = (cfg) => {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+    store.writeJsonAtomic(CONFIG_FILE, cfg);
     wireLog('config write: ' + JSON.stringify(cfg));   // debug-ready: not-saving reports become diagnosable
   };
   const KEYS = ['model', 'effort', 'permissions'];
@@ -377,6 +456,7 @@ function register() {
     postPresets();   // rail buttons rebuild before the roster lands
     bus.post('seatList', { seats: host.list() });
     bus.post('seatHistory', { history: store.chatHistory() });
+    presetConflicts.forEach((text) => bus.post('toast', { text }));
   });
 }
 
@@ -395,6 +475,7 @@ function snapshotForRestart() {
         persona: seat.persona || 'Seat',
         sessionId: seat.sessionId,
         title: seat.title || seat.persona || 'Seat',
+        cwd: seat.cwd || null,   // restart must not jump the chat to another repo
         launch,
       });
     } else if (seat.pty) {
@@ -427,6 +508,7 @@ function restoreChats(entries) {
       persona: typeof saved.persona === 'string' ? saved.persona : 'Seat',
       resume: saved.sessionId,
       title: typeof saved.title === 'string' ? saved.title : '',
+      cwd: typeof saved.cwd === 'string' ? saved.cwd : undefined,   // validated downstream
       launch,
     });
     restored++;
@@ -452,5 +534,13 @@ module.exports = {
   snapshotForRestart,
   restoreChats,
   extensionApi,
+  // workflow-layer seam (main/tasks.js) — internal, not part of the ctx surface
+  observeSeats,
+  createTaskSeat,
+  presetInfo,
+  presetNames,
+  seatCommand,
+  seatEntry,
+  closeSeat,
 };
 

@@ -12,6 +12,7 @@ const bus = require('./bus');
 const theme = require('./theme');
 const monitors = require('./monitors');
 const seats = require('./seats');
+const tasks = require('./tasks');
 const terminal = require('./terminal');
 const artifacts = require('./artifacts');
 const extensions = require('./extensions');
@@ -111,6 +112,7 @@ function createWindow() {
   monitors.register();
   seats.register();
   extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
+  tasks.register();   // after extensions — routes validate against live presets
   terminal.register({ cwd: seats.defaultCwd });
   liveUpdate.register(() => win);
   liveUpdate.consumeRestore();
@@ -310,6 +312,7 @@ app.on('window-all-closed', () => {
   try { usage.dispose(); } catch (e) { console.error('usage.dispose:', e.message); }
   try { liveUpdate.dispose(); } catch (e) { console.error('liveUpdate.dispose:', e.message); }
   try { monitors.dispose(); } catch (e) { console.error('monitors.dispose:', e.message); }
+  try { tasks.dispose(); } catch (e) { console.error('tasks.dispose:', e.message); }
   try { seats.dispose(); } catch (e) { console.error('seats.dispose:', e.message); }
   try { terminal.dispose(); } catch (e) { console.error('terminal.dispose:', e.message); }
   try { artifacts.dispose(); } catch (e) { console.error('artifacts.dispose:', e.message); }

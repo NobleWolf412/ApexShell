@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="styles/monitors.css">
 <link rel="stylesheet" href="styles/chat.css">
 <link rel="stylesheet" href="lib/xterm/xterm.css">
+<link rel="stylesheet" href="styles/taskboard.css">
 <link rel="stylesheet" href="styles/theme.css">
 </head>
 <body>
@@ -88,6 +89,21 @@
     </div>
     <div class="dockTab" data-tab="terminal">TERMINAL</div>
   </div>
+  <!-- The workflow layer's board: per-repo tasks riding persona routes.
+       Content renders in taskBoard.js off the taskList/taskRoutes pushes. -->
+  <div class="sidePane dockPane" id="dock-tasks" data-tab="tasks" data-order="17">
+    <div class="paneBody tasksPane">
+      <div class="tkHead">
+        <span class="tkTitle">TASKS</span>
+        <button class="tkNew" type="button" title="Create a task with a persona route">&#65291; NEW TASK</button>
+      </div>
+      <div class="tkForm" hidden></div>
+      <div class="tkList"><div class="paneNote">No tasks yet &#8212; NEW TASK starts one.
+        A task follows a route of personas (design &#8594; audit &#8594; code); each step runs
+        in its own seat and hands a packet to the next.</div></div>
+    </div>
+    <div class="dockTab" data-tab="tasks">TASKS<span class="tkDot" hidden></span></div>
+  </div>
 
   <div class="sidePane aiPane" id="aiPane">
     <div class="aiRail" id="aiRail">
@@ -137,6 +153,7 @@
 <script src="imageStaging.js"></script>
 <script src="linkify.js"></script>
 <script src="chatView.js"></script>
+<script src="taskBoard.js"></script>
 <script src="viewer.js"></script>
 <script src="usage.js"></script>
 <script src="shell.js"></script>
