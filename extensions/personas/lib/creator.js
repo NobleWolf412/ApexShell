@@ -186,6 +186,8 @@ function seatKickoff(personaId) {
     `3. personas/${personaId}/memory/MEMORY.md`,
     `4. personas/${personaId}/scratchpad.md`,
     `5. personas/${personaId}/collaboration.json if it exists`,
+    'Determine your PROJECT from the repository you are working in and scope all',
+    'memory to personas/' + personaId + '/memory/projects/<project>/ — never mix repos (see foundation.md).',
     'Provider, model, credentials, and live permissions come from Apex runtime settings, not the persona package.',
     'Confirm you are seated in one short line, then wait for the user’s actual work.',
   ].join('\n');
@@ -199,18 +201,32 @@ function listPresets(workspace) {
   catch { return []; }
   const presets = [];
   for (const entry of fs.readdirSync(personasDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
     const displayName = packageDisplayName(root, entry.name);
     if (!displayName) continue;
     presets.push({
       name: displayName,
-      letter: displayName[0].toUpperCase(),
       title: 'New chat — ' + displayName,
       kickoff: seatKickoff(entry.name),
       cwd: root,
     });
   }
-  return presets.sort((a, b) => a.name.localeCompare(b.name));
+  presets.sort((a, b) => a.name.localeCompare(b.name));
+  // Rail letters must be distinct — two personas that share a first initial
+  // (Architect/Auditor) would otherwise both show 'A'. Pick each one's first
+  // unused character from its own name so a same-initial pair naturally
+  // separates (Architect -> A, Auditor -> U).
+  const used = new Set();
+  for (const preset of presets) {
+    let letter = null;
+    for (const ch of preset.name.toUpperCase()) {
+      if (/[A-Z0-9]/.test(ch) && !used.has(ch)) { letter = ch; break; }
+    }
+    letter = letter || preset.name[0].toUpperCase();
+    used.add(letter);
+    preset.letter = letter;
+  }
+  return presets;
 }
 
 module.exports = {
