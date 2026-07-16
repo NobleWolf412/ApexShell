@@ -82,6 +82,12 @@ injected after shell boot (script/link tags — CSP 'self' covers them).
 
 - `ctx.bus` — the main-side bus: `on(type, fn)` / `post(type, msg)`.
 - `ctx.extDir` — the extension's own folder.
+- `ctx.stateDir` — an ignored, per-install state folder at
+  `state/extensions/<extension-folder>`; keep machine/runtime configuration
+  here, never in a portable package.
+- `ctx.pickDirectory({title, defaultPath})` — opens the shell's native folder
+  picker after an explicit user action and resolves to an absolute path or
+  `null` when cancelled.
 - `ctx.seats` — seat preset API:
   - `registerPreset({name, letter, title, kickoff, cwd})` — a named rail
     button; `kickoff` is the first prompt a fresh seat receives (omit for
@@ -137,3 +143,4 @@ hard `manual`. `_workspace` sets the bare default cwd; preset `cwd` and
   Update & restart. Say which when shipping.
 - New npm dependencies are a deliberate, argued step — the two that exist
   are load-bearing choices, not a floor to build on.
+

@@ -20,8 +20,10 @@
 const fs = require('fs');
 const path = require('path');
 const bus = require('./bus');
+const { stateDirFor, chooseDirectory } = require('./extensionServices');
 
 const EXT_DIR = path.join(__dirname, '..', 'extensions');
+const STATE_ROOT = path.join(__dirname, '..', 'state', 'extensions');
 
 const loaded = [];    // { name, dir, manifest, mod }
 const failed = [];    // load-failure toasts, replayed once the renderer exists
@@ -53,9 +55,22 @@ function register(services) {
     let mod = null;
     if (ext.manifest.main) {
       try {
+        const stateDir = stateDirFor(STATE_ROOT, ext.folder);
+        fs.mkdirSync(stateDir, { recursive: true });
         mod = require(path.join(ext.dir, ext.manifest.main));
         if (typeof mod.register === 'function')
-          mod.register({ bus, extDir: ext.dir, ...(services || {}) });
+          mod.register({
+            ...(services || {}),
+            bus,
+            extDir: ext.dir,
+            stateDir,
+            pickDirectory: (options) => {
+              // Electron is resolved only when a human clicks a picker-backed
+              // control; pure extension tests never need an Electron process.
+              const { dialog } = require('electron');
+              return chooseDirectory(dialog, options);
+            },
+          });
       } catch (err) {
         console.error('[extensions] ' + ext.name + ' main failed:', err.message);
         failed.push('Extension ' + ext.name + ' failed to load: ' + err.message);
@@ -89,3 +104,4 @@ function dispose() {
 }
 
 module.exports = { register, dispose };
+

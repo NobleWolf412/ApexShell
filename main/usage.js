@@ -512,4 +512,10 @@ function dispose() {
   flushQwen();
 }
 
-module.exports = { register, dispose, localTokens };
+function claudeSnapshot() {
+  if (!state.claude) return null;
+  return JSON.parse(JSON.stringify(state.claude));
+}
+
+module.exports = { register, dispose, localTokens, claudeSnapshot };
+
