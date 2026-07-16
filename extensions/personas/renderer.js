@@ -32,6 +32,11 @@
         '<textarea class="personaProjectContext" id="personaProjectContext" maxlength="8000" placeholder="A sentence or two about the system this team of personas works on. Used only to tailor relationship suggestions — never injected into a persona’s identity."></textarea>' +
         '<button class="personaProjectContextSave" type="button">SAVE PROJECT CONTEXT</button>' +
       '</section>' +
+      '<section class="personaManageCard" hidden>' +
+        '<div class="personaWorkspaceLabel">YOUR PERSONAS</div>' +
+        '<p class="personaManageHelp">Every persona in this workspace — built here or imported. EDIT reopens the interview to change identity; RUNTIME sets model/effort/permissions (the AI-bar seat defaults); DELETE archives the persona and keeps its memory.</p>' +
+        '<div class="personaManageList"></div>' +
+      '</section>' +
       '<section class="personaDraftHome" hidden>' +
         '<div class="personaWorkspaceLabel">PERSONA DRAFTS</div>' +
         '<h3>Start with a name and a purpose.</h3>' +
@@ -225,6 +230,8 @@
     [category, pane.querySelector('.personaAction-' + category)]));
   const projectContext = pane.querySelector('.personaProjectContext');
   const projectContextSave = pane.querySelector('.personaProjectContextSave');
+  const manageCard = pane.querySelector('.personaManageCard');
+  const manageList = pane.querySelector('.personaManageList');
   const relSuggest = pane.querySelector('.personaRelSuggest');
   const relSuggestLlm = pane.querySelector('.personaRelSuggestLlm');
   const relStatus = pane.querySelector('.personaRelStatus');
@@ -301,6 +308,7 @@
       foundationCard.hidden = true;
       ApexBus.post('personaFoundationGet', {});
       ApexBus.post('personaProjectContextGet', {});
+      ApexBus.post('personaManageList', {});
     }
   }
 
@@ -1097,6 +1105,52 @@
     relStatus.textContent = 'AI suggestion pass running…';
   });
   ApexBus.on('personaRelSuggestions', renderRelSuggestions);
+
+  // ---- manage existing personas (edit / runtime / delete) ----
+  function renderPackageList(message) {
+    const packages = (message && message.packages) || [];
+    manageList.textContent = '';
+    if (message && message.error) { manageCard.hidden = true; return; }
+    manageCard.hidden = !packages.length;
+    for (const p of packages) {
+      const row = document.createElement('div');
+      row.className = 'personaManageRow';
+      const name = document.createElement('span');
+      name.className = 'personaManageName';
+      name.textContent = p.displayName;
+      if (p.hasCollaboration) {
+        const chip = document.createElement('span');
+        chip.className = 'personaManageChip';
+        chip.textContent = 'collab';
+        chip.title = 'has a collaboration contract';
+        name.appendChild(chip);
+      }
+      row.appendChild(name);
+      const actions = document.createElement('div');
+      actions.className = 'personaManageActions';
+      const mk = (label, title, fn, cls) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label; b.title = title;
+        if (cls) b.className = cls;
+        b.addEventListener('click', fn);
+        actions.appendChild(b);
+      };
+      mk('EDIT', 'reopen this persona in the interview to change its identity',
+        () => ApexBus.post('personaPackageEdit', { personaId: p.personaId }));
+      mk('RUNTIME', 'model / effort / permissions — opens the AI-bar seat defaults', () => {
+        if (window.ApexChat && window.ApexChat.showDefaults) window.ApexChat.showDefaults(p.displayName);
+        else ApexToast('Open the AI bar to set launch dials for ' + p.displayName + '.');
+      });
+      mk('DELETE', 'archive this persona (its memory is kept under personas/.archive)', () => {
+        if (window.confirm('Delete "' + p.displayName + '"?\n\nIt is archived, not erased — its memory is ' +
+            'kept and you can restore it from personas/.archive.'))
+          ApexBus.post('personaPackageArchive', { personaId: p.personaId, confirmed: true });
+      }, 'personaManageDelete');
+      row.appendChild(actions);
+      manageList.appendChild(row);
+    }
+  }
+  ApexBus.on('personaPackageList', renderPackageList);
   ApexBus.on('personaProjectContext', (m) => {
     if (m.error) return;
     if (!m.saved) projectContext.value = m.content || '';
@@ -1232,5 +1286,6 @@
 
   ApexShell.registerDockPane(pane, { order: 20 });
   ApexBus.post('personaWorkspaceGet', {});
+  ApexBus.post('personaManageList', {});
 })();
 

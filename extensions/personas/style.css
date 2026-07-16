@@ -256,6 +256,23 @@
   font-weight: 700; letter-spacing: .1em; cursor: pointer; }
 .personaProjectContextSave:hover { color: var(--text); border-color: var(--accent); }
 
+/* ---- manage existing personas ---- */
+.personaManageCard[hidden] { display: none; }
+.personaManageHelp { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin: 8px 0 12px; }
+.personaManageList { display: flex; flex-direction: column; gap: 8px; }
+.personaManageRow { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); }
+.personaManageName { flex: 1; color: var(--text); font-size: 12px; display: flex;
+  align-items: center; gap: 8px; }
+.personaManageChip { font-size: 9px; letter-spacing: .06em; color: var(--dim);
+  border: 1px solid var(--edge); border-radius: 999px; padding: 0 6px; }
+.personaManageActions { display: flex; gap: 6px; }
+.personaManageActions button { border: 1px solid var(--edge); background: none; color: var(--dim);
+  border-radius: 6px; padding: 4px 9px; font-size: 9px; font-weight: 700; letter-spacing: .08em;
+  cursor: pointer; }
+.personaManageActions button:hover { color: var(--text); border-color: var(--accent); }
+.personaManageActions .personaManageDelete:hover { color: var(--critical); border-color: var(--critical); }
+
 /* ---- relationship suggestions (collaboration step) ---- */
 .personaRelBlock { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--edge); }
 .personaRelHelp { color: var(--faint); font-size: 10.5px; line-height: 1.5; margin: 8px 0 10px; }

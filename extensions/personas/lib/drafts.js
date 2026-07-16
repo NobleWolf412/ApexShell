@@ -153,6 +153,10 @@ function validateDraft(value, expectedId) {
   if (typeof value.createdAt !== 'string' || !Number.isFinite(Date.parse(value.createdAt)) ||
       typeof value.updatedAt !== 'string' || !Number.isFinite(Date.parse(value.updatedAt)))
     throw new Error('Draft timestamps are invalid.');
+  // A draft reopened from an existing package remembers which package it
+  // replaces on permanent creation. Absent = a brand-new persona.
+  if (value.editsPersonaId !== undefined && !isSafePersonaId(value.editsPersonaId))
+    throw new Error('Draft editsPersonaId is invalid.');
   if (!value.answers || typeof value.answers !== 'object' || Array.isArray(value.answers))
     throw new Error('Draft answers are invalid.');
   for (const key of KEYS) {
@@ -197,6 +201,10 @@ function createDraft(stateDir, workspace, starter) {
     createdAt: now,
     updatedAt: now,
   };
+  // reopen-as-draft (edit an existing package) tags the source id so permanent
+  // creation replaces it instead of colliding.
+  if (starter && starter.editsPersonaId !== undefined)
+    draft.editsPersonaId = starter.editsPersonaId;
   validateDraft(draft, id);
   const dir = ensureDraftsDir(stateDir, true);
   if (fs.readdirSync(dir).filter((name) => name.endsWith('.json')).length >= 100)

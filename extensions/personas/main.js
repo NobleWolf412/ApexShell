@@ -15,6 +15,7 @@ const previewValidator = require('./lib/validator');
 const importer = require('./lib/importer');
 const tester = require('./lib/tester');
 const creator = require('./lib/creator');
+const manage = require('./lib/manage');
 const relationships = require('./lib/relationships');
 
 const CONFIG_FILE = 'workspace.json';
@@ -657,6 +658,7 @@ function register(ctx) {
       if (registrationError)
         ctx.bus.post('toast', { text: 'Persona package was created, but its seat preset was not registered: ' + registrationError });
       publishStatus();
+      publishPackageList();   // a created/edited persona joins the manage list
     } catch (err) {
       ctx.bus.post('personaCreateResult', { ok: false, error: err.message });
       ctx.bus.post('toast', { text: 'Permanent persona was not created: ' + err.message });
@@ -752,10 +754,56 @@ function register(ctx) {
     }
   });
 
+  // ---- permanent-package management: list, edit (reopen-as-draft), delete ----
+  const publishPackageList = () => {
+    try {
+      const workspace = selectedWorkspace(ctx.stateDir);
+      ctx.bus.post('personaPackageList', { packages: manage.listPackages(workspace), error: null });
+    } catch (err) {
+      ctx.bus.post('personaPackageList', { packages: [], error: err.message });
+    }
+  };
+
+  ctx.bus.on('personaManageList', publishPackageList);
+
+  ctx.bus.on('personaPackageEdit', (message) => {
+    try {
+      const workspace = interviewWorkspace(ctx.stateDir);
+      const draft = manage.reopenAsDraft(workspace, message && message.personaId, ctx.stateDir);
+      ctx.bus.post('personaDraftResult', { ok: true, action: 'reopened' });
+      postDraftStatus(draft);   // jumps the UI into the interview flow on this draft
+    } catch (err) {
+      ctx.bus.post('personaManageResult', { ok: false, action: 'edit', error: err.message });
+      ctx.bus.post('toast', { text: 'Could not open the persona for editing: ' + err.message });
+    }
+  });
+
+  ctx.bus.on('personaPackageArchive', (message) => {
+    try {
+      if (!message || message.confirmed !== true)
+        throw new Error('Deleting a persona requires explicit confirmation.');
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const dest = creator.archivePackage(workspace, message.personaId);
+      const presetIssue = presetSyncIssue(syncPresets());
+      ctx.bus.post('personaManageResult', {
+        ok: true, action: 'archived', personaId: message.personaId, archivedTo: dest });
+      ctx.bus.post('toast', { text: 'Persona archived (memory kept) — recover it from personas/.archive/' +
+        path.basename(dest) + ' if needed.' });
+      if (presetIssue)
+        ctx.bus.post('toast', { text: 'Preset refresh note: ' + presetIssue });
+      publishPackageList();
+      publishStatus();
+    } catch (err) {
+      ctx.bus.post('personaManageResult', { ok: false, action: 'archive', error: err.message });
+      ctx.bus.post('toast', { text: 'Persona was not archived: ' + err.message });
+    }
+  });
+
   ctx.bus.on('ready', () => {
     const presetIssue = presetSyncIssue(syncPresets());
     if (presetIssue)
       ctx.bus.post('toast', { text: 'Some Persona Builder seat presets were not registered: ' + presetIssue });
+    publishPackageList();
   });
 }
 

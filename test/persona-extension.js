@@ -1402,10 +1402,11 @@ function completeDisposableTest(bus, draft, disposableSeat) {
         });
         assert.equal(nodes.get('.personaWorkspaceState').textContent, 'Ready for setup');
         assert.match(nodes.get('.personaWorkspaceChecks').textContent, /2 persona packages/);
-        // a workspace change asks for BOTH the foundation and the project
-        // context (relationship-suggestion input)
-        assert.equal(posts.at(-1).type, 'personaProjectContextGet');
-        assert.equal(posts.at(-2).type, 'personaFoundationGet');
+        // a workspace change asks for the foundation, the project context
+        // (relationship-suggestion input), and the manage list
+        assert.equal(posts.at(-1).type, 'personaManageList');
+        assert.equal(posts.at(-2).type, 'personaProjectContextGet');
+        assert.equal(posts.at(-3).type, 'personaFoundationGet');
 
         handlers.get('personaFoundationStatus')({
           workspace: path.join(scratch, 'ui-workspace'),

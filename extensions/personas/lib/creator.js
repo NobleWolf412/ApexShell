@@ -32,15 +32,34 @@ function packageDisplayName(workspace, personaId) {
   } catch { return null; }
 }
 
-function assertUniqueDisplayName(workspace, displayName) {
+function assertUniqueDisplayName(workspace, displayName, exceptId) {
   const personasDir = path.join(workspace, 'personas');
   const wanted = displayName.trim().toLowerCase();
   for (const entry of fs.readdirSync(personasDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (exceptId && entry.name === exceptId) continue;   // the package being edited
     const existing = packageDisplayName(workspace, entry.name);
     if (existing && existing.toLowerCase() === wanted)
       throw new Error('A permanent persona already uses this display name: ' + existing);
   }
+}
+
+// Soft delete: move the whole package (identity + memory + scratchpad) into
+// personas/.archive/ rather than removing it. Nothing is ever lost — the user
+// can re-attach an archived persona by moving the folder back. Returns the
+// archive path.
+function archivePackage(workspace, personaId) {
+  if (typeof workspace !== 'string' || !path.isAbsolute(workspace))
+    throw new Error('Persona workspace must be an absolute path.');
+  const root = path.resolve(workspace);
+  const paths = packagePaths(root, personaId);
+  regularDirectory(paths.personaDir, 'Persona package');
+  const archiveRoot = path.join(paths.personasDir, '.archive');
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = path.join(archiveRoot, personaId + '--' + stamp);
+  fs.renameSync(paths.personaDir, dest);
+  return dest;
 }
 
 function assertRegistrableDisplayName(displayName) {
@@ -60,9 +79,15 @@ function createPackage(workspace, draft) {
   regularDirectory(root, 'Persona workspace');
   const preview = draft && draft.preview;
   if (!preview) throw new Error('Generate and approve a persona preview first.');
+  // An edit reopened from a package remembers the id it replaces; a fresh
+  // persona has none. Replacing the SAME id is expected — don't treat the
+  // still-present old package as a collision.
+  const editsPersonaId = draft && typeof draft.editsPersonaId === 'string'
+    ? draft.editsPersonaId : null;
   const paths = packagePaths(root, preview.personaId);
   regularDirectory(paths.personasDir, 'Personas folder');
-  if (fs.existsSync(paths.personaDir))
+  const replacingSameId = editsPersonaId === preview.personaId;
+  if (!replacingSameId && fs.existsSync(paths.personaDir))
     throw new Error('A persona package with this ID already exists.');
   if (hashCanonical(preview.canonical) !== preview.generatedCanonicalHash ||
       preview.blueprint.canonical_hash !== preview.generatedCanonicalHash)
@@ -74,12 +99,13 @@ function createPackage(workspace, draft) {
   if (!canonicalName || canonicalName !== draftName)
     throw new Error('Canonical display_name must exactly match the persona draft name before permanent creation.');
   assertRegistrableDisplayName(canonicalName);
-  assertUniqueDisplayName(root, canonicalName);
+  assertUniqueDisplayName(root, canonicalName, editsPersonaId);
 
   const lock = path.join(paths.personasDir, `.${preview.personaId}.create.lock`);
   const stage = path.join(paths.personasDir,
     `.${preview.personaId}.creating-${crypto.randomUUID()}`);
   let committed = false;
+  let archivedOld = null;   // { archivedAt, restoreTo } for restore-on-failure
   let lockFd = null;
   let ownsLock = false;
   try {
@@ -91,7 +117,7 @@ function createPackage(workspace, draft) {
     }
     fs.closeSync(lockFd);
     lockFd = null;
-    if (fs.existsSync(paths.personaDir))
+    if (!replacingSameId && fs.existsSync(paths.personaDir))
       throw new Error('A persona package with this ID already exists.');
     fs.mkdirSync(stage);
     fs.mkdirSync(path.join(stage, 'memory'));
@@ -102,6 +128,30 @@ function createPackage(workspace, draft) {
     writeNew(path.join(stage, 'memory', 'MEMORY.md'),
       `# ${canonicalName} Memory Index\n\nNo durable memories recorded yet.\n`);
     writeNew(path.join(stage, 'scratchpad.md'), `# ${canonicalName} Scratchpad\n\n`);
+    // Editing changes IDENTITY only — carry the persona's accumulated memory
+    // and scratchpad forward from the old package (copied while it still
+    // exists, before the archive below). A fresh persona keeps the defaults.
+    if (editsPersonaId) {
+      const oldPaths = packagePaths(root, editsPersonaId);
+      if (fs.existsSync(oldPaths.personaDir)) {
+        const oldMemory = path.join(oldPaths.personaDir, 'memory');
+        if (fs.existsSync(oldMemory)) {
+          fs.rmSync(path.join(stage, 'memory'), { recursive: true, force: true });
+          fs.cpSync(oldMemory, path.join(stage, 'memory'), { recursive: true });
+        }
+        if (fs.existsSync(oldPaths.scratchpad))
+          fs.copyFileSync(oldPaths.scratchpad, path.join(stage, 'scratchpad.md'));
+      }
+    }
+    // Editing: archive the old package the instant before swapping the new one
+    // in, so the live persona survives right up to the atomic commit. On a
+    // rename-edit (new id != old), this retires the old id and creates the new.
+    if (editsPersonaId) {
+      const oldPaths = packagePaths(root, editsPersonaId);
+      if (fs.existsSync(oldPaths.personaDir))
+        archivedOld = { archivedAt: archivePackage(root, editsPersonaId),
+                        restoreTo: oldPaths.personaDir };
+    }
     fs.renameSync(stage, paths.personaDir);
     committed = true;
     const report = validatePersonaPackage(root, preview.personaId, { mode: 'native' });
@@ -112,6 +162,12 @@ function createPackage(workspace, draft) {
   } catch (err) {
     const cleanup = committed ? paths.personaDir : stage;
     try { fs.rmSync(cleanup, { recursive: true, force: true }); } catch { /* best effort */ }
+    // an edit that archived the old package but did not end with a good new one
+    // must put the live persona back (its slot is free once cleanup ran)
+    if (archivedOld) {
+      try { if (!fs.existsSync(archivedOld.restoreTo)) fs.renameSync(archivedOld.archivedAt, archivedOld.restoreTo); }
+      catch { /* archived copy remains recoverable under .archive */ }
+    }
     throw err;
   } finally {
     try { if (lockFd !== null) fs.closeSync(lockFd); } catch { /* already closed */ }
@@ -160,6 +216,7 @@ function listPresets(workspace) {
 module.exports = {
   assertRegistrableDisplayName,
   assertUniqueDisplayName,
+  archivePackage,
   createPackage,
   listPresets,
   packageDisplayName,
