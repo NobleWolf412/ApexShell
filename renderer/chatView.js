@@ -418,7 +418,7 @@ window.ApexChat = (function () {
             ac.persona + ' produces. Click to confirm or pick someone else. '
           : 'hand this chat\'s work to another persona — ') +
           'the chat wraps up a handoff packet and the next seat opens with it ' +
-          '(the chain shows on the TASKS board)';
+          '(the chain shows on the TODO board)';
         // pulse when there is finished work sitting here: the chat has produced
         // something and is idle — the exact moment a handoff makes sense
         if (!ac.busy && ac.everSent && !ac.wrapping && !ac.wrapped && !ac.permQueue.length)
@@ -1225,7 +1225,18 @@ window.ApexChat = (function () {
         name.className = 'wsName';
         name.textContent = '＋ new ' + (persona || 'blank') + ' chat in ' + w.name;
         b.title = w.path;
-        b.append(chip, name);
+        // inline manage controls (the reverse-direction gap: main handled
+        // workspaceSetDefault/Remove but nothing posted them). stopPropagation
+        // so they don't also fire the row's new-chat action.
+        const star = document.createElement('span');
+        star.className = 'wsAct'; star.textContent = '★';
+        star.title = 'make this the default workspace';
+        star.onclick = (e) => { e.stopPropagation(); hideRailMenu(); ApexBus.post('workspaceSetDefault', { path: w.path }); };
+        const del = document.createElement('span');
+        del.className = 'wsAct'; del.textContent = '✕';
+        del.title = 'remove this workspace from the list (the folder is untouched)';
+        del.onclick = (e) => { e.stopPropagation(); hideRailMenu(); ApexBus.post('workspaceRemove', { path: w.path }); };
+        b.append(chip, name, star, del);
         b.onclick = () => {
           hideRailMenu();
           ApexBus.post('seatCreate', { persona, cwd: w.path });

@@ -51,7 +51,7 @@
       row.className = 'auWatchRow';
       row.title = 'watch this chat: after each of its turns, a cheap hidden haiku pass reviews the ' +
         'recent conversation (both sides, including turns from before the watch) and flags risks here. ' +
-        'Costs a small extra LLM call per turn — toggle off any time. Chats running a TASKS chain ' +
+        'Costs a small extra LLM call per turn — toggle off any time. Chats running a TODO chain ' +
         'step are skipped (the chain has its own audit).';
       const cb = document.createElement('input');
       cb.type = 'checkbox';

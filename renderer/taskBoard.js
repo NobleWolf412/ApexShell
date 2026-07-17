@@ -33,6 +33,7 @@
         '<input type="checkbox" class="tkAutoIn"> auto-chain ' +
         '<span class="tkHintTx" title="steps hand off to the next persona on their own; you are pulled in only at gates (decision, error, bounce limit, done)">?</span></label>' +
       '<button class="tkSaveRoute" type="button" title="save this persona sequence as a reusable route template">save route</button>' +
+      '<button class="tkDelRoute" type="button" title="delete the route template picked above">del route</button>' +
       '<button class="tkCreate" type="button" title="create the task and launch its first persona">CREATE</button>' +
       '<button class="tkCancel" type="button" title="close the form without creating anything">cancel</button></div>';
   const titleIn = form.querySelector('.tkTitleIn');
@@ -96,6 +97,13 @@
     const name = await ApexPrompt('route name:', chips.join('-').toLowerCase().slice(0, 60));
     if (name) ApexBus.post('taskRouteSave', { name, steps: chips.slice() });
   };
+  form.querySelector('.tkDelRoute').onclick = () => {
+    const name = routeSel.value;
+    if (!name) { ApexToast('pick a route template above to delete'); return; }
+    ApexBus.post('taskRouteDelete', { name });
+    routeSel.value = '';
+    ApexToast('route "' + name + '" deleted');
+  };
   // Click-economy: the form remembers the last task's repo + route, and the
   // repo prefills from the focused chat's cwd — the common case is title → CREATE.
   const readLast = () => { try { return JSON.parse(localStorage.getItem('apex.task.last')) || {}; } catch { return {}; } };
@@ -106,6 +114,9 @@
       title: titleIn.value, cwd: cwdIn.value, route: chips.slice(),
       auto: autoIn.checked, start: true,
     });
+    // clear so reopening NEW TASK doesn't show the just-created title and invite
+    // a duplicate (repo + route intentionally persist as the remembered defaults)
+    titleIn.value = '';
     form.hidden = true;
   };
   form.querySelector('.tkCancel').onclick = () => { form.hidden = true; };
@@ -153,6 +164,11 @@
     const title = document.createElement('span');
     title.className = 'tkCardTitle';
     title.textContent = t.title;
+    title.title = 'double-click to rename';
+    title.ondblclick = async () => {
+      const name = await ApexPrompt('rename task:', t.title);
+      if (name && name.trim()) ApexBus.post('taskUpdate', { id: t.id, patch: { title: name.trim() } });
+    };
     head.appendChild(title);
     const badge = document.createElement('span');
     badge.className = 'tkBadge';
