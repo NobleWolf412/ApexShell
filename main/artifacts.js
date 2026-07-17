@@ -20,6 +20,21 @@ function show(id, p) {
   const m = { id, path: p, v: Date.now(),
               name: p.split(/[\\/]/).pop(),
               kind: IMG_EXT.has(ext) ? 'img' : isHtml(ext) ? 'html' : 'text' };
+  // A DIRECTORY (or a vanished path) must never be classified img/html — those
+  // route to a data-URI read / the apex:// iframe fetch, and reading a dir
+  // throws "EISDIR: illegal operation on a directory" (the img branch catches
+  // it, but the html branch surfaces it raw in the iframe). Fall to a clear
+  // text note instead. Stat once, up front.
+  let st = null;
+  try { st = fs.statSync(p); } catch { /* missing — handled below */ }
+  if (!st || st.isDirectory()) {
+    m.kind = 'text';
+    m.text = st
+      ? '(this path is a folder, not a viewable file: ' + p + ')'
+      : '(nothing to show yet — the path does not exist: ' + p + ')';
+    bus.post('artifact', m);
+    return;
+  }
   if (m.kind === 'text') {
     try {
       let t = fs.readFileSync(p, 'utf8');

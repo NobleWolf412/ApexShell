@@ -267,6 +267,12 @@ app.whenReady().then(() => {
       const u = new URL(req.url);
       if (u.host !== 'local') return new Response('not found', { status: 404 });
       const p = decodeURIComponent(u.pathname.replace(/^\//, ''));
+      // a directory would make net.fetch throw EISDIR ("illegal operation on a
+      // directory") into the iframe — answer cleanly instead
+      let st = null;
+      try { st = fs.statSync(p); } catch { /* missing */ }
+      if (!st) return new Response('not found', { status: 404 });
+      if (st.isDirectory()) return new Response('that path is a folder, not a file', { status: 400 });
       return net.fetch(pathToFileURL(p).toString());
     } catch (e) {
       return new Response('bad request: ' + e.message, { status: 400 });
