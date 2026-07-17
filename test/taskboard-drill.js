@@ -93,17 +93,18 @@ function makeSeats() {
   const created = [];
   const commands = [];
   const live = new Set();
+  const entries = new Map();   // id -> richer entry for seatEntry (delegate-from-chat)
   let observer = null;
   let n = 0;
   return {
-    created, commands, live,
+    created, commands, live, entries,
     emit(m) { if (observer) observer(m); },
     observeSeats(fn) { observer = fn; return () => { observer = null; }; },
     createTaskSeat(opts) { const id = 's' + (++n); created.push({ id, opts }); live.add(id); return id; },
     presetInfo: (name) => PRESETS[name] || null,
     presetNames: () => Object.keys(PRESETS),
     seatCommand(msg) { commands.push(msg); },
-    seatEntry(id) { return live.has(id) ? { id } : null; },
+    seatEntry(id) { return entries.get(id) || (live.has(id) ? { id } : null); },
     closeSeat(id) { live.delete(id); commands.push({ type: 'closeSeat', id }); },
   };
 }
@@ -292,6 +293,45 @@ gate('seat death fails the step; Retry relaunches fresh', () => {
   assert.equal(seats.created.length, before + 1);
   t = bus.lastList().find((x) => x.id === deadId);
   assert.equal(t.steps[0].status, 'running');
+});
+
+gate('delegate-from-chat: a live rail chat becomes step 1 and hands off on its packet', () => {
+  // a rail-launched Architect chat, mid-work, never part of any task
+  seats.entries.set('chat1', { id: 'chat1', persona: 'Architect', title: 'Architect — big design',
+    cwd: repo, sessionId: 'sess-rail', pty: false, local: false });
+  const before = seats.created.length;
+  bus.send('taskDelegateFromChat', { id: 'chat1', target: 'Auditor' });
+  const t = bus.lastList()[0];
+  assert.equal(t.status, 'running');
+  assert.equal(t.auto, true);
+  assert.deepEqual(t.steps.map((s) => s.persona), ['Architect', 'Auditor']);
+  assert.equal(t.steps[0].seatId, 'chat1');
+  // the chat was ASKED for its packet (contract text sent to it)
+  const ask = seats.commands.find((c) => c.type === 'seatSend' && c.id === 'chat1');
+  assert.ok(ask && ask.text.includes('apex-handoff'), 'handoff contract sent to the chat');
+  assert.ok(ask.text.includes('Auditor'));
+  // chat emits its packet → auto machinery advances: wrap source, open target
+  turn('chat1', { status: 'done', summary: 'design finished — see scratchpad',
+    artifacts: ['C:\\repo\\design.md'] });
+  assert.ok(seats.commands.some((c) => c.type === 'seatWrap' && c.id === 'chat1'), 'source chat wraps');
+  assert.equal(seats.created.length, before + 1, 'target seat launched');
+  const auditor = seats.created[seats.created.length - 1];
+  assert.equal(auditor.opts.persona, 'Auditor');
+  assert.ok(auditor.opts.kickoff.includes('design finished'), 'packet crossed to the Auditor');
+  assert.equal(auditor.opts.cwd, repo, 'target inherits the chat\'s repo');
+});
+
+gate('delegate-from-chat guards: unknown target, non-chat seats, already-chained chats', () => {
+  const before = bus.lastList().length;
+  bus.send('taskDelegateFromChat', { id: 'chat1', target: 'Auditor' });   // chat1 now bound (wrapping)
+  assert.ok(bus.toasts().some((x) => /already part of a task/.test(x)));
+  seats.entries.set('term1', { id: 'term1', persona: 'cmd', pty: true, cwd: repo });
+  bus.send('taskDelegateFromChat', { id: 'term1', target: 'Auditor' });
+  assert.ok(bus.toasts().some((x) => /only persona/.test(x)));
+  seats.entries.set('chat2', { id: 'chat2', persona: 'Scribe', cwd: repo, sessionId: 's2' });
+  bus.send('taskDelegateFromChat', { id: 'chat2', target: 'Nobody' });
+  assert.ok(bus.toasts().some((x) => /unknown persona/.test(x)));
+  assert.equal(bus.lastList().length, before, 'no task created by refused delegations');
 });
 
 gate('routes save, list, and feed creation', () => {

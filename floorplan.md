@@ -170,6 +170,11 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   step unasked; bounce → resume the PREVIOUS step's session with the
   findings (max 2 bounces; review steps are always fresh seats —
   independence preserved); needs-decision → pause for the user.
+- **Delegate-from-chat** (`taskDelegateFromChat`): any live rail chat can hand
+  its work onward without a pre-planned task — the tab row's Delegate → button
+  picks a target persona, the chat becomes step 1 of a fresh auto task, is
+  asked for its handoff packet, and the normal machinery advances (wrap+close
+  the chat, open the target with the packet).
 - **Gates** (chain stops, tab dot pulses, toast): malformed/missing packet,
   step error/seat death, decision needed, bounce limit, chain complete.
   The seat stays open on packet gates — answer in its chat and the observer

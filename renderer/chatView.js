@@ -13,6 +13,7 @@ window.ApexChat = (function () {
   const chats = new Map();        // id -> chat state
   let active = null;
   let history = {};               // persona -> [{sessionId,title,ts}]
+  let presetNames = [];           // registered personas — the delegate menu's options
 
   // ---------- DOM scaffold ----------
   const stage = document.querySelector('.stage');
@@ -33,7 +34,8 @@ window.ApexChat = (function () {
 
   // ---------- repo identity (multi-repo work) ----------
   // A chat's repo shows as a small tab chip, hue derived from the path so the
-  // same repo always wears the same color — scannable at a glance.
+  // same repo always wears the same color — scannable at a glance. Saved
+  // workspaces override the auto-name with a user-chosen label.
   const repoName = (cwd) => (String(cwd || '').split(/[\\/]/).filter(Boolean).pop() || '');
   const repoHue = (cwd) => {
     let h = 0;
@@ -41,6 +43,15 @@ window.ApexChat = (function () {
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
     return h % 360;
   };
+  const workspaces = new Map();      // path -> { name, path }
+  let defaultWsPath = null;
+  let pendingBrowsePersona = null;   // set when the Browse flow was launched from a persona
+  const wsFor = (cwd) => (cwd && workspaces.get(String(cwd))) || null;
+  const wsLabel = (cwd) => {
+    const w = wsFor(cwd);
+    return w ? w.name : repoName(cwd);
+  };
+  const wsHue = (cwd) => repoHue(cwd);   // color follows path hash whether saved or not
 
   // Markdown-lite over ESCAPED text — fenced code, inline code, bold,
   // heading lines. Model output never reaches innerHTML unescaped. The shared
@@ -319,6 +330,8 @@ window.ApexChat = (function () {
     renderTabs();
     const c = chats.get(id);
     if (!c) return;
+    // tell the MCP tracker which project is in focus (active-vs-available split)
+    ApexBus.post('seatFocus', { cwd: c.cwd || '' });
     if (c.pty) { c.term.fit(); c.term.focus(); return; }
     c.feed.scrollTop = c.feed.scrollHeight; c.ta.focus();
   }
@@ -328,19 +341,24 @@ window.ApexChat = (function () {
     for (const [id, c] of chats) {
       const t = document.createElement('div');
       t.className = 'chatTab' + (id === active ? ' active' : '');
+      // workspace stripe: colored left border on the whole tab so the project
+      // is legible at a glance even when the title truncates
+      if (c.cwd) t.style.borderLeftColor = 'hsl(' + wsHue(c.cwd) + ' 55% 55%)';
       const dot = document.createElement('span');
       dot.className = 'dot ' + (c.dead ? 'dead' : c.permQueue.length ? 'perm' : c.busy ? 'busy' : 'live');
       const label = document.createElement('span');
       label.className = 't';
       label.textContent = c.title;
-      // repo chip: which folder this chat works out of (hue is repo-stable)
+      // repo chip: which folder this chat works out of. Named workspaces win
+      // over the auto path-basename; hue is stable per path either way.
       if (c.cwd) {
         const repo = document.createElement('span');
         repo.className = 'repoBadge';
-        repo.textContent = repoName(c.cwd);
-        repo.title = 'working directory: ' + c.cwd;
-        repo.style.color = 'hsl(' + repoHue(c.cwd) + ' 55% 72%)';
-        repo.style.borderColor = 'hsl(' + repoHue(c.cwd) + ' 45% 45%)';
+        const w = wsFor(c.cwd);
+        repo.textContent = wsLabel(c.cwd);
+        repo.title = (w ? 'workspace: ' + w.name + ' — ' : 'working directory: ') + c.cwd;
+        repo.style.color = 'hsl(' + wsHue(c.cwd) + ' 55% 72%)';
+        repo.style.borderColor = 'hsl(' + wsHue(c.cwd) + ' 45% 45%)';
         label.appendChild(repo);
       }
       // live-audit chip: this seat has a shadow auditor watching it
@@ -370,6 +388,18 @@ window.ApexChat = (function () {
     // away from the composer (accidental-click distance is the point)
     const ac = chats.get(active);
     if (ac) {
+      // Delegate → hand this chat's work to another persona: the chat becomes
+      // step 1 of a task, writes its handoff packet, and the target opens with
+      // it automatically — no pre-planned task, no copy/paste relay.
+      if (!ac.pty && !ac.local && !ac.dead && presetNames.length) {
+        const db = document.createElement('button');
+        db.id = 'delegateBtn';
+        db.textContent = 'Delegate →';
+        db.title = 'hand this chat\'s work to another persona — it wraps up a handoff packet ' +
+          'and the next seat opens with it (chain shows on the TASKS board)';
+        db.onclick = (e) => { e.stopPropagation(); openDelegateMenu(db, ac); };
+        tabsEl.appendChild(db);
+      }
       const eb = document.createElement('button');
       eb.id = 'endBtn';
       eb.textContent = (ac.wrapping || ac.wrapped) ? 'Close' : 'End Session';
@@ -379,6 +409,30 @@ window.ApexChat = (function () {
       eb.onclick = () => endSession(chats.get(active));
       tabsEl.appendChild(eb);
     }
+  }
+
+  // Delegate target picker — rides the rail-menu element (same look, same
+  // dismiss behavior); the chat's own persona is filtered out by title prefix.
+  function openDelegateMenu(anchor, c) {
+    railMenu.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'rmHead';
+    head.textContent = 'DELEGATE TO';
+    railMenu.appendChild(head);
+    const options = presetNames.filter((n) => !String(c.title || '').startsWith(n));
+    for (const name of (options.length ? options : presetNames)) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.onclick = () => {
+        hideRailMenu();
+        ApexBus.post('taskDelegateFromChat', { id: c.id, target: name });
+      };
+      railMenu.appendChild(b);
+    }
+    const r = anchor.getBoundingClientRect();
+    railMenu.hidden = false;
+    railMenu.style.right = (innerWidth - r.right) + 'px';
+    railMenu.style.top = (r.bottom + 6) + 'px';
   }
 
   // ---------- THE STATUS STRIP (the whole point) ----------
@@ -842,7 +896,8 @@ window.ApexChat = (function () {
   function mountSeat(m) {
     const c = createChat(m.id, m.title, m.pty);
     // which repo this seat works out of — badges the tab; multi-repo truth
-    if (m.cwd && c.cwd !== m.cwd) { c.cwd = m.cwd; renderTabs(); }
+    if (m.cwd && c.cwd !== m.cwd) { c.cwd = m.cwd; renderTabs();
+      if (m.id === active) ApexBus.post('seatFocus', { cwd: c.cwd }); }
     if (c.pty) return;
     // seed the session id early — a resumed CLI is MUTE until first input
     // (J8), so no init ever comes to fill it (the header that displayed it is
@@ -968,6 +1023,29 @@ window.ApexChat = (function () {
   });
   ApexBus.on('seatHistory', (m) => { history = m.history || {}; });
 
+  // ---------- workspaces (project picker + tab identity) ----------
+  ApexBus.on('workspaces', (m) => {
+    workspaces.clear();
+    for (const w of (m.list || [])) workspaces.set(w.path, w);
+    defaultWsPath = m.defaultPath || null;
+    if (chats.size) renderTabs();     // relabel + repaint stripes with new names
+  });
+  ApexBus.on('workspaceBrowsed', (m) => {
+    if (!m || !m.path) return;
+    const suggested = m.suggestedName || '';
+    const name = (window.prompt('Name this workspace:', suggested) || '').trim();
+    if (!name) return;                // cancelled or blank — abort the add
+    ApexBus.post('workspaceAdd', { name, path: m.path });
+    // If the browse was launched from a persona's menu, jump straight into
+    // creating that seat in the new workspace — otherwise the add is quiet.
+    if (pendingBrowsePersona !== null) {
+      const p = pendingBrowsePersona;
+      pendingBrowsePersona = null;
+      ApexBus.post('seatCreate', { persona: p, cwd: m.path });
+    }
+  });
+  ApexBus.post('workspacesGet', {});
+
   ApexBus.on('seatEvt', (msg) => {
     const c = chats.get(msg.id);
     // NO auto-create: an unknown id here is a closed seat's in-flight tail (or
@@ -1087,8 +1165,38 @@ window.ApexChat = (function () {
       b.onclick = () => { hideRailMenu(); fn(); };
       railMenu.appendChild(b);
     };
-    add('NEW', null, true);
-    add('＋ new ' + (persona || 'blank') + ' chat', () => ApexBus.post('seatCreate', { persona }));
+    add('NEW SEAT', null, true);
+    // Default workspace fast path (unchanged behavior — matches double-click)
+    const def = defaultWsPath && workspaces.get(defaultWsPath);
+    const defSuffix = def ? '  ·  ' + def.name : '';
+    add('＋ new ' + (persona || 'blank') + ' chat' + defSuffix,
+        () => ApexBus.post('seatCreate', { persona }));
+    // Extra workspaces (skip the default — it's the fast-path above)
+    const others = [...workspaces.values()].filter((w) => w.path !== defaultWsPath);
+    if (others.length) {
+      add('IN WORKSPACE', null, true);
+      for (const w of others) {
+        const b = document.createElement('button');
+        b.className = 'wsRow';
+        const chip = document.createElement('span');
+        chip.className = 'wsChip';
+        chip.style.background = 'hsl(' + wsHue(w.path) + ' 55% 55%)';
+        const name = document.createElement('span');
+        name.className = 'wsName';
+        name.textContent = '＋ new ' + (persona || 'blank') + ' chat in ' + w.name;
+        b.title = w.path;
+        b.append(chip, name);
+        b.onclick = () => {
+          hideRailMenu();
+          ApexBus.post('seatCreate', { persona, cwd: w.path });
+        };
+        railMenu.appendChild(b);
+      }
+    }
+    add('＋ add workspace…', () => {
+      pendingBrowsePersona = persona || '';
+      ApexBus.post('workspaceBrowse', {});
+    });
     if (!persona) {                    // terminals live under the blank (+) button
       add('TERMINALS', null, true);
       add('agy — Gemini terminal', () => ApexBus.post('seatCreate', { terminal: 'agy' }));
@@ -1142,6 +1250,7 @@ window.ApexChat = (function () {
   // Presets arrive from main (seatPresets, posted on boot + on request). The
   // shell owns only the blank + button; named seats are extension data.
   ApexBus.on('seatPresets', (m) => {
+    presetNames = (m.presets || []).map((p) => p.name);   // delegate menu reads these
     const rail = document.getElementById('aiRail');
     if (!rail) return;
     rail.querySelectorAll('button[data-preset]').forEach((b) => b.remove());

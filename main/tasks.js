@@ -459,6 +459,62 @@ function taskDelete(msg) {
   publish();
 }
 
+// Delegate-from-chat: a persona opened from the RAIL realizes its work should
+// go to another persona. Instead of the user hand-carrying it (the exact
+// failure this layer exists to kill), the live chat becomes step 1 of a fresh
+// two-step task: we ask the seat to emit its handoff packet, and the normal
+// auto machinery advances — wrap+close the source, open the target with the
+// packet in its kickoff. Same contract, same gates, no pre-planned task needed.
+function taskDelegateFromChat(msg) {
+  const seatId = msg.id;
+  const target = typeof msg.target === 'string' ? msg.target.trim() : '';
+  const entry = api.seats.seatEntry(seatId);
+  if (!entry || entry.pty || entry.local) { toast('only persona/Claude chats can delegate'); return; }
+  if (bindings.has(seatId)) { toast('this chat is already part of a task'); return; }
+  if (!api.seats.presetInfo(target)) { toast('unknown persona: ' + (target || '(none)')); return; }
+  const source = entry.persona || 'Seat';
+  const cwd = (entry.cwd && fs.existsSync(entry.cwd)) ? entry.cwd : null;
+  if (!cwd) { toast('this chat has no usable working directory to delegate from'); return; }
+  const title = (typeof msg.title === 'string' && msg.title.trim())
+    ? msg.title.trim().slice(0, 200)
+    : ('handoff: ' + String(entry.title || source).slice(0, 180));
+  const task = {
+    id: newId(), title, cwd,
+    status: 'running',
+    auto: true,                     // the whole point — advance without another click
+    route: [{ persona: source }, { persona: target }],
+    currentStep: 0,
+    bounces: 0, maxBounces: 2,
+    steps: [
+      { index: 0, persona: source, status: 'running', seatId, sessionId: entry.sessionId || null,
+        packet: null, packetError: null, bounceFindings: null, waiting: null,
+        startedAt: now(), endedAt: 0 },
+      { index: 1, persona: target, status: 'pending', seatId: null, sessionId: null,
+        packet: null, packetError: null, bounceFindings: null, waiting: null,
+        startedAt: 0, endedAt: 0 },
+    ],
+    attention: null,
+    createdAt: now(), updatedAt: now(),
+  };
+  tasks.unshift(task);
+  prune();
+  bindings.set(seatId, { taskId: task.id, stepIndex: 0, buf: '' });
+  const text = [
+    '<apex-task id="' + task.id + '" step="1/2">',
+    'The user is delegating this chat\'s work to ' + target + '.',
+    'Wrap up your CURRENT work product for handoff: what you concluded, where the',
+    'artifacts live (absolute paths — your scratchpad/memory files count), and what',
+    'the next persona needs to know. Do not start new work.',
+    handoff.contractText(false),
+    '</apex-task>',
+  ].join('\n');
+  api.seats.seatCommand({ type: 'seatSend', id: seatId, text });
+  // seatSend never echoes — same manual user-event post the engine's wrap uses
+  api.bus.post('seatEvt', { id: seatId, m: { type: 'user', text } });
+  toast('delegating to ' + target + ' — the chat is writing its handoff packet');
+  publish();
+}
+
 function taskRouteSave(msg) {
   const name = (typeof msg.name === 'string' ? msg.name.trim() : '').slice(0, 60);
   const steps = normalizeRoute(msg.steps);
@@ -509,8 +565,9 @@ function register(deps) {
 
   unobserve = api.seats.observeSeats(onSeatMessage);
 
-  const verbs = { taskCreate, taskStart, taskDelegate, taskPause, taskResume,
-                  taskRetry, taskUpdate, taskDelete, taskRouteSave, taskRouteDelete };
+  const verbs = { taskCreate, taskStart, taskDelegate, taskDelegateFromChat,
+                  taskPause, taskResume, taskRetry, taskUpdate, taskDelete,
+                  taskRouteSave, taskRouteDelete };
   for (const [type, fn] of Object.entries(verbs))
     api.bus.on(type, (msg) => { try { fn(msg || {}); } catch (e) { console.error('[tasks] ' + type + ':', e.message); } });
 
