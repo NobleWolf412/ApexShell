@@ -1058,10 +1058,13 @@ window.ApexChat = (function () {
     defaultWsPath = m.defaultPath || null;
     if (chats.size) renderTabs();     // relabel + repaint stripes with new names
   });
-  ApexBus.on('workspaceBrowsed', (m) => {
+  ApexBus.on('workspaceBrowsed', async (m) => {
     if (!m || !m.path) return;
+    // ApexPrompt, NOT window.prompt — Electron renderers have no prompt() (it
+    // throws), which silently killed this whole handler after the folder pick
+    // (the operator, 2026-07-16: "add workspace → select folder is broken").
     const suggested = m.suggestedName || '';
-    const name = (window.prompt('Name this workspace:', suggested) || '').trim();
+    const name = ((await ApexPrompt('Name this workspace:', suggested)) || '').trim();
     if (!name) return;                // cancelled or blank — abort the add
     ApexBus.post('workspaceAdd', { name, path: m.path });
     // If the browse was launched from a persona's menu, jump straight into

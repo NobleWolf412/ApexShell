@@ -73,11 +73,16 @@
     <div class="paneBody viewerPane">
       <div class="vwHead"><span class="vwName">nothing shown yet</span>
         <button class="vwOpen" title="Open with the system app">&#8599;</button></div>
-      <div class="vwBody"><div class="paneNote">The seats' show-and-tell surface &#8212;
-        images and pages a chat reads, writes, or wants you to see render here.
-        The tab dot pulses when something new lands.</div></div>
+      <div class="vwBody"><div class="paneNote">The seats' show-and-tell surface.
+        Three ways things land here:<br><br>
+        &#8226; a chat <b>writes or edits a file</b> &#8212; it renders on its own<br>
+        &#8226; you <b>click a file path</b> in any chat<br>
+        &#8226; you <b>paste an image</b> into a chat's input<br><br>
+        Images and HTML pages render live &#8212; the view re-renders as the file
+        changes on disk, so you can watch a seat build something. Latest wins;
+        &#8599; opens the file with your system app.</div></div>
     </div>
-    <div class="dockTab" data-tab="viewer">VIEWER<span class="vDot" hidden></span></div>
+    <div class="dockTab" data-tab="viewer" title="Working view &#8212; files the chats write, paths you click, images you paste render here (live: it re-renders as the file changes); the dot pulses when something new lands while this is closed">VIEWER<span class="vDot" hidden></span></div>
   </div>
   <!-- Built-in base-shell terminal. Additional panes can register later. -->
   <div class="sidePane dockPane" id="dock-terminal" data-tab="terminal" data-order="15">
@@ -169,6 +174,7 @@
 </div>
 
 <script src="bus.js"></script>
+<script src="prompt.js"></script>
 <script src="theme.js"></script>
 <script src="background.js"></script>
 <script src="monitors.js"></script>

@@ -90,9 +90,10 @@
     personaSel.value = '';
   };
   form.querySelector('.tkBrowse').onclick = () => ApexBus.post('taskPickCwd', {});
-  form.querySelector('.tkSaveRoute').onclick = () => {
+  form.querySelector('.tkSaveRoute').onclick = async () => {
     if (!chips.length) { ApexToast('build the persona sequence first'); return; }
-    const name = prompt('route name:', chips.join('-').toLowerCase().slice(0, 60));
+    // ApexPrompt, not prompt() — Electron renderers have no window.prompt
+    const name = await ApexPrompt('route name:', chips.join('-').toLowerCase().slice(0, 60));
     if (name) ApexBus.post('taskRouteSave', { name, steps: chips.slice() });
   };
   form.querySelector('.tkCreate').onclick = () => {
@@ -199,11 +200,12 @@
         mk('Delegate →', cur && cur.packet && cur.packet.status === 'done'
             ? 'hand the packet to the next step'
             : 'needs a completed packet — or type a summary when asked',
-          () => {
+          async () => {
             if (cur && cur.packet && cur.packet.status === 'done')
               ApexBus.post('taskDelegate', { id: t.id });
             else {
-              const s = prompt('no handoff packet yet — type a summary to hand off manually:');
+              // ApexPrompt, not prompt() — Electron renderers have no window.prompt
+              const s = await ApexPrompt('no handoff packet yet — type a summary to hand off manually:');
               if (s) ApexBus.post('taskDelegate', { id: t.id, summary: s });
             }
           }, 'tkGo');

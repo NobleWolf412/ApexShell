@@ -23,7 +23,10 @@ window.ApexViewer = (() => {
   function show(m) {
     curPath = m.path || null;
     openBtn.hidden = !curPath;    // ↗ needs a real file; a pasted dataURL has none
+    openBtn.title = curPath ? 'open ' + curPath + ' with your system app (browser, editor, image viewer)' : '';
     nameEl.textContent = m.name || m.path || '';
+    nameEl.title = (m.path ? m.path + '\n' : '') +
+      'live view — re-renders when this file changes on disk; the newest artifact from any chat replaces it';
     body.textContent = '';
     if (m.kind === 'img') {
       const i = document.createElement('img');

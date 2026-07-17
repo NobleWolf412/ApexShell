@@ -7,6 +7,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { dialog, BrowserWindow } = require('electron');
 const bus = require('./bus');
 const store = require('./store');
 const artifacts = require('./artifacts');
@@ -119,6 +120,40 @@ function defaultCwd() {
 }
 const seatCwd = (persona) => (presets.get(persona) || {}).cwd || defaultCwd();
 
+// ---- workspaces: named project roots the picker + tab chip work off of.
+// Shape in seatconfig.json: `_workspaces: [{ name, path }]`, `_workspace`
+// keeps its role as the default project path.
+function readWorkspaces() {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { /* no cfg */ }
+  const list = Array.isArray(cfg._workspaces) ? cfg._workspaces : [];
+  const clean = list
+    .filter((w) => w && typeof w.name === 'string' && typeof w.path === 'string'
+                   && path.isAbsolute(w.path) && fs.existsSync(w.path))
+    .map((w) => ({ name: w.name.trim() || path.basename(w.path), path: w.path }));
+  // First-run migration: an existing `_workspace` seeds the list so the picker
+  // isn't empty on the first render.
+  if (!clean.length && typeof cfg._workspace === 'string' && cfg._workspace
+      && fs.existsSync(cfg._workspace)) {
+    clean.push({ name: path.basename(cfg._workspace) || cfg._workspace, path: cfg._workspace });
+  }
+  const defPath = (typeof cfg._workspace === 'string' && cfg._workspace) ? cfg._workspace
+                  : (clean[0] ? clean[0].path : null);
+  return { list: clean, defaultPath: defPath };
+}
+
+function writeWorkspaces(next) {
+  let cfg = {};
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { /* fresh */ }
+  cfg._workspaces = next.list.map((w) => ({ name: w.name, path: w.path }));
+  if (next.defaultPath) cfg._workspace = next.defaultPath;
+  store.writeJsonAtomic(CONFIG_FILE, cfg);
+}
+
+function postWorkspaces() {
+  bus.post('workspaces', readWorkspaces());
+}
+
 // Per-persona launch config (J21/J23): `current` = live dials for the next
 // launch, `default` = that persona's saved default. Moved home to app/ when
 // the extension era was archived (2026-07-12, the operator's "proven").
@@ -204,6 +239,9 @@ const presetInfo = (name) => {
 const presetNames = () => [...presets.keys()];
 const seatCommand = (msg) => { if (host) host.handle(msg); };
 const seatEntry = (id) => host ? host.list().find((s) => s.id === id) || null : null;
+/** All live seats — the workflow layer uses this to find reuse candidates so a
+ *  delegation to a persona the user already has open doesn't spawn a duplicate. */
+const listSeats = () => host ? host.list().slice() : [];
 /** Close a seat the way the renderer's ✕ does — artifact cleanup included. */
 function closeSeat(id) {
   if (!host) return;
@@ -454,6 +492,57 @@ function register() {
     postCfg(cfg);
   });
 
+  // ---- workspaces (project picker + tab identity) ----
+  bus.on('workspacesGet', () => postWorkspaces());
+  bus.on('workspaceBrowse', async () => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+      const picked = await dialog.showOpenDialog(win || undefined, {
+        title: 'Choose a project folder',
+        properties: ['openDirectory'],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return;
+      const p = picked.filePaths[0];
+      if (!fs.existsSync(p)) {
+        bus.post('toast', { text: 'That folder does not exist.' });
+        return;
+      }
+      bus.post('workspaceBrowsed', { path: p, suggestedName: path.basename(p) || p });
+    } catch (e) {
+      bus.post('toast', { text: 'Could not open folder picker: ' + e.message });
+    }
+  });
+  bus.on('workspaceAdd', (msg) => {
+    if (!msg || typeof msg.path !== 'string' || !path.isAbsolute(msg.path)
+        || !fs.existsSync(msg.path)) {
+      bus.post('toast', { text: 'That path is not a folder we can open.' });
+      return;
+    }
+    const name = (typeof msg.name === 'string' && msg.name.trim())
+      ? msg.name.trim() : (path.basename(msg.path) || msg.path);
+    const cur = readWorkspaces();
+    const filtered = cur.list.filter((w) => w.path !== msg.path);
+    filtered.push({ name, path: msg.path });
+    const defPath = cur.defaultPath || msg.path;
+    writeWorkspaces({ list: filtered, defaultPath: defPath });
+    postWorkspaces();
+  });
+  bus.on('workspaceRemove', (msg) => {
+    if (!msg || typeof msg.path !== 'string') return;
+    const cur = readWorkspaces();
+    const filtered = cur.list.filter((w) => w.path !== msg.path);
+    let defPath = cur.defaultPath;
+    if (defPath === msg.path) defPath = filtered[0] ? filtered[0].path : null;
+    writeWorkspaces({ list: filtered, defaultPath: defPath });
+    postWorkspaces();
+  });
+  bus.on('workspaceSetDefault', (msg) => {
+    if (!msg || typeof msg.path !== 'string' || !fs.existsSync(msg.path)) return;
+    const cur = readWorkspaces();
+    writeWorkspaces({ list: cur.list, defaultPath: msg.path });
+    postWorkspaces();
+  });
+
   // Clicked path in chat → the working view (read-only render; the external
   // open stays behind the view's own ↗). Absolute existing paths only.
   bus.on('artifactOpen', (msg) => {
@@ -473,6 +562,7 @@ function register() {
     postPresets();   // rail buttons rebuild before the roster lands
     bus.post('seatList', { seats: host.list() });
     bus.post('seatHistory', { history: store.chatHistory() });
+    postWorkspaces();
     presetConflicts.forEach((text) => bus.post('toast', { text }));
   });
 }
@@ -559,6 +649,7 @@ module.exports = {
   presetNames,
   seatCommand,
   seatEntry,
+  listSeats,
   closeSeat,
 };
 

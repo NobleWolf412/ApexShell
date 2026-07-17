@@ -12,7 +12,8 @@ const SOURCES = {
   'demo':      require('./sourceDemo'),
   'http-json': require('./sourceHttp'),  // generic JSON endpoint client
   'system':    require('./sourceSystem'),// base-install: local machine stats, zero permissions
-  'weather':   require('./sourceWeather')// base-install: Open-Meteo, keyless
+  'weather':   require('./sourceWeather'),// base-install: Open-Meteo, keyless
+  'mcp':       require('./sourceMcp')    // MCP servers: active-in-project + available inventory, health via `claude mcp list`
 };
 
 function loadConfig() {

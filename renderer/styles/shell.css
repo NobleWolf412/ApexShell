@@ -100,7 +100,7 @@
   padding: 8px 12px; border-bottom: 1px solid var(--edge);
   font-size: 11px; color: var(--dim); }
 .viewerPane .vwHead .vwName { flex: 1; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
+  white-space: nowrap; color: var(--text); font-size: 12px; }
 .viewerPane .vwHead button { border: 0; background: none; color: var(--dim);
   cursor: pointer; font-size: 13px; }
 .viewerPane .vwHead button:hover { color: var(--text); }
@@ -112,9 +112,12 @@
 .viewerPane .vwBody img { max-width: 100%; max-height: 100%; margin: auto;
   object-fit: contain; }
 .viewerPane .vwBody iframe { flex: 1; border: 0; background: #fff; }
-.viewerPane .vwBody pre { flex: 1; margin: 0; padding: 10px; overflow: auto;
-  font: 11px/1.5 Consolas, monospace; color: var(--dim); white-space: pre-wrap; }
-.viewerPane .vwBody .paneNote { margin: auto; max-width: 320px; }
+/* pre = CONTENT, not chrome: text color + a readable size (was 11px dim —
+   the operator, 2026-07-16: "very hard to read") */
+.viewerPane .vwBody pre { flex: 1; margin: 0; padding: 12px 14px; overflow: auto;
+  font: 12.5px/1.55 Consolas, monospace; color: var(--text); white-space: pre-wrap; }
+.viewerPane .vwBody .paneNote { margin: auto; max-width: 340px;
+  font-size: 12px; color: var(--dim); }
 /* built-in terminal dock - same tab-safe gutter as Viewer, with the shell
    filling the pane instead of living as a central AI-seat tab */
 .terminalPane { display: flex; flex-direction: column; overflow: hidden !important;
