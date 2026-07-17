@@ -197,7 +197,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     } else if (opts.launch && opts.launch.model === 'qwen') {
       // The local lane (J22): Ollama-backed, chat-only, view-vocab direct.
       entry.local = true;
-      entry.title = entry.title === 'Seat' ? 'Qwen Coder (local)' : entry.title;
+      entry.title = entry.title === 'Seat' ? 'Local coder (Ollama)' : entry.title;
       entry.seat = startLocalSeat({
         cwd: opts.cwd || apexRoot,
         log: (l) => log(`[${id}] ${l}`),

@@ -94,7 +94,7 @@ window.ApexUsage = (() => {
   // qwen/agy ride above them (restored 2026-07-14, same expanding bars, no
   // rail glyph to pair).
   const rows = {};
-  for (const [key, name] of [['qwen', 'Qwen (local)'], ['agy', 'agy / Gemini'],
+  for (const [key, name] of [['qwen', 'Local (Ollama)'], ['agy', 'agy / Gemini'],
                              ['codex', 'Codex (Plus)'], ['claude', 'Claude (Max 20)']]) {
     const row = document.createElement('div');
     row.className = 'usageRow';
@@ -181,7 +181,7 @@ window.ApexUsage = (() => {
     if (q && q.today) {
       const lane = (w) => (w.seatTok || w.delTok)
         ? ' (seat ' + kTok(w.seatTok) + ' / delegate ' + kTok(w.delTok) + ')' : '';
-      const title = 'Qwen (local, no limit) — session ' +
+      const title = 'Local (Ollama, no limit) — session ' +
         kTok(q.session.prompt + q.session.eval) + ' tok / ' + q.session.turns + ' turns' +
         ' · today ' + kTok(q.today.tok) + lane(q.today) +
         ' · 7d ' + kTok(q.week.tok) + lane(q.week) +

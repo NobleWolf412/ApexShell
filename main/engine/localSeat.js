@@ -212,7 +212,7 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
           pendingPerms.set(requestId, { resolve });
           onEvent({
             type: 'permission', requestId,
-            tool: 'write_file (local qwen)',
+            tool: 'write_file (local seat)',
             description: 'The local model wants to write this file.',
             detail: args.path,
             input: args,

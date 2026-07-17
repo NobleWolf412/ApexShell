@@ -1235,7 +1235,7 @@ window.ApexChat = (function () {
       // codex IS chain-capable (AGENTS.md substrate, 2026-07-14) — offered
       // to every persona, per TIER (J80: the composite splits to
       // model='codex' + codexModel in launchFor; labels match the live dial)
-      for (const extra of [['qwen', 'qwen (local)'], ['agy', 'agy (Gemini terminal)'],
+      for (const extra of [['qwen', 'local (Ollama)'], ['agy', 'agy (Gemini terminal)'],
                            ['codex-sol', 'codex — sol (frontier)'],
                            ['codex-terra', 'codex — terra (balanced)'],
                            ['codex-luna', 'codex — luna (fast)']]) {
@@ -1266,7 +1266,7 @@ window.ApexChat = (function () {
       effortD.disabled = (m === 'qwen' || m === 'agy');
       effortD.title = effortD.disabled ? 'no effort lever on this lane' : '';
       permD.disabled = (m === 'qwen');
-      permD.title = m === 'qwen' ? 'local qwen is chat-only — no tools, nothing to permit'
+      permD.title = m === 'qwen' ? 'local seat runs read tools automatically; writes always prompt — nothing to set here'
         : m === 'agy' ? 'agy asks in its own terminal; this sets its launch flag'
         : m.startsWith('codex') ? 'codex asks through our permission cards; on Windows the sandbox is a no-op — the cards are the boundary'
         : '';
