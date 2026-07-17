@@ -94,16 +94,33 @@
       updateDot();
       return;
     }
+    // one-click sweep when several seats have findings
+    if (seatsWith.length > 1) {
+      const clearAll = document.createElement('button');
+      clearAll.className = 'auClearAll';
+      clearAll.textContent = 'clear all findings';
+      clearAll.title = 'dismiss every finding below — new passes keep reporting as usual';
+      clearAll.onclick = () => { findings.clear(); renderFindings(); };
+      findingsEl.appendChild(clearAll);
+    }
     for (const [id, list] of seatsWith) {
       const group = document.createElement('div');
       group.className = 'auGroup';
       const head = document.createElement('div');
       head.className = 'auGroupHead';
-      head.textContent = liveSeats.get(id) || 'seat';
+      const headName = document.createElement('span');
+      headName.textContent = liveSeats.get(id) || 'seat';
+      head.appendChild(headName);
+      const clear = document.createElement('button');
+      clear.className = 'auGroupClear';
+      clear.textContent = 'clear';
+      clear.title = 'dismiss this chat\'s findings — the next audit pass reports fresh';
+      clear.onclick = () => { findings.delete(id); renderFindings(); };
+      head.appendChild(clear);
       group.appendChild(head);
       for (const f of list) {
         const card = document.createElement('div');
-        card.className = 'auCard sev-' + f.severity;
+        card.className = 'auCard sev-' + f.severity + (f.sent ? ' sent' : '');
         const sev = document.createElement('div');
         sev.className = 'auSev';
         sev.textContent = SEV[f.severity] || f.severity;
@@ -132,12 +149,19 @@
         const acts = document.createElement('div');
         acts.className = 'auActs';
         const send = document.createElement('button');
-        send.type = 'button'; send.textContent = 'send to chat';
-        send.title = 'drop this into the chat\'s composer to raise it with the seat';
+        send.type = 'button';
+        send.textContent = f.sent ? 'sent ✓' : 'send to chat';
+        send.disabled = !!f.sent;
+        send.title = f.sent
+          ? 'raised with the chat — once it addresses this, the next audit pass clears the card'
+          : 'drop this into the chat\'s composer to raise it with the seat';
         send.addEventListener('click', () => {
           const text = f.claim + (f.suggestion ? ' — ' + f.suggestion : '');
-          if (window.ApexChat && ApexChat.fillComposer) ApexChat.fillComposer(id, text);
-          else ApexToast('open the chat to raise this');
+          if (window.ApexChat && ApexChat.fillComposer) {
+            ApexChat.fillComposer(id, text);
+            f.sent = true;                 // dimmed until the next pass re-judges
+            renderFindings();
+          } else ApexToast('open the chat to raise this');
         });
         const dismiss = document.createElement('button');
         dismiss.type = 'button'; dismiss.textContent = 'dismiss';
@@ -190,7 +214,13 @@
     if (m.estTokens != null) watchedEst.set(m.id, m.estTokens);
     if (m.suppressed) { /* chain step owns the audit — stay quiet, no spend */ }
     else if (m.error) ApexToast('audit: ' + m.error);
-    if (m.findings && m.findings.length) findings.set(m.id, m.findings);
+    else {
+      // Every pass REPLACES this seat's findings — the auditor re-reviewed the
+      // same window, so its latest word is the truth. A clean pass therefore
+      // CLEARS the cards: address a note in the chat and it vanishes on the
+      // next audit instead of going stale on the board.
+      findings.set(m.id, m.findings || []);
+    }
     renderWatches(); renderFindings();
   });
   ApexBus.on('auditConfig', (m) => {

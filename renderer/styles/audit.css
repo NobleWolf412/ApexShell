@@ -37,7 +37,16 @@
 .auFindings { display: flex; flex-direction: column; gap: 10px; }
 .auGroup { display: flex; flex-direction: column; gap: 6px; }
 .auGroupHead { font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
-  color: var(--dim); border-bottom: 1px solid var(--edge); padding-bottom: 4px; }
+  color: var(--dim); border-bottom: 1px solid var(--edge); padding-bottom: 4px;
+  display: flex; align-items: baseline; gap: 8px; }
+.auGroupHead span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auGroupClear, .auClearAll { border: 1px solid var(--edge); background: none; color: var(--faint);
+  border-radius: 6px; padding: 1px 8px; font-size: 9px; letter-spacing: .06em;
+  cursor: pointer; text-transform: none; }
+.auGroupClear:hover, .auClearAll:hover { color: var(--text); border-color: var(--accent); }
+.auClearAll { align-self: flex-end; }
+/* raised with the chat — dimmed until the next pass re-judges it */
+.auCard.sent { opacity: .55; }
 .auCard { border: 1px solid var(--edge); border-left-width: 3px; border-radius: 8px;
   padding: 9px 11px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; }
 .auCard.sev-risk { border-left-color: var(--critical, var(--warning)); }
