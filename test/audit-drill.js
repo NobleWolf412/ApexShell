@@ -198,6 +198,34 @@ const lastOf = (type) => [...posts].reverse().find((p) => p.type === type);
     } finally { fsx.rmSync(projDir, { recursive: true, force: true }); }
   });
 
+  await agate('stopping mid-pass CANCELS the in-flight auditor and toasts the spend', async () => {
+    handlers.auditConfig({ autoOff: false, borrow: null });
+    handlers.auditToggle({ id: 'sm', on: true });
+    assert.ok(posts.some((p) => p.type === 'toast' && /live audit ON/.test(p.m.text)),
+      'start announces itself');
+    emit('sm', { type: 'user', text: 'do something' });
+    emit('sm', { type: 'text', text: 'working on it' });
+    emit('sm', { type: 'result', ok: true });
+    await new Promise((r) => setTimeout(r, 4300));            // pass is now in flight
+    const inFlight = disposables[disposables.length - 1];
+    assert.ok(inFlight && !inFlight.closed, 'auditor seat is running');
+    posts.length = 0;
+    handlers.auditToggle({ id: 'sm', on: false });            // stop mid-pass
+    assert.ok(inFlight.closed, 'in-flight auditor CLOSED, not left to finish');
+    const toast = posts.find((p) => p.type === 'toast');
+    assert.ok(toast && /live audit OFF/.test(toast.m.text), 'stop announces itself');
+    assert.ok(/cancelled/.test(toast.m.text), 'toast says the pass was cancelled');
+    assert.equal(lastOf('auditState').m.on, false);
+  });
+
+  await agate('a seat closing stops its watch silently (no toast spam)', async () => {
+    handlers.auditToggle({ id: 'sg', on: true });
+    posts.length = 0;
+    observer({ type: 'seatGone', id: 'sg' });
+    assert.ok(!posts.some((p) => p.type === 'toast'), 'no toast for a gone seat');
+    assert.equal(lastOf('auditState').m.on, false);
+  });
+
   await agate('auto-off stops the watch once the token ceiling is crossed', async () => {
     handlers.auditConfig({ autoOff: true, budget: 1, borrow: null });
     handlers.auditToggle({ id: 'sb', on: true });

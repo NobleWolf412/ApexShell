@@ -54,5 +54,8 @@
   border-radius: 6px; padding: 3px 8px; font-size: 9.5px; cursor: pointer; }
 .auActs button:hover { color: var(--text); border-color: var(--accent); }
 
-/* watch chip on a chat tab */
-.chatTab .watchBadge { margin-left: 6px; font-size: 9px; opacity: .85; }
+/* watch chip on a chat tab — clickable: it IS the stop switch */
+.chatTab .watchBadge { margin-left: 6px; font-size: 9px; opacity: .85;
+  border: 0; background: none; cursor: pointer; padding: 0 2px; }
+.chatTab .watchBadge:hover { opacity: 1;
+  filter: drop-shadow(0 0 3px var(--critical, var(--warning))); }

@@ -29,7 +29,7 @@ function register() {
   unobserve = seats.observeSeats(onSeatMessage);
   bus.on('auditToggle', (m) => {
     if (!m || !m.id) return;
-    if (m.on) startWatch(m.id); else stopWatch(m.id);
+    if (m.on) startWatch(m.id); else stopWatch(m.id, 'user');
   });
   bus.on('auditOnce', (m) => { if (m && m.id) runAudit(m.id); });
   bus.on('auditConfig', (m) => {
@@ -85,11 +85,21 @@ function isChainSeat(id) {
   catch { return false; }
 }
 
+const seatTitle = (id) => {
+  try {
+    const e = typeof seats.seatEntry === 'function' && seats.seatEntry(id);
+    return (e && e.title) || 'this chat';
+  } catch { return 'this chat'; }
+};
+
 function startWatch(id) {
   if (!watched.has(id)) {
-    const w = { turns: [], curAssistant: '', timer: null, running: false, count: 0, estTokens: 0 };
+    const w = { turns: [], curAssistant: '', timer: null, running: false,
+                controller: null, count: 0, estTokens: 0 };
     watched.set(id, w);
     seedFromTranscript(id, w);   // prior turns count too — "audit now" covers them
+    bus.post('toast', { text: 'live audit ON for "' + seatTitle(id) +
+      '" — a haiku pass reviews each turn. Stop it with the same toggle, or click the 👁 on its tab.' });
   }
   bus.post('auditState', { id, on: true, count: watched.get(id).count });
 }
@@ -111,15 +121,28 @@ function seedFromTranscript(id, w) {
     }
   } catch { /* no transcript yet — the watch simply starts fresh */ }
 }
-function stopWatch(id) {
+/** Stop a watch. `reason`: 'user' (toggle / 👁 click — toast the spend
+ *  summary), 'ceiling' (auto-off has its own toast), 'gone' (seat closed —
+ *  silent). An in-flight pass is CANCELLED, not left to finish on your dime. */
+function stopWatch(id, reason) {
   const w = watched.get(id);
-  if (w && w.timer) clearTimeout(w.timer);
+  if (!w) return;
+  if (w.timer) clearTimeout(w.timer);
+  if (w.controller) { try { w.controller.close(); } catch { /* already gone */ } w.controller = null; }
+  const wasMidPass = w.running;
+  w.running = false;
   watched.delete(id);
+  if (reason === 'user') {
+    bus.post('toast', { text: 'live audit OFF for "' + seatTitle(id) + '" — ' +
+      w.count + ' pass' + (w.count === 1 ? '' : 'es') + ', ~' +
+      Math.round((w.estTokens || 0) / 1000) + 'k tokens' +
+      (wasMidPass ? ' (in-flight pass cancelled)' : '') + '.' });
+  }
   bus.post('auditState', { id, on: false });
 }
 
 function onSeatMessage(msg) {
-  if (msg.type === 'seatGone') { stopWatch(msg.id); return; }
+  if (msg.type === 'seatGone') { stopWatch(msg.id, 'gone'); return; }
   // synthetic user tap (seats.js): a normal seatSend the view doesn't echo
   if (msg.type === 'seatUserSend') {
     const wu = watched.get(msg.id);
@@ -167,22 +190,23 @@ function runAudit(id) {
   w.estTokens = (w.estTokens || 0) + Math.ceil(prompt.length / 4) + 250;
   bus.post('auditRunning', { id, count: w.count, estTokens: w.estTokens });
   let out = '';
-  let controller = null;
   const finish = (findings, error) => {
     if (!w.running) return;
     w.running = false;
-    try { if (controller) controller.close(); } catch { /* already closed */ }
+    try { if (w.controller) w.controller.close(); } catch { /* already closed */ }
+    w.controller = null;
     bus.post('auditFindings', { id, findings: findings || [], error: error || null,
       count: w.count, estTokens: w.estTokens });
     // ceiling: auto-stop this watch once it crosses the configured budget
     if (cfg.autoOff && w.estTokens >= cfg.budget && watched.has(id)) {
-      stopWatch(id);
+      stopWatch(id, 'ceiling');
       bus.post('toast', { text: 'Live audit auto-stopped — this seat hit the ~' +
         cfg.budget.toLocaleString() + '-token ceiling.' });
     }
   };
   try {
-    controller = seats.startDisposable({
+    // stored on the watch so stopWatch can CANCEL a pass mid-flight
+    w.controller = seats.startDisposable({
       kickoff: prompt,
       model: 'haiku',
       effort: 'low',
@@ -201,7 +225,7 @@ function runAudit(id) {
 
 function dispose() {
   if (unobserve) unobserve();
-  for (const id of [...watched.keys()]) stopWatch(id);
+  for (const id of [...watched.keys()]) stopWatch(id, 'gone');
 }
 
 module.exports = { register, dispose };

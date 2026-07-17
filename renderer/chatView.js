@@ -362,12 +362,19 @@ window.ApexChat = (function () {
         repo.style.borderColor = 'hsl(' + wsHue(c.cwd) + ' 45% 45%)';
         label.appendChild(repo);
       }
-      // live-audit chip: this seat has a shadow auditor watching it
+      // live-audit chip: this seat has a shadow auditor watching it. The chip
+      // IS the off switch — the pane's toggle shouldn't be the only way out.
       if (c.watching) {
-        const eye = document.createElement('span');
+        const eye = document.createElement('button');
         eye.className = 'watchBadge';
         eye.textContent = '👁';
-        eye.title = 'a live auditor is watching this chat';
+        eye.title = 'a live auditor is watching this chat — click to stop the watch';
+        eye.onclick = (e) => {
+          e.stopPropagation();
+          if (window.confirm('Stop the live audit on "' + c.title + '"?\n\nNo more passes will run ' +
+              '(an in-flight one is cancelled). Findings already made stay in the AUDIT pane.'))
+            ApexBus.post('auditToggle', { id, on: false });
+        };
         label.appendChild(eye);
       }
       // chain chip (task board): "⛓ 2/3" on a seat running a route step
