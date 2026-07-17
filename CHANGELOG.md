@@ -1,5 +1,33 @@
 # Apex Shell Changelog
 
+## 0.2.0 — 2026-07-17
+
+Personas returned as a first-class, tool-driven system, plus a wave of
+workflow, tracker, and UX work.
+
+- **Persona Builder + cast**: a create/edit/archive persona system
+  (`extensions/personas/`) with a workspace at `apex/personas`. Shipped the
+  Architect (read-only planner), Auditor (read-only review + UX/UI lens), and
+  Coder (implementation + debugging) cast. Read-only is enforced technically
+  via a per-persona toolset wall (`tools`/`disallowedTools` in seatconfig).
+- **TODO board** (renamed from TASKS): persona-route chains, the Delegate-from-
+  chat path, a seat-first packet-ask ladder before any hand-typed summary, and
+  the **apex-todo** block — any chat can post/refresh a checklist on the board.
+- **MCP tracker**: a CONTROL CENTER pane showing active-in-project vs available
+  MCP servers with live health via `claude mcp list`; graphify + serena made
+  global (cwd-resolved).
+- **Live auditor**: opt-in per-seat shadow review (haiku), with an auto-stop
+  ceiling and a hung-pass backstop.
+- **Local lane**: switched Ollama default from Qwen to gpt-oss:20b (+ llama3.1
+  fallback); UI relabelled "Local (Ollama)".
+- **Viewer**: pin-to-hold + a history strip of recent artifacts; readable text.
+- **UX pass**: clickable tracker chips, keyboard shortcuts + a `?` cheat-sheet,
+  named workspaces (with a scratch default) + rail-menu manage controls,
+  ApexPrompt (the missing `window.prompt`), and a batch of correctness fixes
+  from a full audit sweep (timer leaks, propagation bugs, stale-state races).
+- **Model dial**: `fable` alias sent to the wire as its full model id on both
+  launch and live-switch paths (CLI alias regression workaround).
+
 ## 0.1.0 — 2026-07-15
 
 - Created the independent Apex Shell repository from the proven standalone app.

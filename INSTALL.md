@@ -63,6 +63,39 @@ Seats spawn in a working directory. Set it once in `seatconfig.json`
 Unset, seats spawn at the user's home folder. Extensions may override this
 (see floorplan.md § Extensions).
 
+### seatconfig.json — full schema
+
+The file is UI-written (the AI-bar defaults panel, the workspace picker) — you
+rarely hand-edit it — but here is its whole shape:
+
+```jsonc
+{
+  "_workspace": "C:/Users/you/scratch",        // bare default cwd for blank seats
+  "_workspaces": [                              // the named-workspace picker
+    { "name": "scratch",   "path": "C:/Users/you/scratch" },
+    { "name": "my-app",    "path": "C:/Users/you/my-app" }
+  ],
+  "_default": { "model": "opus", "effort": "medium", "permissions": "manual" },
+  "<Persona>": {                                // one block per persona/preset
+    "default": { "model": "fable", "effort": "high", "permissions": "manual" },
+    "current": { "model": "fable", "effort": "high", "permissions": "manual" },
+    "tools": "Read,Glob,Grep,WebSearch,WebFetch,Write,Bash,TodoWrite",
+    "disallowedTools": "mcp__serena__replace_symbol_body,mcp__serena__rename_symbol"
+  }
+}
+```
+
+- **`current` vs `default`**: dials resolve `current` → `default` → `_default`
+  → hard `manual`. "Set as default" copies resolved `current` into `default`;
+  "reset" copies `default` back into `current`.
+- **`model`**: `fable` | `opus` | `sonnet` | `haiku` (or `codex-sol|terra|luna`,
+  `qwen`, `agy` for the alternate lanes). **`effort`**: `low|medium|high|xhigh|max`.
+  **`permissions`**: `manual|auto|acceptEdits|dontAsk|bypassPermissions`.
+- **`tools` / `disallowedTools`** (top-level per persona, optional): the
+  read-only wall. `tools` is the CLI's built-in allowlist; `disallowedTools`
+  is hard deny-rules and is the only lever that reaches MCP tools. Omit both
+  for a full-toolset persona.
+
 ## 5. Wire the AI lanes — one guide per lane, connect/
 
 Check what exists on this machine and wire only that. Each guide states
@@ -73,7 +106,7 @@ platform traps:
   full streamed seats with permission cards, usage bars, resume.
 - `connect/codex.md` — OpenAI Codex CLI (ChatGPT subscription). Terminal
   seat + usage tracking.
-- `connect/qwen-local.md` — a local model via Ollama. Offline chat +
+- `connect/local.md` — a local model via Ollama (gpt-oss:20b). Offline chat +
   gated file tools.
 - `connect/agy.md` — Antigravity/Gemini CLI. PTY-only; read the trap note
   before anything else.

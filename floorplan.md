@@ -4,6 +4,17 @@ The map an AI manager reads before moving furniture. Keep it current: any
 change to the shell's structure or contribution points updates this file in
 the same change-set — a stale map is worse than none.
 
+## Doc map — which file answers what
+
+- **User-facing**: `README.md` (what it is) · `INSTALL.md` (fresh-machine
+  runbook, incl. the `seatconfig.json` schema).
+- **Lane guides** (`connect/`): one per seat lane — `claude.md`, `codex.md`,
+  `local.md` (Ollama), `agy.md`. Wire-verified operational detail + traps.
+- **Architecture** (this file): where everything lives and plugs in.
+- **Design history** (`design/`): specs (persona-builder-v1, live-auditor-v1)
+  and `design/reviews/` (archival persona-builder slice reviews).
+- **CHANGELOG.md**: version-stamped feature rollups.
+
 ## The three laws
 
 1. **Parts, not a monolith.** The seat engine (`main/engine/`) is plain
@@ -48,6 +59,10 @@ ApexShell/
 │   │   │                  panes.sample.json → empty)
 │   │   ├── sourceDemo.js  fake wandering data (the zero-setup source)
 │   │   ├── sourceHttp.js  poll a JSON endpoint (the copy-me template)
+│   │   ├── sourceSystem.js base-install: local CPU/mem/disk (os/fs, no perms)
+│   │   ├── sourceWeather.js base-install: Open-Meteo, keyless
+│   │   ├── sourceMcp.js   MCP tracker: active-in-project vs available servers,
+│   │   │                  health via `claude mcp list` (follows seatFocus cwd)
 │   │   └── panes.json     THE USER'S panes (panes.sample.json documents it)
 │   ├── extensions.js      extension loader (see § Extensions)
 │   ├── liveUpdate.js      source watcher → code-changed badge → seat-safe restart
@@ -58,15 +73,19 @@ ApexShell/
 │   ├── index.html         static skeleton: title bar, menu, core dock panes,
 │   │                      AI rail (+ button only), tracker blind, script list
 │   ├── shell.js           blinds/tabs geometry, dock registration, menu,
-│   │                      zoom, close gates
+│   │                      zoom, close gates, keyboard shortcuts + ? overlay,
+│   │                      clickable tracker chips (jump to a pane)
 │   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel
-│   ├── taskBoard.js       the TASKS dock pane (workflow-layer projection)
+│   ├── taskBoard.js       the TODO dock pane (workflow-layer projection)
 │   ├── auditPane.js       the AUDIT dock pane (live-auditor projection)
 │   ├── skillPane.js       the SKILLS dock pane (author/list Claude skills)
+│   ├── prompt.js          ApexPrompt — the window.prompt() stand-in (Electron
+│   │                      renderers have none); singleton modal
 │   ├── termView.js        xterm mount for PTY seats
 │   ├── terminalDock.js    built-in TERMINAL dock projection
 │   ├── monitors.js        tracker grid renderer (widget kinds)
-│   ├── viewer.js          the VIEWER dock tab (artifact rendering)
+│   ├── viewer.js          the VIEWER dock tab (artifact rendering; pin to hold
+│   │                      the view + a history strip of recent artifacts)
 │   ├── usage.js           usage bars (rail units + quarter rows)
 │   ├── extensions.js      renderer-side extension injector
 │   └── styles/            base/shell/chat/monitors/theme CSS (tokened)
@@ -74,7 +93,10 @@ ApexShell/
 ├── state/                 gitignored local state (logs, history, ledger)
 ├── test/engine-harness.js the headless gate — run after ANY engine change
 ├── preload.js             the one door
-├── seatconfig.json        per-seat launch dials + `_workspace` (UI-written)
+├── seatconfig.json        per-persona launch dials (current/default layers),
+│                          `_workspace` + `_workspaces`, and per-persona
+│                          `tools`/`disallowedTools` (the read-only wall);
+│                          full schema in INSTALL.md (UI-written)
 ├── theme.json/themes.json/background.json   appearance (UI-written)
 └── assets/apex.ico        window icon (in-app; nothing reaches outside)
 ```
@@ -133,7 +155,7 @@ anything else in the folder needs Update & restart (the watcher knows).
   its own headless drill (`test/codex-drill.js`).
   Details + the Windows containment truth: `connect/codex.md`.
 - **Local lane** (`localSeat.js`): Ollama chat with tool rounds; writes gate
-  through the same permission card. `connect/qwen-local.md`.
+  through the same permission card. `connect/local.md`.
 - **PTY lane** (`ptySeat.js`): a real ConPTY + xterm — for TTY-only CLIs
   (agy) and anyone who wants the raw terminal. No resume across restarts
   (a ConPTY child can't be resumed — the app says so honestly).
@@ -145,10 +167,21 @@ Launch dial resolution: seat `current` → seat `default` → `_default` →
 hard `manual`. `_workspace` sets the bare default cwd; preset `cwd` and
 `setDefaultCwd` override.
 
+**Per-persona toolset wall** (`launchFor` in `seats.js`): a persona's
+seatconfig entry may carry top-level `tools` (the CLI's built-in allowlist,
+e.g. `Read,Glob,Grep,WebSearch,WebFetch,Write,Bash,TodoWrite`) and
+`disallowedTools` (hard deny-rules — the only thing that reaches MCP tools;
+`--tools` governs built-ins only). This is how the read-only advisor personas
+(Architect, Auditor) launch WITHOUT Edit/Task and with serena's symbol-edit
+tools denied. The keys are top-level (outside the current/default layers)
+because the set-default/reset dial actions replace whole layers; they survive
+every launch path including `seatRelaunch` (so an effort restart can't unlock
+the wall).
+
 ## The workflow layer — tasks, routes, delegation
 
 `main/tasks.js` (core module, registered after extensions so routes can
-validate against live presets) + `renderer/taskBoard.js` (the TASKS dock
+validate against live presets) + `renderer/taskBoard.js` (the TODO dock
 pane) + `main/engine/handoff.js` (pure packet contract).
 
 - A **task** = title + repo cwd + a **route** of persona presets
@@ -179,6 +212,13 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   step error/seat death, decision needed, bounce limit, chain complete.
   The seat stays open on packet gates — answer in its chat and the observer
   keeps parsing every later result.
+- **apex-todo** — any chat's road onto the board. A seat may end a message
+  with a fenced ```apex-todo``` JSON block (`{title?, plan[], done[]}`,
+  advertised in `SEAT_ENV_BRIEF`): a free rail chat spawns a lightweight board
+  task in its repo (updated in place on later blocks); a chain step merges the
+  block into its own task's PLAN checklist (the handoff packet's plan/planDone
+  still rules at hand-off). This is why a persona shows progress on the board
+  instead of writing a todo file into the viewer.
 - Memory stays SILOED per persona; handoffs carry packets, never shared
   context. seats.js exposes a narrow internal seam for this module
   (`observeSeats`, `createTaskSeat`, `startDisposable`, `presetInfo/Names`,

@@ -1,4 +1,4 @@
-# connect/qwen-local — the local-model lane (Ollama)
+# connect/local — the local-model lane (Ollama)
 
 An offline seat: chat + web search/fetch + gated file tools, no
 subscription. Quality is a local model's — treat it as the bulk/mechanical

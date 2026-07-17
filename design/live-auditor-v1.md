@@ -1,6 +1,8 @@
 # Live Auditor — v1 spec
 
-Status: proposed (2026-07-16). Awaiting approval before build.
+Status: IMPLEMENTED (shipped 2026-07-16). Live in `main/audit.js` +
+`renderer/auditPane.js` + `main/engine/audit.js`; see floorplan.md § The live
+auditor. This spec is kept as the design record.
 
 ## Purpose
 
