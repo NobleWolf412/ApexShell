@@ -15,6 +15,3 @@ Thumbs.db
 
 # Tooling caches
 .serena/
-
-# Personal persona pack (paths + kickoff prompts are per-operator; superseded by the Persona Builder)
-extensions/apex-personas/
