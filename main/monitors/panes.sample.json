@@ -25,6 +25,19 @@
       ]
     },
     {
+      "id": "mcp", "title": "MCP Servers", "service": "model-context servers — active here + available", "refreshSecs": 60,
+      "wide": true,
+      "source": { "type": "mcp" },
+      "widgets": [
+        { "kind": "led", "bind": "status", "label": "MCP", "only": "quarter" },
+        { "kind": "stat", "bind": "project", "label": "Project", "only": "quarter" },
+        { "kind": "stat", "bind": "activeText", "label": "Active", "only": "quarter" },
+        { "kind": "stat", "bind": "availText", "label": "Available", "only": "quarter" },
+        { "kind": "list", "bind": "active", "label": "Active in this project", "only": "full" },
+        { "kind": "list", "bind": "available", "label": "Available (all configured)", "only": "full" }
+      ]
+    },
+    {
       "id": "weather", "title": "Weather", "service": "Open-Meteo — set source.city for accuracy", "refreshSecs": 900,
       "wide": true,
       "source": { "type": "weather" },

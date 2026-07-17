@@ -212,12 +212,19 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
     },
 
     /** Change THIS seat's model live (bundle-verified 2.1.207:
-     *  `setModel(e){ this.request({subtype:"set_model", model:e}) }`). */
+     *  `setModel(e){ this.request({subtype:"set_model", model:e}) }`).
+     *  Wire-verified 2026-07-17: the set_model control path resolves the older
+     *  aliases (opus → claude-opus-4-7) but NOT 'fable' — it confirms success,
+     *  then the next turn dies with "may not exist or you may not have access".
+     *  `--model fable` at LAUNCH resolves fine; the CLI's two paths carry
+     *  different alias tables. Send the full ID on the wire — the seat keeps
+     *  the short alias for its dial. Map ONLY what is proven broken. */
     setModel(model) {
+      const WIRE_MODEL = { fable: 'claude-fable-5' };
       write({
         type: 'control_request',
         request_id: `apex-setmodel-${Date.now()}`,
-        request: { subtype: 'set_model', model },
+        request: { subtype: 'set_model', model: WIRE_MODEL[model] || model },
       });
     },
 
