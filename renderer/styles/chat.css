@@ -88,6 +88,15 @@
 }
 #chatTabs #delegateBtn + #endBtn { margin-left: 6px; }
 #chatTabs #delegateBtn:hover { color: var(--text); border-color: var(--accent); }
+/* finished work is sitting here — the exact moment a handoff makes sense */
+#chatTabs #delegateBtn.ready {
+  color: var(--text); border-color: var(--accent);
+  animation: delegatePulse 2.2s ease-in-out infinite;
+}
+@keyframes delegatePulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  50%      { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+}
 /* context meter — the divider above the input, colors only (numbers pinned in
    the ctxTop row above): fill = window used; accent → warning ≥65% → critical ≥85% */
 .ctxBar {

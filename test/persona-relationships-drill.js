@@ -117,6 +117,34 @@ gate('suggestion count is capped', () => {
   assert.equal(out.suggestions.length, rel.MAX_SUGGESTIONS);
 });
 
+// ---------- handoff recommendations (the Delegate button's hint) ----------
+gate('handoffMap matches emits to accepts across the cast', () => {
+  const cast = [
+    { name: 'Architect', collaboration: { emits: ['design', 'coordinated multi-file change'],
+        accepts: ['requirements', 'audit findings'] } },
+    { name: 'Auditor', collaboration: { emits: ['findings report'],
+        accepts: ['design or change for review', 'implementation for review'] } },
+    { name: 'Scribe', collaboration: { emits: ['implemented change', 'reusable recipe'],
+        accepts: ['implementation brief', 'quick task'] } },
+    { name: 'Loner', collaboration: null },
+  ];
+  const map = rel.handoffMap(cast);
+  assert.equal(map.Architect, 'Auditor', 'designs flow to review');
+  assert.equal(map.Auditor, 'Architect', 'findings flow back to the designer');
+  assert.equal(map.Scribe, 'Auditor', 'implemented change flows to implementation review');
+  assert.ok(!('Loner' in map), 'no contract, no recommendation');
+});
+
+gate('handoffMap survives stemming quirks and empty inputs', () => {
+  assert.deepEqual(rel.handoffMap([]), {});
+  assert.deepEqual(rel.handoffMap(null), {});
+  const pair = rel.handoffMap([
+    { name: 'A', collaboration: { emits: ['implemented artifact'], accepts: [] } },
+    { name: 'B', collaboration: { emits: [], accepts: ['implementation for checking'] } },
+  ]);
+  assert.equal(pair.A, 'B', '"implemented" meets "implementation" at the stem');
+});
+
 // ---------- project context ----------
 gate('project context round-trips, caps size, clears on empty', () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-relctx-'));

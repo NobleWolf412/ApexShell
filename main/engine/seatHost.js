@@ -218,8 +218,8 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     // sessionId rides along so a restore-created seat's header can say WHICH
     // session it is instead of "starting…" (a resumed CLI is mute until first
     // input, J8 — no init ever comes to fill the header)
-    post({ type: 'seatNew', id, title: entry.title, pty: !!entry.pty,
-           local: entry.local, mode: entry.mode,
+    post({ type: 'seatNew', id, title: entry.title, persona: entry.persona,
+           pty: !!entry.pty, local: entry.local, mode: entry.mode,
            model: entry.model, codexModel: entry.codexModel,
            effort: entry.effort, sessionId: entry.sessionId, cwd: entry.cwd });
     // `--resume` continues the session but replays NOTHING over the wire —
@@ -459,8 +459,8 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
    *  every UNANSWERED permission request (R23: a reload can't orphan a turn). */
   function reannounce() {
     for (const [id, e] of seats) {
-      post({ type: 'seatNew', id, title: e.title, pty: !!e.pty,
-             local: e.local, mode: e.mode, model: e.model,
+      post({ type: 'seatNew', id, title: e.title, persona: e.persona,
+             pty: !!e.pty, local: e.local, mode: e.mode, model: e.model,
              codexModel: e.codexModel, effort: e.effort,
              sessionId: e.sessionId, cwd: e.cwd });
       for (const p of e.permQueue) post({ type: 'seatEvt', id, m: p });

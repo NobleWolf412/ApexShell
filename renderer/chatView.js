@@ -14,6 +14,7 @@ window.ApexChat = (function () {
   let active = null;
   let history = {};               // persona -> [{sessionId,title,ts}]
   let presetNames = [];           // registered personas — the delegate menu's options
+  let handoffMap = {};            // persona -> natural next persona (collaboration contracts)
 
   // ---------- DOM scaffold ----------
   const stage = document.querySelector('.stage');
@@ -394,9 +395,18 @@ window.ApexChat = (function () {
       if (!ac.pty && !ac.local && !ac.dead && presetNames.length) {
         const db = document.createElement('button');
         db.id = 'delegateBtn';
-        db.textContent = 'Delegate →';
-        db.title = 'hand this chat\'s work to another persona — it wraps up a handoff packet ' +
-          'and the next seat opens with it (chain shows on the TASKS board)';
+        const rec = ac.persona && handoffMap[ac.persona];
+        db.textContent = rec ? 'Delegate → ' + rec : 'Delegate →';
+        db.title = (rec
+          ? rec + ' is the natural next persona — its collaboration contract accepts what ' +
+            ac.persona + ' produces. Click to confirm or pick someone else. '
+          : 'hand this chat\'s work to another persona — ') +
+          'the chat wraps up a handoff packet and the next seat opens with it ' +
+          '(the chain shows on the TASKS board)';
+        // pulse when there is finished work sitting here: the chat has produced
+        // something and is idle — the exact moment a handoff makes sense
+        if (!ac.busy && ac.everSent && !ac.wrapping && !ac.wrapped && !ac.permQueue.length)
+          db.classList.add('ready');
         db.onclick = (e) => { e.stopPropagation(); openDelegateMenu(db, ac); };
         tabsEl.appendChild(db);
       }
@@ -419,10 +429,16 @@ window.ApexChat = (function () {
     head.className = 'rmHead';
     head.textContent = 'DELEGATE TO';
     railMenu.appendChild(head);
-    const options = presetNames.filter((n) => !String(c.title || '').startsWith(n));
-    for (const name of (options.length ? options : presetNames)) {
+    const rec = c.persona && handoffMap[c.persona];
+    let options = presetNames.filter((n) => n !== c.persona &&
+      !String(c.title || '').startsWith(n));
+    if (!options.length) options = presetNames;
+    // recommended target leads the list
+    if (rec && options.includes(rec)) options = [rec, ...options.filter((n) => n !== rec)];
+    for (const name of options) {
       const b = document.createElement('button');
-      b.textContent = name;
+      b.textContent = name + (name === rec ? '  ★ recommended' : '');
+      if (name === rec) b.title = 'its collaboration contract accepts what this persona produces';
       b.onclick = () => {
         hideRailMenu();
         ApexBus.post('taskDelegateFromChat', { id: c.id, target: name });
@@ -898,6 +914,7 @@ window.ApexChat = (function () {
     // which repo this seat works out of — badges the tab; multi-repo truth
     if (m.cwd && c.cwd !== m.cwd) { c.cwd = m.cwd; renderTabs();
       if (m.id === active) ApexBus.post('seatFocus', { cwd: c.cwd }); }
+    if (m.persona) c.persona = m.persona;   // the delegate hint keys off this
     if (c.pty) return;
     // seed the session id early — a resumed CLI is MUTE until first input
     // (J8), so no init ever comes to fill it (the header that displayed it is
@@ -987,6 +1004,10 @@ window.ApexChat = (function () {
   ApexBus.on('auditState', (m) => {        // live-auditor watch chip on the tab
     const c = chats.get(m.id);
     if (c) { c.watching = !!m.on; renderTabs(); }
+  });
+  ApexBus.on('personaHandoffMap', (m) => { // delegate hint: who receives whose output
+    handoffMap = m.map || {};
+    renderTabs();
   });
   ApexBus.on('seatTitle', (m) => retitle(m.id, m.title));
   ApexBus.on('seatList', (m) => {

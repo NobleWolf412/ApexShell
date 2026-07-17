@@ -242,12 +242,48 @@ function validateSuggestions(raw, knownNames) {
   return { suggestions, routes };
 }
 
+// ---------- handoff recommendations (the Delegate button's hint) ----------
+// Match each persona's EMITS against every other persona's ACCEPTS from their
+// collaboration contracts — the natural next persona is the one whose contract
+// consumes what this one produces. Crude 6-char stemming so "implemented" and
+// "implementation" meet in the middle.
+const stemWord = (w) => String(w).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6);
+function overlapScore(emits, accepts) {
+  const acceptStems = new Set((accepts || [])
+    .flatMap((s) => String(s).split(/\s+/).map(stemWord))
+    .filter((w) => w.length > 3));
+  let score = 0;
+  for (const e of emits || [])
+    for (const w of String(e).split(/\s+/).map(stemWord))
+      if (w.length > 3 && acceptStems.has(w)) score++;
+  return score;
+}
+
+/** { <persona name>: <recommended next persona name> } for every persona whose
+ *  emits overlap another's accepts. No contract or no match = no entry. */
+function handoffMap(summaries) {
+  const map = {};
+  for (const s of summaries || []) {
+    if (!s.collaboration || !Array.isArray(s.collaboration.emits)) continue;
+    let best = null;
+    let bestScore = 0;
+    for (const t of summaries) {
+      if (t === s || !t.collaboration || !Array.isArray(t.collaboration.accepts)) continue;
+      const score = overlapScore(s.collaboration.emits, t.collaboration.accepts);
+      if (score > bestScore) { best = t.name; bestScore = score; }
+    }
+    if (best) map[s.name] = best;
+  }
+  return map;
+}
+
 module.exports = {
   readProjectContext,
   saveProjectContext,
   classify,
   personaSummaries,
   heuristicSuggestions,
+  handoffMap,
   buildPrompt,
   parseLlmReply,
   validateSuggestions,

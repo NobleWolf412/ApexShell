@@ -659,6 +659,7 @@ function register(ctx) {
         ctx.bus.post('toast', { text: 'Persona package was created, but its seat preset was not registered: ' + registrationError });
       publishStatus();
       publishPackageList();   // a created/edited persona joins the manage list
+      publishHandoffMap();    // its contract may change who hands to whom
     } catch (err) {
       ctx.bus.post('personaCreateResult', { ok: false, error: err.message });
       ctx.bus.post('toast', { text: 'Permanent persona was not created: ' + err.message });
@@ -754,6 +755,19 @@ function register(ctx) {
     }
   });
 
+  // Handoff recommendations for the Delegate button: who naturally receives
+  // each persona's output, from the collaboration contracts (emits ↔ accepts).
+  const publishHandoffMap = () => {
+    try {
+      const saved = readWorkspaceConfig(ctx.stateDir);
+      const map = saved.workspace && !saved.error
+        ? relationships.handoffMap(relationships.personaSummaries(saved.workspace, creator))
+        : {};
+      ctx.bus.post('personaHandoffMap', { map });
+    } catch { ctx.bus.post('personaHandoffMap', { map: {} }); }
+  };
+  ctx.bus.on('personaHandoffMap', publishHandoffMap);
+
   // ---- permanent-package management: list, edit (reopen-as-draft), delete ----
   const publishPackageList = () => {
     try {
@@ -792,6 +806,7 @@ function register(ctx) {
       if (presetIssue)
         ctx.bus.post('toast', { text: 'Preset refresh note: ' + presetIssue });
       publishPackageList();
+      publishHandoffMap();
       publishStatus();
     } catch (err) {
       ctx.bus.post('personaManageResult', { ok: false, action: 'archive', error: err.message });
@@ -804,6 +819,7 @@ function register(ctx) {
     if (presetIssue)
       ctx.bus.post('toast', { text: 'Some Persona Builder seat presets were not registered: ' + presetIssue });
     publishPackageList();
+    publishHandoffMap();
   });
 }
 
