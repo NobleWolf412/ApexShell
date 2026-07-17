@@ -8,6 +8,10 @@
 'use strict';
 
 window.ApexPrompt = (message, initial) => new Promise((resolve) => {
+  // Singleton: a second prompt while one is open would stack (two boxes) and,
+  // via callers that post on resolve, double-fire (e.g. two taskDelegate for
+  // one id). Refuse the second — the caller's await resolves null, a no-op.
+  if (document.querySelector('.apxPrompt')) { resolve(null); return; }
   const wrap = document.createElement('div');
   wrap.className = 'apxPrompt';
   const box = document.createElement('div');
@@ -30,8 +34,10 @@ window.ApexPrompt = (message, initial) => new Promise((resolve) => {
   ok.onclick = () => done(inp.value);
   cancel.onclick = () => done(null);
   inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') done(inp.value);
-    else if (e.key === 'Escape') done(null);
+    // stop here — else the same Esc bubbles to shell.js AFTER this box removed
+    // itself, and its "is a prompt open?" guard finds none and collapses the panes
+    if (e.key === 'Enter') { e.stopPropagation(); done(inp.value); }
+    else if (e.key === 'Escape') { e.stopPropagation(); done(null); }
   });
   // clicking the dim backdrop = cancel (mousedown so a drag out of the input
   // that ENDS on the backdrop doesn't count as a click-away)

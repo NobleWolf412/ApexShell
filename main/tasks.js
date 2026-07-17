@@ -554,6 +554,10 @@ function onSeatMessage(m) {
     return;
   }
   if (m.type === 'seatGone') {
+    // a seat dying mid-wrap kept its wraps entry + 12s timer, later firing
+    // finishWrap on a corpse — clear it with the rest
+    const w = wraps.get(m.id);
+    if (w) { clearTimeout(w.timer); wraps.delete(m.id); }
     bindings.delete(m.id); chatBufs.delete(m.id); chatTasks.delete(m.id);
     return;
   }
@@ -1008,9 +1012,13 @@ function readState(file) {
 }
 
 function dispose() {
-  for (const timer of wraps.values()) clearTimeout(timer);
+  // wraps values are { timer, close } — clearTimeout(object) was a silent
+  // no-op, so every 12s backstop survived dispose (leaked, firing at corpses)
+  for (const w of wraps.values()) clearTimeout(w.timer);
   wraps.clear();
   bindings.clear();
+  chatBufs.clear();
+  chatTasks.clear();
   if (unobserve) unobserve();
 }
 

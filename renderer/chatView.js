@@ -185,7 +185,9 @@ window.ApexChat = (function () {
     c.sendBtn.onclick = doSend;
     c.ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
-      if (e.key === 'Escape' && c.busy) ApexBus.post('seatStop', { id: c.id });
+      // Esc stops a running turn — but must NOT also bubble to shell.js and
+      // collapse every pane. Only swallow it when it actually acts.
+      if (e.key === 'Escape' && c.busy) { e.stopPropagation(); ApexBus.post('seatStop', { id: c.id }); }
     });
     c.ta.addEventListener('input', () => {
       c.ta.style.height = 'auto';

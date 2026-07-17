@@ -538,6 +538,8 @@
       return;
     }
     if (!e.ctrlKey) return;
+    // never hijack keys the user is typing into a field or a live terminal
+    if (e.target.closest('textarea, input, [contenteditable], .termMount, .xterm')) return;
     if (e.key >= '1' && e.key <= '9') {
       const sorted = [...tabIds].sort((a, b) => dockOrder[a] - dockOrder[b]);
       const id = sorted[Number(e.key) - 1];
