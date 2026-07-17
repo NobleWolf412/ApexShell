@@ -178,16 +178,20 @@ function createPackage(workspace, draft) {
 }
 
 function seatKickoff(personaId) {
+  const base = `personas/${personaId}`;
   return [
     `[seat-launch] You are being seated as the portable persona “${personaId}”.`,
     'Load and follow these workspace-relative files in order:',
-    '1. foundation.md',
-    `2. personas/${personaId}/${personaId}.md (authoritative identity)`,
-    `3. personas/${personaId}/memory/MEMORY.md`,
-    `4. personas/${personaId}/scratchpad.md`,
-    `5. personas/${personaId}/collaboration.json if it exists`,
-    'Determine your PROJECT from the repository you are working in and scope all',
-    'memory to personas/' + personaId + '/memory/projects/<project>/ — never mix repos (see foundation.md).',
+    '1. foundation.md (note the TIERED memory rules — do NOT bulk-read memory)',
+    `2. ${base}/${personaId}.md (authoritative identity)`,
+    `3. ${base}/scratchpad.md`,
+    `4. ${base}/collaboration.json if it exists`,
+    'Then resolve your PROJECT from the repository you are working in, and read',
+    'ONLY these two (they are enough to resume — page in specific notes on demand):',
+    `  • ${base}/memory/projects/<project>/state.md   (working memory: where the work stands now)`,
+    `  • ${base}/memory/projects/<project>/MEMORY.md   (the index — one line per note)`,
+    'Do NOT read the whole memory tree; pull a note file only when the task reaches',
+    'it. If those files do not exist, the project is fresh. Never mix repos (foundation.md).',
     'Provider, model, credentials, and live permissions come from Apex runtime settings, not the persona package.',
     'Confirm you are seated in one short line, then wait for the user’s actual work.',
   ].join('\n');
