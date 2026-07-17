@@ -190,6 +190,21 @@ function delegateWrapText(task, target) {
   ].join('\n');
 }
 
+// The user clicked Delegate → before the seat produced its packet: ask the
+// SEAT to wrap up and emit one, instead of making the user hand-type a summary
+// (this layer's own law, header comment: typed packets are a last resort, not
+// a first response — the manual lane was skipping straight to the last resort).
+function packetAskText(task, canBounce) {
+  return [
+    '<apex-task id="' + task.id + '">',
+    'The user wants to hand this step off NOW. Wrap up your current work',
+    'product and emit the apex-handoff block — the fenced ```apex-handoff JSON,',
+    'nothing else. Do not start new work.',
+    handoff.contractText(canBounce),
+    '</apex-task>',
+  ].join('\n');
+}
+
 // Single quiet re-ask when a seat ends its turn without a packet. Terse on
 // purpose — the seat already saw the full contract in its kickoff/wrap prompt.
 function repairText(task, canBounce) {
@@ -242,7 +257,7 @@ function startStep(task) {
     bindings.set(reuseId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
     Object.assign(step, { status: 'running', seatId: reuseId,
                           sessionId: (entry && entry.sessionId) || null,
-                          packet: null, packetError: null, repairSent: false,
+                          packet: null, packetError: null, repairSent: false, delegateWanted: false,
                           fromRail: true, reused: true,
                           startedAt: now(), endedAt: 0, waiting: null });
     const text = composeTaskBody(task, task.currentStep);
@@ -271,7 +286,7 @@ function startStep(task) {
   // NOTE: fromRail is deliberately not in this Object.assign — the flag is
   // creation-time and immutable. A fresh createTaskSeat step is never rail.
   Object.assign(step, { status: 'running', seatId, sessionId: null, packet: null,
-                        packetError: null, repairSent: false,
+                        packetError: null, repairSent: false, delegateWanted: false,
                         startedAt: now(), endedAt: 0, waiting: null });
   task.status = 'running';
   task.attention = null;
@@ -350,7 +365,7 @@ function bounce(task, fromIndex, packet) {
   prev.bounceFindings = { from: from.persona,
                           findings: packet.findings, artifacts: packet.artifacts };
   Object.assign(prev, { status: 'running', startedAt: now(), endedAt: 0,
-                        packet: null, packetError: null, repairSent: false,
+                        packet: null, packetError: null, repairSent: false, delegateWanted: false,
                         waiting: null });
   // fromRail step 0 with a still-alive rail seat: re-bind and post the bounce
   // findings into the SAME chat rather than spawning a resumed duplicate.
@@ -420,11 +435,13 @@ function onPacket(task, stepIndex, packet) {
   if (packet.status === 'needs-decision') {
     // seat stays open — the user answers in its chat; the chain resumes on
     // the next valid packet (the observer keeps parsing this seat's results).
+    step.delegateWanted = false;   // a decision outranks the pending Delegate
     attention(task, 'decision', packet.decision);
     return;
   }
   if (task.status === 'paused') { publish(); return; }
   if (packet.status === 'bounce') {
+    step.delegateWanted = false;   // a bounce outranks the pending Delegate
     if (task.auto) { bounce(task, stepIndex, packet); return; }
     attention(task, 'decision',
       step.persona + ' wants to bounce this back — findings: ' + packet.findings);
@@ -432,6 +449,13 @@ function onPacket(task, stepIndex, packet) {
   }
   // done
   if (task.auto) { advance(task); return; }
+  if (step.delegateWanted) {
+    // the user already said Delegate — the packet was the only thing missing
+    step.delegateWanted = false;
+    toast('task "' + task.title + '": ' + step.persona + '\'s packet landed — handing off');
+    advance(task);
+    return;
+  }
   toast('task "' + task.title + '": ' + step.persona + ' finished — ready to delegate');
   publish();
 }
@@ -502,7 +526,15 @@ function onSeatMessage(m) {
       if (task.auto && task.status === 'running')
         attention(task, 'no-packet',
           'the seat finished two turns without a handoff packet — reply in its chat or Retry');
-      else publish();
+      else if (step.delegateWanted) {
+        // manual lane: the user's Delegate is pending and the asked seat still
+        // came back packet-less — NOW the hand-typed summary is genuinely the
+        // last resort, so offer it unprompted.
+        step.delegateWanted = false;
+        api.bus.post('taskNeedSummary', { id: task.id, persona: step.persona,
+          reason: 'it was asked to wrap up and still produced no packet' });
+        publish();
+      } else publish();
       return;
     }
     if (error) {
@@ -563,7 +595,7 @@ function taskCreate(msg) {
     maxBounces: 2,
     steps: routeSteps.map((persona, index) => ({
       index, persona, status: 'pending', seatId: null, sessionId: null,
-      packet: null, packetError: null, repairSent: false, bounceFindings: null,
+      packet: null, packetError: null, repairSent: false, delegateWanted: false, bounceFindings: null,
       fromRail: false, waiting: null,
       startedAt: 0, endedAt: 0,
     })),
@@ -608,7 +640,23 @@ function taskDelegate(msg) {
     ok = true;
   }
   if (!ok) {
-    toast('no completed handoff packet yet — let the seat finish, or type a summary to hand off manually');
+    // Seat-first, user-last: a live seat gets asked for its packet (once per
+    // Delegate wave — delegateWanted dedupes); the hand-typed summary box only
+    // appears when the seat is gone or already failed a re-ask.
+    const seatAlive = step.seatId != null && api.seats.seatEntry(step.seatId)
+      && bindings.has(step.seatId);
+    if (seatAlive && !step.delegateWanted) {
+      step.delegateWanted = true;
+      const text = packetAskText(task, task.currentStep > 0);
+      api.seats.seatCommand({ type: 'seatSend', id: step.seatId, text });
+      api.bus.post('seatEvt', { id: step.seatId, m: { type: 'user', text } });
+      toast('asked ' + step.persona + ' to wrap up — handing off when its packet lands');
+      publish();
+      return;
+    }
+    api.bus.post('taskNeedSummary', { id: task.id, persona: step.persona,
+      reason: seatAlive ? 'the seat was asked and still has not produced a packet'
+                        : 'its seat is closed' });
     return;
   }
   advance(task);
@@ -624,7 +672,7 @@ function taskRetry(msg) {
   // a bare persona seat that would orphan the rail conversation.
   if (step.fromRail && step.seatId != null && api.seats.seatEntry(step.seatId)) {
     Object.assign(step, { status: 'running', packet: null, packetError: null,
-                          repairSent: false, waiting: null,
+                          repairSent: false, delegateWanted: false, waiting: null,
                           startedAt: now(), endedAt: 0 });
     task.status = 'running';
     task.attention = null;
@@ -640,7 +688,7 @@ function taskRetry(msg) {
     api.seats.closeSeat(step.seatId);
   }
   Object.assign(step, { seatId: null, packet: null, packetError: null,
-                        repairSent: false, waiting: null });
+                        repairSent: false, delegateWanted: false, waiting: null });
   startStep(task);
 }
 
@@ -716,14 +764,14 @@ function taskDelegateFromChat(msg) {
     bounces: 0, maxBounces: 2,
     steps: [
       { index: 0, persona: source, status: 'running', seatId, sessionId: entry.sessionId || null,
-        packet: null, packetError: null, repairSent: false, bounceFindings: null,
+        packet: null, packetError: null, repairSent: false, delegateWanted: false, bounceFindings: null,
         // fromRail: this step 0 is a HIJACKED rail chat — no createTaskSeat
         // was ever called for it. Retry must re-ask the same seat, not launch
         // a fresh one (that would orphan the rail context).
         fromRail: true, delegateTarget: target,
         waiting: null, startedAt: now(), endedAt: 0 },
       { index: 1, persona: target, status: 'pending', seatId: null, sessionId: null,
-        packet: null, packetError: null, repairSent: false, bounceFindings: null,
+        packet: null, packetError: null, repairSent: false, delegateWanted: false, bounceFindings: null,
         // fromRail:false at rest — startStep flips it true only if a live seat
         // of the target persona is found and hijacked (see findReuseSeat).
         fromRail: false, waiting: null, startedAt: 0, endedAt: 0 },

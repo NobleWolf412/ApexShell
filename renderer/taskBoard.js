@@ -226,16 +226,10 @@
       else
         mk('Delegate →', cur && cur.packet && cur.packet.status === 'done'
             ? 'hand the packet to the next step'
-            : 'needs a completed packet — or type a summary when asked',
-          async () => {
-            if (cur && cur.packet && cur.packet.status === 'done')
-              ApexBus.post('taskDelegate', { id: t.id });
-            else {
-              // ApexPrompt, not prompt() — Electron renderers have no window.prompt
-              const s = await ApexPrompt('no handoff packet yet — type a summary to hand off manually:');
-              if (s) ApexBus.post('taskDelegate', { id: t.id, summary: s });
-            }
-          }, 'tkGo');
+            : 'asks the seat to wrap up and hands off when its packet lands',
+          // main owns the fallback ladder: packet → ask the seat → only then
+          // the typed-summary box (taskNeedSummary below)
+          () => ApexBus.post('taskDelegate', { id: t.id }), 'tkGo');
       if (t.status === 'paused')
         mk('Resume', 'let the chain move again', () => ApexBus.post('taskResume', { id: t.id }));
       else
@@ -328,6 +322,14 @@
   ApexBus.on('taskList', (m) => { tasks = m.tasks || []; render(); });
   ApexBus.on('taskRoutes', (m) => { routes = m.routes || []; if (!form.hidden) fillSelects(); });
   ApexBus.on('taskCwdPicked', (m) => { if (m.path) cwdIn.value = m.path; });
+  // The typed-summary box — the TRUE last resort (main already tried the
+  // packet and asked the seat). The message says WHY it's being asked.
+  ApexBus.on('taskNeedSummary', async (m) => {
+    const s = await ApexPrompt(m.persona + ' can\'t supply a handoff packet — ' +
+      (m.reason || 'no packet available') +
+      '. Your summary below hands off in its place:');
+    if (s && s.trim()) ApexBus.post('taskDelegate', { id: m.id, summary: s });
+  });
   ApexBus.on('seatPresets', (m) => {
     personas = (m.presets || []).map((p) => p.name);
     if (!form.hidden) fillSelects();
