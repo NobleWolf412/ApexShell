@@ -180,6 +180,15 @@ function launchFor(persona) {
   if (effort) launch.effort = effort;
   // Explicit always; `manual` unless the config really says otherwise (J28).
   launch.permissionMode = pick('permissions') || 'manual';
+  // Per-persona toolset wall (claude lane only; other lanes ignore these).
+  // TOP-LEVEL keys, deliberately outside the current/default layer machinery:
+  // seatConfigDefault/Reset REPLACE whole layers via resolve() and would wipe
+  // anything extra stored inside them. `tools` = the CLI's built-in allowlist
+  // ("Read,Glob,…"); `disallowedTools` = hard deny-rules (reaches MCP tools,
+  // which --tools does not).
+  if (typeof p.tools === 'string' && p.tools.trim()) launch.tools = p.tools.trim();
+  if (typeof p.disallowedTools === 'string' && p.disallowedTools.trim())
+    launch.disallowedTools = p.disallowedTools.trim();
   return launch;
 }
 
@@ -417,7 +426,12 @@ function register() {
     host.handle({ type: 'seatClose', id: msg.id });
     bus.post('seatGone', { id: msg.id });
     setTimeout(() => {                       // past the kill backstop: transcript flushed
-      const launch = { permissionMode: msg.permissions || mode };
+      // Base on launchFor so persona-level launch config (the toolset wall)
+      // survives a restart — this path bypasses createFromMessage's merge, and
+      // a bare relaunch was silently dropping `tools`/`disallowedTools`,
+      // unlocking a read-only persona via the effort dial. Live dials still win.
+      const launch = Object.assign(launchFor(persona || 'Seat'),
+                                   { permissionMode: msg.permissions || mode });
       if (model) launch.model = model;
       if (codexModel) launch.codexModel = codexModel;   // tier survives a codex relaunch
       const eff = msg.effort || effort;      // a permissions restart must not drop effort

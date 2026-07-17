@@ -104,7 +104,8 @@ function quoteForCmd(arg) {
   return '"' + s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1') + '"';
 }
 
-function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools }) {
+function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools,
+                     disallowedTools }) {
   const args = [
     '-p',
     '--input-format', 'stream-json',
@@ -119,6 +120,10 @@ function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence
   // here. The shell:true fallback path quotes EVERY arg at spawn (quoteForCmd),
   // which turns the empty item into the literal "" the join needs.
   if (tools !== undefined) args.push('--tools', tools);
+  // Hard deny-rules (e.g. an advisor persona's wall against serena's
+  // symbol-EDIT tools — --tools only governs the BUILT-IN set; MCP tools ride
+  // along regardless, wire-verified 2026-07-17).
+  if (disallowedTools) args.push('--disallowed-tools', disallowedTools);
   if (resume) args.push('--resume', resume);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
