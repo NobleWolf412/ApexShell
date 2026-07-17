@@ -32,7 +32,11 @@ const SEAT_ENV_BRIEF =
   'a local file if needed, then Read it. Never open files or URLs with ' +
   'external programs (no `code`, no Start-Process, no browser) unless the ' +
   'user explicitly asks for an external window. The user can also paste or ' +
-  'drag images into the chat.';
+  'drag images into the chat. The dashboard also has a TODO board: to put a ' +
+  'plan/checklist on it (or refresh yours), end a message with a fenced code ' +
+  'block tagged apex-todo containing JSON {"title": "...", "plan": ["step", ' +
+  '...], "done": [completed 0-based indexes]} — never a todo file. Re-emit ' +
+  'the full block with updated "done" as work progresses.';
 
 // The End-Session close-out ask wraps the seat before it dies. This is the
 // generic default; a host extension may pass its own wrapPrompt to

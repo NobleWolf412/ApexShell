@@ -205,6 +205,90 @@ function packetAskText(task, canBounce) {
   ].join('\n');
 }
 
+// ---- apex-todo: any chat's road onto the TODO board (2026-07-17) ----------
+// The board only showed TASKS, so a plain persona chat asked to "put this on
+// the todo tab" had no move except writing a todo.md (which landed in the
+// viewer — the operator's Architect did exactly that). Any seat may now emit
+// a fenced ```apex-todo JSON block: {"title"?, "plan": ["...", ...],
+// "done": [0-based indexes]}. A chain-step seat updates ITS task's checklist;
+// a free rail chat gets a lightweight board task created (status open, one
+// pending step of its own persona) and later blocks update it.
+const chatBufs = new Map();    // unbound seatId -> text tail (apex-todo scan)
+const chatTasks = new Map();   // rail seatId -> board task it created
+
+function extractTodoBlock(text) {
+  const re = /```apex-todo\s*\n([\s\S]*?)```/g;
+  let m, last = null;
+  while ((m = re.exec(text))) last = m[1];
+  if (!last) return null;
+  try {
+    const j = JSON.parse(last);
+    const plan = Array.isArray(j.plan)
+      ? j.plan.filter((x) => typeof x === 'string' && x.trim())
+          .map((x) => x.trim().slice(0, 200)).slice(0, 30) : [];
+    if (!plan.length) return { error: 'apex-todo needs a non-empty "plan" array' };
+    const done = Array.isArray(j.done)
+      ? j.done.filter((i) => Number.isInteger(i) && i >= 0 && i < plan.length) : [];
+    const title = (typeof j.title === 'string' && j.title.trim())
+      ? j.title.trim().slice(0, 200) : '';
+    return { title, plan, done };
+  } catch (e) { return { error: 'apex-todo block is not valid JSON: ' + e.message }; }
+}
+
+// Rebuild a task's checklist from a plan, keeping done-flags of unchanged
+// lines, then applying the block's explicit done indexes.
+function applyTodoPlan(task, block) {
+  const old = Array.isArray(task.todos) ? task.todos : [];
+  task.todos = block.plan.map((text) => ({
+    text,
+    done: old.some((t) => t.done && t.text.toLowerCase() === text.toLowerCase()),
+  }));
+  for (const i of block.done) task.todos[i].done = true;
+  task.updatedAt = now();
+}
+
+// A free chat's first apex-todo → a lightweight board task in its repo.
+function chatTodoTask(seatId, block) {
+  const entry = api.seats.seatEntry(seatId);
+  if (!entry) return;
+  const linked = chatTasks.get(seatId);
+  const existing = linked ? byId(linked.id) : null;
+  if (existing && existing.status !== 'done') {
+    applyTodoPlan(existing, block);
+    if (block.title) existing.title = block.title;
+    save(); publish();
+    toast('TODO board updated from ' + (entry.persona || 'chat') + ' — ' +
+      existing.todos.filter((t) => t.done).length + '/' + existing.todos.length + ' done');
+    return;
+  }
+  const persona = entry.persona || 'Seat';
+  const task = {
+    id: newId(),
+    title: block.title || (entry.title || persona + ' plan').slice(0, 200),
+    cwd: entry.cwd,
+    status: 'open',
+    auto: false,
+    fromRail: false,
+    route: [{ persona }],
+    currentStep: 0,
+    bounces: 0,
+    maxBounces: 2,
+    steps: [{ index: 0, persona, status: 'pending', seatId: null, sessionId: null,
+              packet: null, packetError: null, repairSent: false, delegateWanted: false,
+              bounceFindings: null, fromRail: false, waiting: null,
+              startedAt: 0, endedAt: 0 }],
+    attention: null,
+    todos: [],
+    createdAt: now(),
+    updatedAt: now(),
+  };
+  applyTodoPlan(task, block);
+  tasks.unshift(task);
+  chatTasks.set(seatId, { id: task.id });
+  prune(); save(); publish();
+  toast('"' + task.title + '" is on the TODO board (from the ' + persona + ' chat)');
+}
+
 // Single quiet re-ask when a seat ends its turn without a packet. Terse on
 // purpose — the seat already saw the full contract in its kickoff/wrap prompt.
 function repairText(task, canBounce) {
@@ -469,10 +553,30 @@ function onSeatMessage(m) {
     else releaseWrap(m.id);
     return;
   }
-  if (m.type === 'seatGone') { bindings.delete(m.id); return; }
+  if (m.type === 'seatGone') {
+    bindings.delete(m.id); chatBufs.delete(m.id); chatTasks.delete(m.id);
+    return;
+  }
   if (m.type !== 'seatEvt') return;
   const b = bindings.get(m.id);
-  if (!b) return;
+  if (!b) {
+    // Free rail chats: no task contract, but their turns may carry an
+    // apex-todo block — the road onto the TODO board.
+    const ev0 = m.m;
+    if (ev0.type === 'text' && typeof ev0.text === 'string') {
+      const cur = (chatBufs.get(m.id) || '') + ev0.text + '\n';
+      chatBufs.set(m.id, cur.length > TEXT_TAIL_CAP ? cur.slice(-TEXT_TAIL_CAP) : cur);
+    } else if (ev0.type === 'result') {
+      const turn = chatBufs.get(m.id) || '';
+      chatBufs.set(m.id, '');
+      const block = extractTodoBlock(turn);
+      if (block && block.error) toast('TODO board: ' + block.error);
+      else if (block) chatTodoTask(m.id, block);
+    } else if (ev0.type === 'dead') {
+      chatBufs.delete(m.id); chatTasks.delete(m.id);
+    }
+    return;
+  }
   const task = byId(b.taskId);
   if (!task) { bindings.delete(m.id); return; }
   const step = task.steps[b.stepIndex];
@@ -510,6 +614,11 @@ function onSeatMessage(m) {
     b.buf = '';
     step.waiting = null;
     if (step.status !== 'running') return;
+    // A chain step may refresh its task's checklist mid-step via apex-todo —
+    // same block as free chats; the handoff packet's plan/planDone still rules
+    // at hand-off (onPacket dedupes).
+    const todoBlock = extractTodoBlock(turnText);
+    if (todoBlock && !todoBlock.error) { applyTodoPlan(task, todoBlock); publish(); }
     const { raw, error } = handoff.extractPacket(turnText);
     if (error === 'no-packet') {
       step.packetError = 'no-packet';
