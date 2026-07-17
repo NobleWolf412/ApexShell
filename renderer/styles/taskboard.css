@@ -79,6 +79,15 @@
 .tasksPane .tkBtns .tkGo { color: var(--text); border-color: var(--accent); }
 .tasksPane .tkBtns .tkX { margin-left: auto; }
 .tasksPane .tkBtns .tkX:hover { color: var(--critical); border-color: var(--critical); }
+/* the plan checklist — phases laid out by the personas, checked off as work lands */
+.tasksPane .tkTodos { display: flex; flex-direction: column; gap: 3px;
+  border-top: 1px dashed var(--edge); padding-top: 6px; }
+.tasksPane .tkTodoHead { font-size: 9.5px; letter-spacing: .14em; color: var(--dim); }
+.tasksPane .tkTodoRow { display: flex; align-items: baseline; gap: 7px; font-size: 11px;
+  color: var(--text); cursor: pointer; line-height: 1.4; }
+.tasksPane .tkTodoRow input { accent-color: var(--accent); }
+.tasksPane .tkTodoRow.done span { color: var(--faint); text-decoration: line-through; }
+
 .tasksPane .tkFold { font-size: 11px; }
 .tasksPane .tkFoldBtn { border: 0; background: none; color: var(--faint);
   cursor: pointer; font-size: 10.5px; padding: 0; }

@@ -181,6 +181,33 @@
       el.appendChild(att);
     }
 
+    // the plan checklist: phases the personas laid out; they check items off
+    // via their packets, you can toggle by hand
+    if (Array.isArray(t.todos) && t.todos.length) {
+      const doneN = t.todos.filter((x) => x.done).length;
+      const list = document.createElement('div');
+      list.className = 'tkTodos';
+      list.title = 'the task\'s plan — laid out by its personas (packet "plan"), checked off as ' +
+        'steps report progress ("planDone"). Click to toggle by hand.';
+      const headRow = document.createElement('div');
+      headRow.className = 'tkTodoHead';
+      headRow.textContent = 'PLAN · ' + doneN + '/' + t.todos.length;
+      list.appendChild(headRow);
+      t.todos.forEach((todo, i) => {
+        const row = document.createElement('label');
+        row.className = 'tkTodoRow' + (todo.done ? ' done' : '');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!todo.done;
+        cb.onchange = () => ApexBus.post('taskTodoToggle', { id: t.id, index: i });
+        const tx = document.createElement('span');
+        tx.textContent = todo.text;
+        row.append(cb, tx);
+        list.appendChild(row);
+      });
+      el.appendChild(list);
+    }
+
     const cur = t.steps[t.currentStep];
     const btns = document.createElement('div');
     btns.className = 'tkBtns';

@@ -111,6 +111,16 @@ function composeTaskBody(task, stepIndex) {
   if (preset.cwd && preset.cwd !== task.cwd)
     lines.push('PERSONA HOME (your memory/ and log/ live HERE — always use these absolute paths): ' + preset.cwd);
   lines.push('You are step ' + (stepIndex + 1) + ' of ' + total + ' on the route: ' + routeStr + '.');
+  // reviewers see the bounce budget so they spend it on blockers, not polish
+  if (stepIndex > 0)
+    lines.push('Bounce budget: ' + (task.bounces || 0) + ' of ' + (task.maxBounces || 2) +
+      ' used — when it runs out the task escalates to the user.');
+  // the task's checklist (packet-carried plan): every step sees progress and
+  // checks items off via planDone in its own packet
+  if (Array.isArray(task.todos) && task.todos.length) {
+    lines.push('', 'PLAN — the task\'s checklist (report finished item numbers in "planDone"):');
+    task.todos.forEach((t, i) => lines.push('  ' + i + '. [' + (t.done ? 'x' : ' ') + '] ' + t.text));
+  }
   if (prev && prev.packet) {
     lines.push('', handoff.renderPacket(prev.packet, prev.persona), '');
   }
@@ -397,6 +407,16 @@ function onPacket(task, stepIndex, packet) {
   step.packet = packet;
   step.packetError = null;
   task.updatedAt = now();
+  // fold the packet's plan into the task checklist (dedup, capped) and mark
+  // what this step reports finished — the board renders it as the todo list
+  if (!Array.isArray(task.todos)) task.todos = [];
+  for (const text of packet.plan || []) {
+    if (task.todos.length >= 30) break;
+    if (!task.todos.some((t) => t.text.toLowerCase() === text.toLowerCase()))
+      task.todos.push({ text, done: false });
+  }
+  for (const i of packet.planDone || [])
+    if (task.todos[i]) task.todos[i].done = true;
   if (packet.status === 'needs-decision') {
     // seat stays open — the user answers in its chat; the chain resumes on
     // the next valid packet (the observer keeps parsing this seat's results).
@@ -548,6 +568,7 @@ function taskCreate(msg) {
       startedAt: 0, endedAt: 0,
     })),
     attention: null,
+    todos: [],
     createdAt: now(),
     updatedAt: now(),
   };
@@ -708,6 +729,7 @@ function taskDelegateFromChat(msg) {
         fromRail: false, waiting: null, startedAt: 0, endedAt: 0 },
     ],
     attention: null,
+    todos: [],
     createdAt: now(), updatedAt: now(),
   };
   tasks.unshift(task);
@@ -718,6 +740,17 @@ function taskDelegateFromChat(msg) {
   // seatSend never echoes — same manual user-event post the engine's wrap uses
   api.bus.post('seatEvt', { id: seatId, m: { type: 'user', text } });
   toast('delegating to ' + target + ' — the chat is writing its handoff packet');
+  publish();
+}
+
+// user checkbox on the board — personas check items off via planDone instead
+function taskTodoToggle(msg) {
+  const task = byId(msg.id);
+  if (!task || !Array.isArray(task.todos)) return;
+  const t = task.todos[msg.index];
+  if (!t) return;
+  t.done = !t.done;
+  task.updatedAt = now();
   publish();
 }
 
@@ -757,6 +790,7 @@ function register(deps) {
   // the whenReady chain died unhandled, and the app sat windowless, 2026-07-17).
   for (const task of tasks) {
     if (!Array.isArray(task.steps)) task.steps = [];
+    if (!Array.isArray(task.todos)) task.todos = [];
     task.fromRail = task.fromRail === true ||
       !!(task.steps[0] && task.steps[0].fromRail === true);
     if (!task.fromRail) {
@@ -787,7 +821,7 @@ function register(deps) {
 
   const verbs = { taskCreate, taskStart, taskDelegate, taskDelegateFromChat,
                   taskPause, taskResume, taskRetry, taskUpdate, taskDelete,
-                  taskRouteSave, taskRouteDelete };
+                  taskTodoToggle, taskRouteSave, taskRouteDelete };
   for (const [type, fn] of Object.entries(verbs))
     api.bus.on(type, (msg) => { try { fn(msg || {}); } catch (e) { console.error('[tasks] ' + type + ':', e.message); } });
 

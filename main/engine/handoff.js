@@ -57,7 +57,23 @@ function validatePacket(raw, opts) {
     findings: capText(raw.findings),
     decision: capText(raw.decision),
     artifacts: [],
+    // the A→Z: phases this step lays out for the task's checklist, and
+    // checklist indices this step completed. Both optional, both capped.
+    plan: [],
+    planDone: [],
   };
+  if (Array.isArray(raw.plan)) {
+    for (const p of raw.plan) {
+      if (packet.plan.length >= 12) break;
+      if (typeof p === 'string' && p.trim()) packet.plan.push(p.trim().slice(0, 200));
+    }
+  }
+  if (Array.isArray(raw.planDone)) {
+    for (const i of raw.planDone) {
+      if (packet.planDone.length >= 30) break;
+      if (Number.isInteger(i) && i >= 0 && i < 100) packet.planDone.push(i);
+    }
+  }
   if (Array.isArray(raw.artifacts)) {
     for (const a of raw.artifacts) {
       if (packet.artifacts.length >= MAX_ARTIFACTS) { notes.push('artifact list capped at ' + MAX_ARTIFACTS); break; }
@@ -102,12 +118,18 @@ function contractText(canBounce) {
     '{ "status": "done"' + (canBounce ? ' | "bounce"' : '') + ' | "needs-decision",',
     '  "summary": "<what you did / concluded, for the next step>",',
     '  "artifacts": ["<absolute file paths the next step needs>"],',
+    '  "plan": ["<optional: the task\'s phases A→Z, one item each — becomes its checklist>"],',
+    '  "planDone": [<optional: checklist item numbers you completed this step>],',
     (canBounce ? '  "findings": "<for bounce: what must change and why>",' : null),
     '  "decision": "<for needs-decision: the question only the user can answer>" }',
     '```',
     (canBounce
-      ? '"bounce" returns the task to the previous step with your findings. '
-      : '') +
+      ? 'BOUNCE DISCIPLINE: bounce ONLY for reproducible defects that make the work WRONG — ' +
+        'never for style, taste, or could-be-better polish (put those in a done packet\'s ' +
+        'summary as notes). Bounces are budgeted; when the budget runs out the task escalates ' +
+        'to the user. A verdict of "good enough to proceed, with notes" is status done. '
+      : 'If this task has multiple phases, lay them out in "plan" so every later step and the ' +
+        'user can see and check off progress. ') +
     '"needs-decision" pauses the chain for the user. Do not emit the block until you are finished.',
   ].filter((l) => l !== null).join('\n');
 }

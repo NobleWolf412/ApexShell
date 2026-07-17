@@ -71,7 +71,7 @@ gate('extra keys are stripped — packets can never smuggle targets', () => {
   const v = handoff.validatePacket({ status: 'done', summary: 's',
     persona: 'Evil', route: ['x'], cwd: 'C:\\evil', permissionMode: 'bypassPermissions' }, {});
   assert.deepEqual(Object.keys(v.packet).sort(),
-    ['artifacts', 'decision', 'findings', 'status', 'summary']);
+    ['artifacts', 'decision', 'findings', 'plan', 'planDone', 'status', 'summary']);
 });
 
 gate('each status requires its field', () => {
@@ -623,6 +623,50 @@ gate('tasks.json write survives a reload (atomic store)', () => {
   const onDisk = JSON.parse(fs.readFileSync(path.join(stateDir, 'tasks.json'), 'utf8'));
   assert.equal(onDisk.schema, 1);
   assert.ok(onDisk.tasks.length >= 5);
+});
+
+gate('packet plan/planDone validate: capped, junk dropped', () => {
+  const v = handoff.validatePacket({ status: 'done', summary: 's',
+    plan: ['a'.repeat(999), '', 42, ...Array.from({ length: 20 }, (_, i) => 'p' + i)],
+    planDone: [0, -1, 'x', 3.5, 2] }, {});
+  assert.equal(v.error, null);
+  assert.ok(v.packet.plan.length <= 12);
+  assert.equal(v.packet.plan[0].length, 200);
+  assert.deepEqual(v.packet.planDone, [0, 2]);
+});
+
+gate('plan flows: packet lays out phases, checklist rides kickoffs, steps check off', () => {
+  bus.send('taskCreate', { title: 'phased build', cwd: repo,
+    route: ['Coder', 'Auditor'], auto: true, start: true });
+  const id = bus.lastList()[0].id;
+  const coderSeat = seats.created[seats.created.length - 1].id;
+  turn(coderSeat, { status: 'done', summary: 'built phase one',
+    plan: ['design the shape', 'build it', 'verify it'], planDone: [0, 1] });
+  let t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.todos.length, 3, 'plan became the checklist');
+  assert.equal(t.todos.filter((x) => x.done).length, 2, 'planDone checked items off');
+  const auditor = seats.created[seats.created.length - 1];
+  assert.equal(auditor.opts.persona, 'Auditor');
+  assert.ok(auditor.opts.kickoff.includes('PLAN — the task'), 'checklist rides the next kickoff');
+  assert.ok(auditor.opts.kickoff.includes('[x] design the shape'));
+  assert.ok(auditor.opts.kickoff.includes('[ ] verify it'));
+  assert.ok(auditor.opts.kickoff.includes('Bounce budget: 0 of 2'), 'reviewer sees the budget');
+  assert.ok(auditor.opts.kickoff.includes('reproducible defects'), 'bounce discipline in the contract');
+  turn(auditor.id, { status: 'done', summary: 'verified',
+    plan: ['design the shape'], planDone: [2] });   // dup text must not re-add
+  t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.todos.length, 3, 'duplicate plan text deduped');
+  assert.equal(t.todos.filter((x) => x.done).length, 3, 'all phases checked off');
+  assert.equal(t.status, 'done');
+});
+
+gate('taskTodoToggle flips an item by hand', () => {
+  const t0 = bus.lastList().find((x) => Array.isArray(x.todos) && x.todos.length);
+  bus.send('taskTodoToggle', { id: t0.id, index: 0 });
+  const t1 = bus.lastList().find((x) => x.id === t0.id);
+  assert.equal(t1.todos[0].done, false, 'toggled off by hand');
+  bus.send('taskTodoToggle', { id: t0.id, index: 0 });
+  assert.equal(bus.lastList().find((x) => x.id === t0.id).todos[0].done, true);
 });
 
 tasks.dispose();

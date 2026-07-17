@@ -101,15 +101,19 @@
   <div class="sidePane dockPane" id="dock-tasks" data-tab="tasks" data-order="17">
     <div class="paneBody tasksPane">
       <div class="tkHead">
-        <span class="tkTitle">TASKS</span>
+        <span class="tkTitle">TODO</span>
         <button class="tkNew" type="button" title="Create a task with a persona route">&#65291; NEW TASK</button>
       </div>
       <div class="tkForm" hidden></div>
-      <div class="tkList"><div class="paneNote">No tasks yet &#8212; NEW TASK starts one.
-        A task follows a route of personas (design &#8594; audit &#8594; code); each step runs
-        in its own seat and hands a packet to the next.</div></div>
+      <div class="tkList"><div class="paneNote">No tasks yet. Two ways in:<br><br>
+        &#8226; <b>Plan-first</b> &#8212; NEW TASK here, when you already know the route
+        (design &#8594; audit &#8594; code).<br>
+        &#8226; <b>Delegate-when-ready</b> &#8212; just chat with a persona; when its work
+        should move on, press Delegate &#8594; on the chat. The chain lands here either way.<br><br>
+        Each step runs in its own seat, hands a packet to the next, and the task carries a
+        PLAN checklist its personas lay out and check off &#8212; phases planned, built, done.</div></div>
     </div>
-    <div class="dockTab" data-tab="tasks" title="Task board — work that flows through persona routes (design &#8594; audit &#8594; code); the dot pulses when a task needs you">TASKS<span class="tkDot" hidden></span></div>
+    <div class="dockTab" data-tab="tasks" title="Todo board — work that flows through persona routes (design &#8594; audit &#8594; code), each task carrying a plan checklist its personas lay out and check off; the dot pulses when a task needs you">TODO<span class="tkDot" hidden></span></div>
   </div>
   <!-- Live auditor: opt-in shadow review of a seat, rendered here. -->
   <div class="sidePane dockPane" id="dock-audit" data-tab="audit" data-order="18">
