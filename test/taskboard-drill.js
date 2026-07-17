@@ -265,6 +265,65 @@ gate('needs-decision pauses; the next valid packet resumes the chain', () => {
   assert.equal(t.status, 'done');                                // single-step chain completed
 });
 
+gate('needs-decision + Delegate click overrides: chain advances, questions fold into findings', () => {
+  bus.send('taskCreate', { title: 'ratify or go', cwd: repo,
+    route: ['Architect', 'Coder'], auto: true, start: true });
+  const id = bus.lastList()[0].id;
+  const arch = seats.created[seats.created.length - 1].id;
+  turn(arch, { status: 'needs-decision',
+    summary: 'drafted the plan',
+    artifacts: ['C:\\repo\\plan.md'],
+    decision: 'Approve the plan A/B/C?' });
+  let t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.attention.reason, 'decision');
+  assert.equal(t.currentStep, 0);                                // paused, no Coder yet
+  const createdBefore = seats.created.length;
+  bus.send('taskDelegate', { id });                              // user overrides
+  t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.currentStep, 1);                                // advanced
+  assert.equal(seats.created.length, createdBefore + 1);         // Coder seat launched
+  const coder = seats.created[seats.created.length - 1];
+  assert.equal(coder.opts.persona, 'Coder');
+  assert.ok(coder.opts.kickoff.includes('drafted the plan'));    // summary preserved
+  assert.ok(coder.opts.kickoff.includes('C:\\repo\\plan.md'));   // artifacts preserved
+  assert.ok(coder.opts.kickoff.includes('Approve the plan A/B/C?')); // questions in findings
+  assert.ok(coder.opts.kickoff.includes('user delegated without answering'));
+});
+
+gate('route-over held by unchecked todos: Delegate/Retry toast, taskMarkDone settles', () => {
+  bus.send('taskCreate', { title: 'held-open task', cwd: repo,
+    route: ['Coder'], auto: true, start: true });
+  const id = bus.lastList()[0].id;
+  const seatId = seats.created[seats.created.length - 1].id;
+  turn(seatId, { status: 'done', summary: 'built it',
+    plan: ['Do the thing', 'Verify the thing'], planDone: [0] });
+  let t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.status, 'needs-attention');
+  assert.equal(t.attention.reason, 'complete');
+  assert.equal(t.currentStep, 1);                                // past the last step
+  const toastsBefore = bus.toasts().length;
+  bus.send('taskDelegate', { id });                              // was a silent no-op
+  const delegateToasts = bus.toasts().slice(toastsBefore);
+  assert.ok(delegateToasts.some((s) => /finished its route/.test(s)),
+    'Delegate on a route-over task must toast, not no-op');
+  bus.send('taskRetry', { id });                                 // same silent no-op
+  assert.ok(bus.toasts().some((s) => /nothing to retry/.test(s)));
+  bus.send('taskMarkDone', { id });
+  t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.status, 'done');
+  assert.ok(bus.toasts().some((s) => /marked done/.test(s)));
+});
+
+gate('taskMarkDone refuses to settle a task whose route is still in progress', () => {
+  bus.send('taskCreate', { title: 'mid-route', cwd: repo,
+    route: ['Coder', 'Auditor'], auto: false, start: true });
+  const id = bus.lastList()[0].id;
+  bus.send('taskMarkDone', { id });
+  const t = bus.lastList().find((x) => x.id === id);
+  assert.notEqual(t.status, 'done');
+  assert.ok(bus.toasts().some((s) => /still in progress/.test(s)));
+});
+
 gate('malformed packet trips the gate; a later good packet recovers', () => {
   bus.send('taskCreate', { title: 'flaky seat', cwd: repo,
     route: ['Coder'], auto: true, start: true });
@@ -625,6 +684,36 @@ gate('tasks.json write survives a reload (atomic store)', () => {
   assert.ok(onDisk.tasks.length >= 5);
 });
 
+// simulate the user closing a chat (✕ / End Session): the engine posts seatGone
+const closeChat = (id) => { seats.entries.delete(id); seats.live.delete(id); seats.emit({ type: 'seatGone', id }); };
+
+gate('REPRO: closing a rail chat mid-delegate fails the step (no zombie) — task shows a clear state', () => {
+  seats.entries.set('zc', { id: 'zc', persona: 'Architect', title: 'Architect — wip', cwd: repo, sessionId: 'sz' });
+  seats.live.add('zc');
+  bus.send('taskDelegateFromChat', { id: 'zc', target: 'Auditor' });
+  let t = bus.lastList()[0];
+  assert.equal(t.steps[0].status, 'running');           // source is step 0, running
+  closeChat('zc');                                       // user closes the chat before it hands off
+  t = bus.lastList().find((x) => x.id === t.id);
+  assert.equal(t.steps[0].status, 'failed', 'step no longer a zombie "running"');
+  assert.equal(t.status, 'needs-attention');
+  assert.match(t.attention.detail, /closed before it handed off/);
+});
+
+gate('REPRO: delegate-from-chat where the source never emits a packet stalls (does NOT open the target)', () => {
+  seats.entries.set('np', { id: 'np', persona: 'Architect', title: 'Architect — chatty', cwd: repo, sessionId: 'snp' });
+  seats.live.add('np');
+  const before = seats.created.length;
+  bus.send('taskDelegateFromChat', { id: 'np', target: 'Auditor' });
+  const id = bus.lastList()[0].id;
+  turn('np');                                            // result, no apex-handoff block → repair re-ask
+  turn('np');                                            // second miss → loud gate
+  const t = bus.lastList().find((x) => x.id === id);
+  assert.equal(seats.created.length, before, 'the TARGET persona never launched — this is the "delegate did nothing" symptom');
+  assert.equal(t.status, 'needs-attention');
+  assert.equal(t.attention.reason, 'no-packet');
+});
+
 gate('packet plan/planDone validate: capped, junk dropped', () => {
   const v = handoff.validatePacket({ status: 'done', summary: 's',
     plan: ['a'.repeat(999), '', 42, ...Array.from({ length: 20 }, (_, i) => 'p' + i)],
@@ -667,6 +756,75 @@ gate('taskTodoToggle flips an item by hand', () => {
   assert.equal(t1.todos[0].done, false, 'toggled off by hand');
   bus.send('taskTodoToggle', { id: t0.id, index: 0 });
   assert.equal(bus.lastList().find((x) => x.id === t0.id).todos[0].done, true);
+});
+
+// ---- 2026-07-17 continuity fixes: planDone binding, held-open completion,
+// ---- released-chat linking (the "delegate closed my list" incident) --------
+let planHoldId = null;
+gate('planDone binds to the packet\'s own plan by text (mis-check regression)', () => {
+  bus.send('taskCreate', { title: 'canonical plan', cwd: repo,
+    route: ['Architect', 'Coder'], auto: true, start: true });
+  planHoldId = bus.lastList()[0].id;
+  const archSeat = seats.created[seats.created.length - 1].id;
+  turn(archSeat, { status: 'done', summary: 'planned',
+    plan: ['item A', 'item B', 'item C', 'item D'] });
+  const coderSeat = seats.created[seats.created.length - 1].id;
+  // the seat re-emits ITS OWN two-item plan and numbers THAT — 0,1 must hit
+  // B and C by text, not task positions 0,1 (the original mis-check)
+  turn(coderSeat, { status: 'done', summary: 'did B and C',
+    plan: ['item B', 'item C'], planDone: [0, 1] });
+  const t = bus.lastList().find((x) => x.id === planHoldId);
+  assert.equal(t.todos.length, 4, 'duplicate texts deduped');
+  assert.deepEqual(t.todos.map((x) => x.done), [false, true, true, false]);
+  // route finished with A and D unchecked → held at the gate, NOT done
+  assert.equal(t.status, 'needs-attention');
+  assert.equal(t.attention.reason, 'complete');
+  assert.ok(/2 checklist items/.test(t.attention.detail));
+});
+
+gate('checking the last box settles the held-open task to done', () => {
+  bus.send('taskTodoToggle', { id: planHoldId, index: 0 });
+  let t = bus.lastList().find((x) => x.id === planHoldId);
+  assert.equal(t.status, 'needs-attention', 'one box still open');
+  bus.send('taskTodoToggle', { id: planHoldId, index: 3 });
+  t = bus.lastList().find((x) => x.id === planHoldId);
+  assert.equal(t.status, 'done', 'checklist settled → task done');
+  assert.ok(bus.toasts().some((x) => /chain complete: canonical plan/.test(x)));
+});
+
+gate('released rail chat keeps updating the SAME list — no fork after route end', () => {
+  const todoBlock = (o) => '```apex-todo\n' + JSON.stringify(o) + '\n```';
+  seats.entries.set('chatT', { id: 'chatT', persona: 'Architect', title: 'Architect — listy',
+    cwd: repo, sessionId: 'sess-listy', pty: false, local: false });
+  seats.live.add('chatT');
+  // free chat posts a list → lightweight board card
+  seats.emit({ type: 'seatEvt', id: 'chatT',
+    m: { type: 'text', text: todoBlock({ title: 'listy', plan: ['one', 'two'], done: [0] }) } });
+  seats.emit({ type: 'seatEvt', id: 'chatT', m: { type: 'result', ok: true } });
+  const boardCount = bus.lastList().length;
+  // delegate: the card folds into the delegation task instead of duplicating
+  bus.send('taskDelegateFromChat', { id: 'chatT', target: 'Auditor' });
+  const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatT');
+  assert.equal(bus.lastList().length, boardCount, 'card folded, not duplicated');
+  assert.equal(t1.todos.length, 2, 'checklist carried into the delegation');
+  turn('chatT', { status: 'done', summary: 'handed off' });
+  seats.emit({ type: 'seatEvt', id: 'chatT', m: { type: 'result', ok: true } });  // wrap settles → released
+  const audId = tasks._test.byId(t1.id).steps[1].seatId;
+  turn(audId, { status: 'done', summary: 'reviewed' });          // route ends, 'two' unchecked
+  seats.emit({ type: 'seatEvt', id: audId, m: { type: 'result', ok: true } });    // target released
+  let t = bus.lastList().find((x) => x.id === t1.id);
+  assert.equal(t.status, 'needs-attention', 'unchecked box holds the task open');
+  assert.equal(t.attention.reason, 'complete');
+  assert.ok(/1 checklist item still unchecked/.test(t.attention.detail));
+  // the released source chat updates the list → SAME task, and the full check settles it
+  const before = bus.lastList().length;
+  seats.emit({ type: 'seatEvt', id: 'chatT',
+    m: { type: 'text', text: todoBlock({ plan: ['one', 'two'], done: [0, 1] }) } });
+  seats.emit({ type: 'seatEvt', id: 'chatT', m: { type: 'result', ok: true } });
+  assert.equal(bus.lastList().length, before, 'no new board card forked');
+  t = bus.lastList().find((x) => x.id === t1.id);
+  assert.deepEqual(t.todos.map((x) => x.done), [true, true]);
+  assert.equal(t.status, 'done', 'checklist settled → task done');
 });
 
 tasks.dispose();

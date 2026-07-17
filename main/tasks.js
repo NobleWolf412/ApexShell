@@ -283,8 +283,13 @@ function chatTodoTask(seatId, block) {
   const linked = chatTasks.get(seatId);
   const existing = linked ? byId(linked.id) : null;
   if (existing && existing.status !== 'done') {
-    applyTodoPlan(existing, block);
+    // owned = the lightweight card this chat itself created — the chat owns
+    // the whole block, so replace. A task linked at route-end (advance) is
+    // shared across steps: merge, so a partial block can't erase items.
+    if (linked.owned) applyTodoPlan(existing, block);
+    else mergeTodoPlan(existing, block);
     if (block.title) existing.title = block.title;
+    settleIfComplete(existing);
     save(); publish();
     toast('TODO board updated from ' + (entry.persona || 'chat') + ' — ' +
       existing.todos.filter((t) => t.done).length + '/' + existing.todos.length + ' done');
@@ -313,7 +318,7 @@ function chatTodoTask(seatId, block) {
   };
   applyTodoPlan(task, block);
   tasks.unshift(task);
-  chatTasks.set(seatId, { id: task.id });
+  chatTasks.set(seatId, { id: task.id, owned: true });
   prune(); save(); publish();
   toast('"' + task.title + '" is on the TODO board (from the ' + persona + ' chat)');
 }
@@ -454,12 +459,43 @@ function advance(task) {
   if (task.currentStep < task.steps.length) {
     startStep(task);
   } else {
-    task.status = 'done';
-    task.attention = { reason: 'complete', detail: 'chain complete — review the result' };
-    task.updatedAt = now();
-    toast('chain complete: ' + task.title);
-    publish();
+    // Route over: link every released rail chat to this task so its later
+    // apex-todo blocks keep updating THIS checklist (chatTodoTask consults
+    // chatTasks) instead of forking a fresh board card. Route-end only —
+    // linking mid-route would let a re-delegation fold up a still-running task.
+    if (task.fromRail) {
+      for (const s of task.steps) {
+        if ((s.fromRail || s.index === task.steps.length - 1) && s.seatId != null)
+          chatTasks.set(s.seatId, { id: task.id });
+      }
+    }
+    const open = (task.todos || []).filter((t) => !t.done).length;
+    if (open) {
+      // Marking done here detached the task from its chats (done tasks are
+      // skipped by chatTodoTask and taskDelegateFromChat's reconcile), which
+      // is how a list got closed under the user and forked on the next
+      // delegate (2026-07-17). Hold at the gate until the boxes settle.
+      attention(task, 'complete', 'route finished — ' + open + ' checklist item' +
+        (open === 1 ? '' : 's') + ' still unchecked');
+    } else {
+      task.status = 'done';
+      task.attention = { reason: 'complete', detail: 'chain complete — review the result' };
+      task.updatedAt = now();
+      toast('chain complete: ' + task.title);
+      publish();
+    }
   }
+}
+
+// A route-finished task held open only by unchecked boxes (advance's gate)
+// settles to done when the last box lands — by hand or by a linked chat.
+function settleIfComplete(task) {
+  if (task.status === 'done') return;
+  if (task.currentStep < task.steps.length) return;
+  if (!Array.isArray(task.todos) || task.todos.some((t) => !t.done)) return;
+  task.status = 'done';
+  task.attention = { reason: 'complete', detail: 'chain complete — checklist settled' };
+  toast('chain complete: ' + task.title);
 }
 
 function bounce(task, fromIndex, packet) {
@@ -543,8 +579,20 @@ function onPacket(task, stepIndex, packet) {
     if (!task.todos.some((t) => t.text.toLowerCase() === text.toLowerCase()))
       task.todos.push({ text, done: false });
   }
-  for (const i of packet.planDone || [])
-    if (task.todos[i]) task.todos[i].done = true;
+  // planDone binding: an index into the packet's own plan names THAT item —
+  // resolved by text, since the seat can't know where its items landed in the
+  // merged list (raw indexing let a seat numbering its re-emitted plan check
+  // off the wrong task items, 2026-07-17). Indexes past the packet's plan
+  // keep the kickoff checklist's numbering.
+  const plan = packet.plan || [];
+  for (const i of packet.planDone || []) {
+    if (i < plan.length) {
+      const hit = task.todos.find((t) => t.text.toLowerCase() === plan[i].toLowerCase());
+      if (hit) hit.done = true;
+    } else if (task.todos[i]) {
+      task.todos[i].done = true;
+    }
+  }
   if (packet.status === 'needs-decision') {
     // seat stays open — the user answers in its chat; the chain resumes on
     // the next valid packet (the observer keeps parsing this seat's results).
@@ -586,8 +634,26 @@ function onSeatMessage(m) {
     // a seat dying mid-wrap kept its wraps entry + 12s timer, later firing
     // finishWrap on a corpse — clear it with the rest
     const w = wraps.get(m.id);
+    const midWrap = !!w;
     if (w) { clearTimeout(w.timer); wraps.delete(m.id); }
+    const b = bindings.get(m.id);
     bindings.delete(m.id); chatBufs.delete(m.id); chatTasks.delete(m.id);
+    // A BOUND seat closing OUTSIDE the wrap handshake = the user closed the
+    // chat (✕ / End Session) while it was still a live task step. Without this,
+    // the task sat 'running' forever pointing at a dead seat — the user's
+    // "closed the chat, the todo stays and Start does nothing" zombie
+    // (2026-07-17). Surface a real state with a Retry/Delete path.
+    if (b && !midWrap) {
+      const task = byId(b.taskId);
+      const step = task && task.steps[b.stepIndex];
+      if (task && step && step.status === 'running' && step.seatId === m.id) {
+        step.status = 'failed';
+        step.endedAt = now();
+        if (task.status !== 'done')
+          attention(task, 'step-error', step.persona +
+            "'s chat was closed before it handed off — Retry relaunches it, or ✕ removes the task.");
+      }
+    }
     return;
   }
   if (m.type !== 'seatEvt') return;
@@ -759,25 +825,69 @@ function prune() {
 
 function taskStart(msg) {
   const task = byId(msg.id);
-  if (!task) return;
+  // Every guard clause toasts — "clicked Start, nothing happened" is the bug
+  // this replaces. Silent returns hid legitimate reasons the click did nothing.
+  if (!task) { toast('Start: task not found (was it removed?)'); return; }
   const step = task.steps[task.currentStep];
-  if (!step || step.status === 'running') return;
-  if (task.status === 'done') return;
+  if (!step) { toast('Start: task "' + task.title + '" has no current step'); return; }
+  if (step.status === 'running') {
+    toast(step.persona + ' is already running for "' + task.title + '"');
+    return;
+  }
+  if (task.status === 'done') { toast('"' + task.title + '" is already done'); return; }
+  toast('starting ' + step.persona + ' for "' + task.title + '" in ' + task.cwd);
   startStep(task);
 }
 
 function taskDelegate(msg) {
   const task = byId(msg.id);
-  if (!task || task.status === 'done') return;
+  if (!task) { toast('Delegate: task not found'); return; }
+  if (task.status === 'done') { toast('"' + task.title + '" is already done'); return; }
   const step = task.steps[task.currentStep];
-  if (!step) return;
+  // Route over but todos still open — the taskboard renders "Mark done" now,
+  // but a stale renderer could still post the old verb. Point the operator at
+  // the right move instead of silently no-op'ing.
+  if (!step) {
+    toast('"' + task.title + '" finished its route — check the remaining todos or use "Mark done"');
+    return;
+  }
   if (step.status === 'pending') { startStep(task); return; }   // Delegate on a fresh task = start it
   let ok = step.packet && step.packet.status === 'done';
   if (!ok && typeof msg.summary === 'string' && msg.summary.trim()) {
-    // the operator's own words stand in for a missing packet — manual fallback
-    step.packet = { status: 'done', summary: msg.summary.trim().slice(0, handoff.TEXT_CAP),
-                    findings: '', decision: '', artifacts: [] };
+    const userText = msg.summary.trim().slice(0, handoff.TEXT_CAP);
+    // If the seat paused with a needs-decision packet, keep its summary/artifacts
+    // (the real work product) and fold the user's typed answer + the original
+    // questions into findings — replacing wholesale would drop the seat's context.
+    if (step.packet && step.packet.status === 'needs-decision') {
+      const original = step.packet.decision || '';
+      step.packet = Object.assign({}, step.packet, {
+        status: 'done',
+        findings: (step.packet.findings ? step.packet.findings + '\n\n' : '') +
+          'User answer: ' + userText +
+          (original ? '\n\nOriginal open questions: ' + original : ''),
+        decision: '',
+      });
+    } else {
+      // the operator's own words stand in for a missing packet — manual fallback
+      step.packet = { status: 'done', summary: userText,
+                      findings: '', decision: '', artifacts: [] };
+    }
     ok = true;
+  }
+  // Explicit user override: the seat emitted a needs-decision packet and the
+  // user clicked Delegate anyway — treat that click as "hand off now". Keep
+  // the packet's summary/artifacts/plan (real work) and fold the open questions
+  // into findings so the next persona sees them as context.
+  if (!ok && step.packet && step.packet.status === 'needs-decision') {
+    const original = step.packet.decision || '';
+    step.packet = Object.assign({}, step.packet, {
+      status: 'done',
+      findings: (step.packet.findings ? step.packet.findings + '\n\n' : '') +
+        (original ? 'Open questions (user delegated without answering): ' + original : ''),
+      decision: '',
+    });
+    ok = true;
+    toast('handing off with ' + step.persona + '\'s open questions folded into findings');
   }
   if (!ok) {
     // Seat-first, user-last: a live seat gets asked for its packet (once per
@@ -804,9 +914,13 @@ function taskDelegate(msg) {
 
 function taskRetry(msg) {
   const task = byId(msg.id);
-  if (!task || task.status === 'done') return;
+  if (!task) { toast('Retry: task not found'); return; }
+  if (task.status === 'done') { toast('"' + task.title + '" is already done'); return; }
   const step = task.steps[task.currentStep];
-  if (!step) return;
+  if (!step) {
+    toast('"' + task.title + '" finished its route — nothing to retry');
+    return;
+  }
   // Delegate-from-chat step 0 is a hijacked rail seat — no createTaskSeat ever
   // ran for it. Retry MUST re-ask the same seat (if still alive), not relaunch
   // a bare persona seat that would orphan the rail conversation.
@@ -872,6 +986,25 @@ function taskDelete(msg) {
   if (!task) return;
   for (const [seatId, b] of bindings) if (b.taskId === task.id) bindings.delete(seatId);
   tasks = tasks.filter((t) => t.id !== task.id);
+  publish();
+}
+
+// Force-settle a task whose route has finished but is held at the 'complete'
+// gate by unchecked todos (advance()'s hold). The user's explicit "Mark done"
+// click means the leftover todos are accepted as-is — settle the task without
+// requiring them to click every checkbox.
+function taskMarkDone(msg) {
+  const task = byId(msg.id);
+  if (!task) { toast('Mark done: task not found'); return; }
+  if (task.status === 'done') { toast('"' + task.title + '" is already done'); return; }
+  if (task.currentStep < task.steps.length) {
+    toast('"' + task.title + '" is not finished — its route is still in progress');
+    return;
+  }
+  task.status = 'done';
+  task.attention = { reason: 'complete', detail: 'settled by hand — some todos left unchecked' };
+  task.updatedAt = now();
+  toast('"' + task.title + '" marked done');
   publish();
 }
 
@@ -951,6 +1084,7 @@ function taskTodoToggle(msg) {
   const t = task.todos[msg.index];
   if (!t) return;
   t.done = !t.done;
+  settleIfComplete(task);
   task.updatedAt = now();
   publish();
 }
@@ -1022,7 +1156,7 @@ function register(deps) {
 
   const verbs = { taskCreate, taskStart, taskDelegate, taskDelegateFromChat,
                   taskPause, taskResume, taskRetry, taskUpdate, taskDelete,
-                  taskTodoToggle, taskRouteSave, taskRouteDelete };
+                  taskMarkDone, taskTodoToggle, taskRouteSave, taskRouteDelete };
   for (const [type, fn] of Object.entries(verbs))
     api.bus.on(type, (msg) => { try { fn(msg || {}); } catch (e) { console.error('[tasks] ' + type + ':', e.message); } });
 
