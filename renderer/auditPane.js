@@ -19,9 +19,11 @@
   const settings = document.createElement('div');
   settings.className = 'auSettings';
   settings.innerHTML =
-    '<label class="auSetRow"><input type="checkbox" class="auAutoOff"> auto-stop a watch after ' +
+    '<label class="auSetRow" title="a spend ceiling per watched chat: once a watch\'s estimated token use crosses this number, the watch turns itself off (with a toast) so it can\'t quietly eat your plan\'s budget. The estimate counts what each audit pass sends + receives.">' +
+      '<input type="checkbox" class="auAutoOff"> auto-stop a watch after ' +
       '<input type="number" class="auBudget" min="1000" step="1000" value="50000"> tokens</label>' +
-    '<label class="auSetRow">reviewing as <select class="auBorrow"><option value="">neutral reviewer</option></select></label>';
+    '<label class="auSetRow" title="whose standards the shadow auditor reviews with. Picking a persona (e.g. Auditor) makes it judge the way that persona would — identity only; it NEVER gets that persona\'s memory or the watched chat\'s memory, so the second opinion stays independent.">' +
+      'reviewing as <select class="auBorrow"><option value="">neutral reviewer</option></select></label>';
   pane.querySelector('.auHead').after(settings);
   const autoOffEl = settings.querySelector('.auAutoOff');
   const budgetEl = settings.querySelector('.auBudget');
@@ -47,6 +49,10 @@
     for (const [id, title] of liveSeats) {
       const row = document.createElement('label');
       row.className = 'auWatchRow';
+      row.title = 'watch this chat: after each of its turns, a cheap hidden haiku pass reviews the ' +
+        'recent conversation (both sides, including turns from before the watch) and flags risks here. ' +
+        'Costs a small extra LLM call per turn — toggle off any time. Chats running a TASKS chain ' +
+        'step are skipped (the chain has its own audit).';
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = watchedOn.has(id);
@@ -58,6 +64,7 @@
       if (watchedOn.has(id)) {
         const meta = document.createElement('span');
         meta.className = 'auWatchMeta';
+        meta.title = 'audit passes run for this chat, and the estimated tokens they have spent';
         const est = watchedEst.get(id) || 0;
         const spend = est ? ' · ~' + (est >= 1000 ? Math.round(est / 1000) + 'k' : est) + ' tok' : '';
         meta.textContent = running.has(id)
@@ -100,6 +107,11 @@
         const sev = document.createElement('div');
         sev.className = 'auSev';
         sev.textContent = SEV[f.severity] || f.severity;
+        sev.title = f.severity === 'risk'
+          ? 'risk: could cause real damage or is likely wrong — look before the chat acts further'
+          : f.severity === 'warn'
+            ? 'warn: questionable — an unverified assumption or a drift from what you asked'
+            : 'note: worth knowing, no action needed';
         card.appendChild(sev);
         const claim = document.createElement('div');
         claim.className = 'auClaim';

@@ -14,14 +14,19 @@
     '<div class="skFormHead">CREATE A SKILL</div>' +
     '<p class="skFormHelp">A skill is a reusable capability your persona seats invoke on their own — the description tells Claude when to use it.</p>' +
     '<div class="skRow">' +
-      '<select class="skScope"><option value="personal">Personal (all seats)</option>' +
+      '<select class="skScope" title="where the skill lives. Personal (~/.claude/skills) — every Claude seat on this machine can use it. Project (<repo>/.claude/skills) — only seats working in that repo see it, and it travels with the repo in git.">' +
+        '<option value="personal">Personal (all seats)</option>' +
         '<option value="project">Project (one repo)</option></select>' +
-      '<button class="skRepo" type="button" hidden>pick repo…</button>' +
+      '<button class="skRepo" type="button" title="choose which repo gets this skill" hidden>pick repo…</button>' +
       '<span class="skRepoName"></span></div>' +
-    '<input class="skName" type="text" maxlength="64" placeholder="skill-name (lowercase-kebab)">' +
-    '<textarea class="skDesc" maxlength="1024" placeholder="When should Claude use this? (this drives auto-invocation)"></textarea>' +
-    '<textarea class="skBody" placeholder="Instructions / steps (optional)"></textarea>' +
-    '<div class="skRow skFormFoot"><button class="skCreate" type="button">CREATE SKILL</button></div>';
+    '<input class="skName" type="text" maxlength="64" placeholder="skill-name (lowercase-kebab)" ' +
+      'title="the skill\'s id and folder name — lowercase letters, numbers, hyphens. Fixed once created.">' +
+    '<textarea class="skDesc" maxlength="1024" placeholder="When should Claude use this? (this drives auto-invocation)" ' +
+      'title="the most important field: Claude reads every skill\'s description to decide when to invoke it on its own. Write it like a trigger — &quot;use when the user asks to X&quot;."></textarea>' +
+    '<textarea class="skBody" placeholder="Instructions / steps (optional)" ' +
+      'title="what Claude should actually do once the skill triggers — steps, commands, house rules"></textarea>' +
+    '<div class="skRow skFormFoot"><button class="skCreate" type="button" ' +
+      'title="write the SKILL.md — persona seats discover it automatically on their next launch">CREATE SKILL</button></div>';
   const scopeSel = formEl.querySelector('.skScope');
   const repoBtn = formEl.querySelector('.skRepo');
   const repoName = formEl.querySelector('.skRepoName');
@@ -74,6 +79,8 @@
     const head = document.createElement('div');
     head.className = 'skSubHead';
     head.textContent = 'PROMOTE A RECIPE → SKILL';
+    head.title = 'reusable know-how your personas captured in their project memory — ' +
+      'promoting one turns it into a real skill every seat can auto-invoke';
     recipesEl.appendChild(head);
     for (const r of recipes) {
       const row = document.createElement('div');

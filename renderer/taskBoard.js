@@ -18,18 +18,23 @@
   // ---------- new-task form ----------
   let chips = [];               // the persona sequence being built
   form.innerHTML =
-    '<input class="tkTitleIn" type="text" maxlength="200" placeholder="what needs doing">' +
-    '<div class="tkRow"><input class="tkCwdIn" type="text" placeholder="repo folder (absolute path)">' +
+    '<input class="tkTitleIn" type="text" maxlength="200" placeholder="what needs doing" ' +
+      'title="the work itself — every persona on the route sees this as the task brief">' +
+    '<div class="tkRow"><input class="tkCwdIn" type="text" placeholder="repo folder (absolute path)" ' +
+      'title="which repo this task works in — its seats launch here, and the task groups under this repo on the board">' +
       '<button class="tkBrowse" type="button" title="pick a folder">BROWSE</button></div>' +
-    '<div class="tkRow"><select class="tkRouteSel"><option value="">route template…</option></select>' +
-      '<select class="tkPersonaSel"><option value="">add persona…</option></select></div>' +
-    '<div class="tkChips"></div>' +
+    '<div class="tkRow"><select class="tkRouteSel" title="a saved persona sequence — picking one fills the chips below">' +
+      '<option value="">route template…</option></select>' +
+      '<select class="tkPersonaSel" title="append a persona to the route — the task visits them in this order">' +
+      '<option value="">add persona…</option></select></div>' +
+    '<div class="tkChips" title="the route: each persona runs in its own seat and hands a packet to the next"></div>' +
     '<div class="tkRow tkFormFoot">' +
-      '<label class="tkAuto"><input type="checkbox" class="tkAutoIn"> auto-chain ' +
+      '<label class="tkAuto" title="ON: steps hand off to the next persona on their own — you are pulled in only at gates (a decision is needed, a step errors, the bounce limit hits, or the chain completes). OFF: each finished step waits for you to press Delegate.">' +
+        '<input type="checkbox" class="tkAutoIn"> auto-chain ' +
         '<span class="tkHintTx" title="steps hand off to the next persona on their own; you are pulled in only at gates (decision, error, bounce limit, done)">?</span></label>' +
-      '<button class="tkSaveRoute" type="button" title="save this persona sequence as a reusable route">save route</button>' +
-      '<button class="tkCreate" type="button">CREATE</button>' +
-      '<button class="tkCancel" type="button">cancel</button></div>';
+      '<button class="tkSaveRoute" type="button" title="save this persona sequence as a reusable route template">save route</button>' +
+      '<button class="tkCreate" type="button" title="create the task and launch its first persona">CREATE</button>' +
+      '<button class="tkCancel" type="button" title="close the form without creating anything">cancel</button></div>';
   const titleIn = form.querySelector('.tkTitleIn');
   const cwdIn = form.querySelector('.tkCwdIn');
   const routeSel = form.querySelector('.tkRouteSel');
@@ -140,8 +145,15 @@
       t.status === 'done' ? 'done ✓' :
       t.status === 'paused' ? 'paused' :
       t.status === 'running' ? (t.auto ? 'auto ⛓' : 'running') : 'open';
-    if (t.attention && t.attention.reason) badge.title = t.attention.reason +
-      (t.attention.detail ? ' — ' + t.attention.detail : '');
+    badge.title = t.attention && t.attention.reason
+      ? t.attention.reason + (t.attention.detail ? ' — ' + t.attention.detail : '')
+      : t.status === 'running'
+        ? (t.auto
+          ? 'auto-chain: finished steps hand off to the next persona on their own'
+          : 'running: when this step finishes, press Delegate → to hand off')
+        : t.status === 'paused' ? 'paused: the chain will not advance until you Resume'
+        : t.status === 'done' ? 'the whole route completed'
+        : 'not started yet — press ▶ Start';
     head.appendChild(badge);
     el.appendChild(head);
 
@@ -149,11 +161,16 @@
     routeRow.className = 'tkRoute';
     const dots = t.steps.map((s) => STEP_DOT[s.status] || '○').join('──');
     routeRow.textContent = dots + '   ' + t.steps.map((s) => s.persona).join(' → ');
+    routeRow.title = 'route progress — ● done · ◐ running · ○ pending · ↩ bounced back · ⚠ failed. ' +
+      'Each persona runs in its own seat and hands a packet to the next.';
     el.appendChild(routeRow);
 
     const status = document.createElement('div');
     status.className = 'tkStep';
     status.textContent = stepLine(t);
+    status.title = 'the current step. "packet ✓" = the persona finished and wrote its handoff; ' +
+      '"no packet yet" = still working (or it ended a turn without one — reply in its chat); ' +
+      '"waiting on a permission" = answer the card in its chat.';
     el.appendChild(status);
 
     if (t.attention && t.attention.detail && t.status === 'needs-attention') {
@@ -212,6 +229,7 @@
       fold.className = 'tkFold';
       const toggle = document.createElement('button');
       toggle.className = 'tkFoldBtn';
+      toggle.title = 'what each finished step reported in its handoff packet';
       toggle.textContent = (openHistories.has(t.id) ? '▾' : '▸') + ' history (' + settled.length + ')';
       toggle.onclick = () => {
         if (openHistories.has(t.id)) openHistories.delete(t.id);
