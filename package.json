@@ -7,6 +7,8 @@
   "main": "main/main.js",
   "scripts": {
     "start": "electron .",
+    "test": "node test/taskboard-drill.js && node test/audit-drill.js && node test/skills-drill.js && node test/persona-contract.js && node test/persona-extension.js && node test/persona-manage-drill.js && node test/persona-import-drill.js && node test/persona-relationships-drill.js && node test/linkify-drill.js",
+    "test:live": "node test/engine-harness.js && node test/codex-drill.js && node test/pty-drill.js",
     "test:persona-fixtures": "node test/persona-apex-fixtures.js"
   },
   "devDependencies": {

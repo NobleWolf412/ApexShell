@@ -72,9 +72,11 @@ let observer = null;
 const disposables = [];
 const posts = [];
 const handlers = {};
+const seatEntries = new Map();   // id -> { sessionId } for transcript seeding
 require.cache[seatsPath] = { id: seatsPath, filename: seatsPath, loaded: true, exports: {
   observeSeats(fn) { observer = fn; return () => { observer = null; }; },
   startDisposable(opts) { const d = { opts, closed: false, close() { this.closed = true; } }; disposables.push(d); return d; },
+  seatEntry: (id) => seatEntries.get(id) || null,
 } };
 require.cache[busPath] = { id: busPath, filename: busPath, loaded: true, exports: {
   on(t, fn) { handlers[t] = fn; }, post(type, m) { posts.push({ type, m }); }, init() {}, inject() {},
@@ -164,6 +166,36 @@ const lastOf = (type) => [...posts].reverse().find((p) => p.type === type);
     assert.equal(disposables.length, 0, 'no disposable for a chain seat');
     assert.equal(lastOf('auditFindings').m.suppressed, true);
     chainSeats.delete('sc'); handlers.auditToggle({ id: 'sc', on: false });
+  });
+
+  await agate('a fresh watch seeds its window from the seat transcript', async () => {
+    // plant a real transcript where backfill looks: ~/.claude/projects/<any>/<session>.jsonl
+    const os = require('os');
+    const fsx = require('fs');
+    const pathx = require('path');
+    const projDir = pathx.join(os.homedir(), '.claude', 'projects', 'apex-audit-drill');
+    fsx.mkdirSync(projDir, { recursive: true });
+    const sess = 'audit-drill-' + Date.now();
+    const file = pathx.join(projDir, sess + '.jsonl');
+    fsx.writeFileSync(file, [
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'PRIOR-ASK: wipe the cache' } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'PRIOR-ACT: wiped it' }] } }),
+    ].join('\n') + '\n');
+    try {
+      seatEntries.set('st', { sessionId: sess });
+      handlers.auditToggle({ id: 'st', on: true });
+      posts.length = 0; disposables.length = 0;
+      emit('st', { type: 'text', text: 'new turn work' });
+      emit('st', { type: 'result', ok: true });
+      await new Promise((r) => setTimeout(r, 4300));
+      assert.equal(disposables.length, 1);
+      const prompt = disposables[0].opts.kickoff;
+      assert.ok(prompt.includes('PRIOR-ASK'), 'prior user turn seeded');
+      assert.ok(prompt.includes('PRIOR-ACT'), 'prior assistant turn seeded');
+      assert.ok(prompt.includes('new turn work'), 'live turn still present');
+      disposables[0].opts.onEvent({ type: 'result', ok: true });
+      handlers.auditToggle({ id: 'st', on: false });
+    } finally { fsx.rmSync(projDir, { recursive: true, force: true }); }
   });
 
   await agate('auto-off stops the watch once the token ceiling is crossed', async () => {

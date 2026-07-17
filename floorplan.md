@@ -199,15 +199,16 @@ pane) + `main/engine/handoff.js` (pure packet contract).
 
 ## Verification duties (inherited by anyone who edits)
 
-- Engine change → `node test/engine-harness.js` must pass whole.
-- Workflow-layer change → `node test/taskboard-drill.js` (headless state
-  machine + packet contract). Full-stack proof on demand: park the electron
-  launcher stub (`node_modules/electron/dist/resources/app` — it hijacks
-  every electron invocation to main.js), then `npx electron test/live-chain`
-  runs a REAL 2-step haiku chain end-to-end (~2 short sessions).
-- Live-auditor change → `node test/audit-drill.js` (contract + watch state
-  machine). Full-stack proof: park the stub, `npx electron test/live-audit`
-  (real haiku auditor on a watched seat + a risky transcript; ~3 sessions).
+- ANY main/renderer logic change → `npm test` — the full hermetic drill suite
+  (taskboard, audit, skills, persona ×5, linkify; zero LLM spend) must pass
+  whole.
+- Engine or lane change → `npm run test:live` — the gates that spend real
+  sessions (engine-harness on the Claude lane, codex-drill, pty-drill).
+- Full-stack proofs on demand: park the electron launcher stub
+  (`node_modules/electron/dist/resources/app` — it hijacks every electron
+  invocation to main.js), then `npx electron test/live-chain` (a REAL 2-step
+  haiku delegation chain) or `npx electron test/live-audit` (a real haiku
+  auditor on a watched seat + a risky transcript).
 - Window change → `APEX_SMOKE=1` smoke (exit 0 = no renderer errors).
   Affordances: `APEX_SMOKE_DOCK=<tab>` opens a pane, `APEX_SMOKE_SHOT=x.png`
   screenshots, `APEX_SMOKE_PTY=1` mounts a ConPTY seat, `APEX_SMOKE_CFG=1`

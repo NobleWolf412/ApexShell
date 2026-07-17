@@ -56,6 +56,35 @@ gate('body defaults when omitted', () => {
   assert.match(md, /# quick-note/);
 });
 
+gate('readSkill round-trips frontmatter + body', () => {
+  const s = skills.readSkill('project', repo, 'run-migrations');
+  assert.equal(s.id, 'run-migrations');
+  assert.match(s.description, /dry-run first/);
+  assert.match(s.body, /1\. Dry run/);
+});
+
+gate('saveSkill rewrites description + body; name stays the folder', () => {
+  skills.saveSkill({ scope: 'project', repo, id: 'run-migrations',
+    description: 'Run migrations with a verified backup first.', body: '# New steps\n1. Backup\n2. Apply' });
+  const s = skills.readSkill('project', repo, 'run-migrations');
+  assert.match(s.description, /verified backup/);
+  assert.match(s.body, /1\. Backup/);
+  assert.throws(() => skills.saveSkill({ scope: 'project', repo, id: 'run-migrations', description: '' }), /description/);
+});
+
+gate('deleteSkill archives (recoverable), scan no longer lists it', () => {
+  const gone = skills.deleteSkill({ scope: 'project', repo, id: 'quick-note' });
+  assert.ok(fs.existsSync(path.join(gone.archivedTo, 'SKILL.md')), 'archived copy intact');
+  const scan = skills.scanSkills(repo);
+  assert.ok(!scan.project.some((s) => s.id === 'quick-note'));
+  assert.ok(!scan.project.some((s) => s.id === '.archive'), '.archive never lists');
+});
+
+gate('mutations refuse traversal and unknown ids', () => {
+  assert.throws(() => skills.readSkill('project', repo, '../evil'), /Unknown skill id/);
+  assert.throws(() => skills.deleteSkill({ scope: 'project', repo, id: 'no-such-skill' }), /not found/);
+});
+
 gate('recipe scan finds project-scoped persona recipes', () => {
   // build a fake persona workspace and point the module's config at it by
   // writing the workspace.json the module reads

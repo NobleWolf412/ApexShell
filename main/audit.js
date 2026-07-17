@@ -7,10 +7,12 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const seats = require('./seats');
 const bus = require('./bus');
 const audit = require('./engine/audit');
+const { backfill } = require('./engine/transcripts');
 
 const DEBOUNCE_MS = 4000;      // let a burst of turns settle before spending a pass
 const MAX_TURNS = 6;           // rolling window
@@ -84,9 +86,30 @@ function isChainSeat(id) {
 }
 
 function startWatch(id) {
-  if (!watched.has(id))
-    watched.set(id, { turns: [], curAssistant: '', timer: null, running: false, count: 0 });
+  if (!watched.has(id)) {
+    const w = { turns: [], curAssistant: '', timer: null, running: false, count: 0, estTokens: 0 };
+    watched.set(id, w);
+    seedFromTranscript(id, w);   // prior turns count too — "audit now" covers them
+  }
   bus.post('auditState', { id, on: true, count: watched.get(id).count });
+}
+
+// Seed a fresh watch from the seat's on-disk transcript so the auditor sees
+// what happened BEFORE the watch was flipped on (the same backfill a resume
+// uses; kickoffs are already filtered out). Claude lane only — codex threads
+// live outside the transcript store, and local seats keep no session.
+function seedFromTranscript(id, w) {
+  try {
+    if (typeof seats.seatEntry !== 'function') return;
+    const entry = seats.seatEntry(id);
+    if (!entry || !entry.sessionId || String(entry.sessionId).startsWith('codex:')) return;
+    const { messages } = backfill(entry.sessionId,
+      path.join(os.homedir(), '.claude', 'projects'));
+    for (const m of messages || []) {
+      if (m.type === 'user' && m.text) pushTurn(w, 'user', m.text);
+      else if (m.type === 'text' && m.text) pushTurn(w, 'assistant', m.text);
+    }
+  } catch { /* no transcript yet — the watch simply starts fresh */ }
 }
 function stopWatch(id) {
   const w = watched.get(id);

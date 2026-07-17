@@ -95,6 +95,65 @@ function walkRecipes(dir, onFile) {
   }
 }
 
+// Never trust a raw path off the wire — every mutation reconstructs the
+// skill directory from {scope, repo, id}, and the NAME_RE gate on the id
+// kills traversal.
+function resolveDir(scope, repo, id) {
+  const clean = String(id || '').trim().toLowerCase();
+  if (!NAME_RE.test(clean) || clean.length > 64) throw new Error('Unknown skill id.');
+  let base;
+  if (scope === 'project') {
+    if (!repo || !path.isAbsolute(repo) || !fs.existsSync(repo))
+      throw new Error('Project skill needs its repo folder.');
+    base = projectRoot(repo);
+  } else base = personalRoot();
+  const dir = path.join(base, clean);
+  if (!fs.existsSync(path.join(dir, 'SKILL.md'))) throw new Error('Skill not found: ' + clean);
+  return { dir, id: clean };
+}
+
+function readSkill(scope, repo, id) {
+  const { dir, id: clean } = resolveDir(scope, repo, id);
+  const text = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  const meta = readSkillMeta(path.join(dir, 'SKILL.md')) || {};
+  const body = text.replace(/^---\n[\s\S]*?\n---\s*/, '');
+  return { id: clean, name: meta.name || clean, description: meta.description || '', body: body.trim() };
+}
+
+function saveSkill({ scope, repo, id, description, body }) {
+  const { dir, id: clean } = resolveDir(scope, repo, id);
+  const desc = String(description || '').trim();
+  if (!desc) throw new Error('A skill needs a description — it is how Claude decides when to use it.');
+  if (desc.length > DESC_CAP) throw new Error('Description exceeds ' + DESC_CAP + ' characters.');
+  const md = [
+    '---',
+    'name: ' + clean,
+    'description: ' + desc.replace(/\n/g, ' '),
+    '---',
+    '',
+    (String(body || '').trim() || '# ' + clean),
+    '',
+  ].join('\n');
+  const file = path.join(dir, 'SKILL.md');
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, md, 'utf8');
+  fs.rmSync(file, { force: true });
+  fs.renameSync(tmp, file);
+  return { id: clean };
+}
+
+// Soft delete — same covenant as personas: archive, never erase. The skill
+// folder moves whole into <root>/.archive/<id>--<stamp>.
+function deleteSkill({ scope, repo, id }) {
+  const { dir, id: clean } = resolveDir(scope, repo, id);
+  const archiveRoot = path.join(path.dirname(dir), '.archive');
+  fs.mkdirSync(archiveRoot, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const dest = path.join(archiveRoot, clean + '--' + stamp);
+  fs.renameSync(dir, dest);
+  return { id: clean, archivedTo: dest };
+}
+
 function createSkill({ scope, repo, name, description, body }) {
   const clean = String(name || '').trim().toLowerCase();
   if (!NAME_RE.test(clean) || clean.length > 64)
@@ -150,7 +209,35 @@ function register() {
       bus.post('toast', { text: 'Skill not created: ' + err.message });
     }
   });
+  bus.on('skillRead', (m) => {
+    try {
+      bus.post('skillContent', { ok: true, scope: (m && m.scope) || 'personal',
+        repo: (m && m.repo) || null, ...readSkill(m && m.scope, m && m.repo, m && m.id) });
+    } catch (err) { bus.post('skillContent', { ok: false, error: err.message }); }
+  });
+  bus.on('skillSave', (m) => {
+    try {
+      const saved = saveSkill(m || {});
+      log('saved skill ' + saved.id);
+      bus.post('skillSaved', { ok: true, id: saved.id });
+      bus.post('toast', { text: 'Skill "' + saved.id + '" updated.' });
+      bus.post('skillList', scanSkills(m && m.repo));
+    } catch (err) {
+      bus.post('skillSaved', { ok: false, error: err.message });
+      bus.post('toast', { text: 'Skill not saved: ' + err.message });
+    }
+  });
+  bus.on('skillDelete', (m) => {
+    try {
+      if (!m || m.confirmed !== true) throw new Error('Deleting a skill requires explicit confirmation.');
+      const gone = deleteSkill(m);
+      log('archived skill ' + gone.id);
+      bus.post('toast', { text: 'Skill "' + gone.id + '" archived — recover it from .archive/' +
+        path.basename(gone.archivedTo) + ' if needed.' });
+      bus.post('skillList', scanSkills(m.repo));
+    } catch (err) { bus.post('toast', { text: 'Skill not deleted: ' + err.message }); }
+  });
   bus.on('ready', () => { bus.post('skillList', scanSkills(null)); bus.post('skillRecipes', { recipes: scanRecipes() }); });
 }
 
-module.exports = { register, scanSkills, scanRecipes, createSkill };
+module.exports = { register, scanSkills, scanRecipes, createSkill, readSkill, saveSkill, deleteSkill };

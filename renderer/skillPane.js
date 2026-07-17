@@ -28,6 +28,24 @@
   const nameIn = formEl.querySelector('.skName');
   const descIn = formEl.querySelector('.skDesc');
   const bodyIn = formEl.querySelector('.skBody');
+  const headEl = formEl.querySelector('.skFormHead');
+  const createBtn = formEl.querySelector('.skCreate');
+
+  let editing = null;   // { scope, repo, id } while the form edits an existing skill
+  function setEditMode(target) {
+    editing = target;
+    headEl.textContent = editing ? 'EDIT SKILL — ' + editing.id : 'CREATE A SKILL';
+    nameIn.disabled = !!editing;           // the id is the folder — fixed once created
+    scopeSel.disabled = !!editing;
+    createBtn.textContent = editing ? 'SAVE SKILL' : 'CREATE SKILL';
+    let cancel = formEl.querySelector('.skCancelEdit');
+    if (editing && !cancel) {
+      cancel = document.createElement('button');
+      cancel.type = 'button'; cancel.className = 'skCancelEdit'; cancel.textContent = 'cancel';
+      cancel.onclick = () => { setEditMode(null); nameIn.value = ''; descIn.value = ''; bodyIn.value = ''; };
+      createBtn.before(cancel);
+    } else if (!editing && cancel) cancel.remove();
+  }
 
   const repoBase = (p) => (p.split(/[\\/]/).filter(Boolean).pop() || p);
   function syncScope() {
@@ -38,11 +56,15 @@
   }
   scopeSel.onchange = () => { syncScope(); ApexBus.post('skillList', { repo: projectRepo }); };
   repoBtn.onclick = () => ApexBus.post('skillPickRepo', {});
-  formEl.querySelector('.skCreate').onclick = () => {
-    ApexBus.post('skillCreate', {
-      scope: scopeSel.value, repo: projectRepo,
-      name: nameIn.value, description: descIn.value, body: bodyIn.value,
-    });
+  createBtn.onclick = () => {
+    if (editing) {
+      ApexBus.post('skillSave', { ...editing, description: descIn.value, body: bodyIn.value });
+    } else {
+      ApexBus.post('skillCreate', {
+        scope: scopeSel.value, repo: projectRepo,
+        name: nameIn.value, description: descIn.value, body: bodyIn.value,
+      });
+    }
   };
 
   function renderRecipes(m) {
@@ -91,15 +113,26 @@
         continue;
       }
       for (const s of list) {
+        const scope = label === 'Personal' ? 'personal' : 'project';
+        const target = { scope, repo: scope === 'project' ? m.repo : null, id: s.id };
         const row = document.createElement('div');
         row.className = 'skInstRow';
         const name = document.createElement('div'); name.className = 'skInstName'; name.textContent = s.name;
         const desc = document.createElement('div'); desc.className = 'skInstDesc'; desc.textContent = s.description || '(no description)';
-        const open = document.createElement('button');
-        open.type = 'button'; open.textContent = 'open'; open.title = s.path;
-        open.onclick = () => ApexBus.post('openPath', { path: s.path });
         const meta = document.createElement('div'); meta.className = 'skInstText'; meta.append(name, desc);
-        row.append(meta, open);
+        const acts = document.createElement('div'); acts.className = 'skInstActs';
+        const mk = (labelTx, title, fn) => {
+          const b = document.createElement('button');
+          b.type = 'button'; b.textContent = labelTx; b.title = title; b.onclick = fn;
+          acts.appendChild(b);
+        };
+        mk('edit', 'load this skill into the form', () => ApexBus.post('skillRead', target));
+        mk('open', s.path, () => ApexBus.post('openPath', { path: s.path }));
+        mk('delete', 'archive this skill (recoverable from .archive)', () => {
+          if (window.confirm('Delete skill "' + s.name + '"?\n\nIt is archived, not erased.'))
+            ApexBus.post('skillDelete', { ...target, confirmed: true });
+        });
+        row.append(meta, acts);
         installedEl.appendChild(row);
       }
     }
@@ -110,6 +143,17 @@
   ApexBus.on('skillRepoPicked', (m) => { projectRepo = m.path; scopeSel.value = 'project'; syncScope(); ApexBus.post('skillList', { repo: projectRepo }); });
   ApexBus.on('skillCreated', (m) => {
     if (m.ok) { nameIn.value = ''; descIn.value = ''; bodyIn.value = ''; }
+  });
+  ApexBus.on('skillContent', (m) => {
+    if (!m.ok) { ApexToast('could not load the skill: ' + m.error); return; }
+    setEditMode({ scope: m.scope, repo: m.repo || null, id: m.id });
+    nameIn.value = m.id;
+    descIn.value = m.description || '';
+    bodyIn.value = m.body || '';
+    descIn.focus();
+  });
+  ApexBus.on('skillSaved', (m) => {
+    if (m.ok) { setEditMode(null); nameIn.value = ''; descIn.value = ''; bodyIn.value = ''; }
   });
 
   syncScope();
