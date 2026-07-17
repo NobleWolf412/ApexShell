@@ -21,7 +21,9 @@ lane, not the judgment lane.
 
 ## What the shell does
 
-Blank seat with the model dial set to `qwen` → the local lane:
+Blank seat with the model dial set to **Local (Ollama)** (internal value
+`qwen` — kept as the lane key so the usage ledger survives; the model itself
+is whatever `MODEL` in `localSeat.js` points at, now gpt-oss:20b) → the local lane:
 
 - Chat with tool rounds: `web_search`, `web_fetch`, `read_file`,
   `list_dir` auto-run (surfaced as chips); `write_file` blocks on the SAME
