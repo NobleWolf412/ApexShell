@@ -192,6 +192,7 @@ window.ApexMonitors = (function () {
       if (!compact && p.only === 'quarter') continue;
       const card = document.createElement('div');
       card.className = 'mon-pane';
+      card.dataset.pane = p.id;   // chip-click navigation targets cards by id
       // "wide": the card spans the grid's full width (the week-of-tiles row)
       if (!compact && p.wide) card.classList.add('wide');
       const live = p.source && p.source.type && p.source.type !== 'demo';

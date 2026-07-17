@@ -25,7 +25,7 @@
   function attachPull(cfg) {
     let drag = null;
     cfg.handle.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('button')) return;   // buttons on handles act, never pull
+      if (e.target.closest('button, .chip')) return;   // buttons/chips on handles act, never pull
       drag = { p0: cfg.axis === 'y' ? e.clientY : e.clientX,
                base: cfg.posOf(cfg.get()), moved: false };
       cfg.handle.setPointerCapture(e.pointerId);
@@ -346,6 +346,19 @@
       el.className = 'chip';
       el.innerHTML = '<span class="dot"></span><b></b><span class="v"></span>';
       el.querySelector('b').textContent = p.title;
+      // chips navigate: click one → the blind opens straight to that pane
+      // (quarter-only panes live in the detail band; the rest in the full grid)
+      el.title = p.title + ' — click to open this tracker';
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();   // the bar's click-toggle must not double-handle
+        const view = p.only === 'quarter' ? 'quarter' : 'full';
+        setTop(view);
+        const grid = view === 'quarter' ? 'detailGrid' : 'fullGrid';
+        setTimeout(() => {
+          const card = document.querySelector('#' + grid + ' .mon-pane[data-pane="' + p.id + '"]');
+          if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 300);   // after the blind's slide
+      });
       chipsEl.appendChild(el);
       chipMeta.set(p.id, { el, ledBind: led && led.bind, valBind: val && val.bind });
     }
@@ -500,6 +513,42 @@
       ApexBus.post('updateRestart', {});
     }
   };
+
+  // ---- the ? cheat-sheet: gestures are invisible until told (UX pass 2026-07-17) ----
+  const helpOverlay = document.getElementById('helpOverlay');
+  document.getElementById('btnHelp').onclick = (e) => {
+    e.stopPropagation();
+    menu.classList.remove('open');
+    helpOverlay.hidden = !helpOverlay.hidden;
+  };
+  helpOverlay.addEventListener('mousedown', (e) => {
+    if (e.target === helpOverlay) helpOverlay.hidden = true;
+  });
+
+  // ---- keyboard: Ctrl+1..5 toggle dock tabs, Ctrl+T new chat, Esc collapse ----
+  addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (document.querySelector('.apxPrompt')) return;   // the prompt owns its own Esc
+      if (!helpOverlay.hidden) { helpOverlay.hidden = true; return; }
+      const rm = document.getElementById('railMenu');     // an open menu closes FIRST —
+      if (rm && !rm.hidden) { ApexChat.hideRailMenu(); return; }   // one Esc, one layer
+      tabIds.forEach((id) => { if (store.tabs[id] !== 'collapsed') setDockTab(id, 'collapsed', false); });
+      if (store.right !== 'collapsed') setRight('collapsed', false);
+      if (store.top !== 'collapsed') setTop('collapsed');
+      return;
+    }
+    if (!e.ctrlKey) return;
+    if (e.key >= '1' && e.key <= '9') {
+      const sorted = [...tabIds].sort((a, b) => dockOrder[a] - dockOrder[b]);
+      const id = sorted[Number(e.key) - 1];
+      if (!id) return;
+      e.preventDefault();
+      setDockTab(id, store.tabs[id] === 'collapsed' ? 'quarter' : 'collapsed', false);
+    } else if (e.key === 't' || e.key === 'T') {
+      e.preventDefault();
+      if (window.ApexChat) ApexChat.newSeat('');
+    }
+  });
 
   // ---- Ctrl+scroll zoom (the operator: the text feels small) ----
   // Ctrl+wheel steps 5%, Ctrl+= / Ctrl+- step 10%, Ctrl+0 resets; clamped

@@ -75,7 +75,20 @@
   function renderRecipes(m) {
     recipesEl.textContent = '';
     const recipes = (m && m.recipes) || [];
-    if (!recipes.length) return;
+    if (!recipes.length) {
+      // the feature is invisible until a recipe exists — say how one comes to be
+      const head = document.createElement('div');
+      head.className = 'skSubHead';
+      head.textContent = 'PROMOTE A RECIPE → SKILL';
+      const note = document.createElement('div');
+      note.className = 'skEmpty';
+      note.textContent = 'No recipes yet. When a persona captures a reusable procedure, it saves ' +
+        'it under its own memory as memory/projects/<repo>/recipes/<name>.md — anything saved ' +
+        'there appears here, ready to promote into a skill every seat can use. (Try asking the ' +
+        'Coder to "record that as a recipe" after it nails a procedure.)';
+      recipesEl.append(head, note);
+      return;
+    }
     const head = document.createElement('div');
     head.className = 'skSubHead';
     head.textContent = 'PROMOTE A RECIPE → SKILL';

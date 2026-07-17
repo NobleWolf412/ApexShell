@@ -169,3 +169,21 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .apxPrompt .apxPromptBtns button:hover { color: var(--text); border-color: var(--accent); }
 .apxPrompt .apxPromptBtns button.primary { color: var(--text);
   background: color-mix(in srgb, var(--accent) 18%, transparent); }
+
+/* —— the ? cheat-sheet overlay —— */
+#helpOverlay { position: fixed; inset: 0; z-index: 1350; display: flex;
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, #000 45%, transparent); }
+#helpOverlay[hidden] { display: none; }
+#helpOverlay .helpCard { background: var(--surface); border: 1px solid var(--edge);
+  border-radius: 12px; padding: 18px 22px; max-width: 720px; max-height: 80vh;
+  overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+#helpOverlay .helpTitle { font-size: 12px; letter-spacing: .12em; color: var(--dim);
+  margin-bottom: 12px; }
+#helpOverlay .helpCols { display: flex; gap: 28px; flex-wrap: wrap; }
+#helpOverlay .helpCols > div { flex: 1; min-width: 260px; }
+#helpOverlay .helpHead { font-size: 11px; letter-spacing: .1em; color: var(--accent);
+  margin: 10px 0 6px; }
+#helpOverlay .helpRow { font-size: 12.5px; color: var(--text); line-height: 1.7; }
+#helpOverlay .helpRow b { color: var(--accent); font-weight: 600; }
+#titlebar #btnHelp { font-weight: 600; }

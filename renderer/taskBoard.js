@@ -96,7 +96,12 @@
     const name = await ApexPrompt('route name:', chips.join('-').toLowerCase().slice(0, 60));
     if (name) ApexBus.post('taskRouteSave', { name, steps: chips.slice() });
   };
+  // Click-economy: the form remembers the last task's repo + route, and the
+  // repo prefills from the focused chat's cwd — the common case is title → CREATE.
+  const readLast = () => { try { return JSON.parse(localStorage.getItem('apex.task.last')) || {}; } catch { return {}; } };
   form.querySelector('.tkCreate').onclick = () => {
+    try { localStorage.setItem('apex.task.last', JSON.stringify({ cwd: cwdIn.value, route: chips.slice() })); }
+    catch { /* remembering is best-effort */ }
     ApexBus.post('taskCreate', {
       title: titleIn.value, cwd: cwdIn.value, route: chips.slice(),
       auto: autoIn.checked, start: true,
@@ -106,7 +111,17 @@
   form.querySelector('.tkCancel').onclick = () => { form.hidden = true; };
   newBtn.onclick = () => {
     form.hidden = !form.hidden;
-    if (!form.hidden) { fillSelects(); titleIn.focus(); }
+    if (!form.hidden) {
+      fillSelects();
+      const last = readLast();
+      if (!cwdIn.value)
+        cwdIn.value = (window.ApexChat && ApexChat.activeCwd()) || last.cwd || '';
+      if (!chips.length && Array.isArray(last.route) && last.route.length) {
+        chips = last.route.filter((p) => typeof p === 'string').slice(0, 8);
+        renderChips();
+      }
+      titleIn.focus();
+    }
   };
 
   // ---------- task cards ----------

@@ -1455,6 +1455,8 @@ window.ApexChat = (function () {
   return { openRailMenu, scheduleHide, hideRailMenu,
            showDefaults: (persona) => { if (cfgShow) cfgShow(persona); },
            newSeat: (persona) => ApexBus.post('seatCreate', { persona }),
+           // the focused chat's repo — form prefills (the task board) read this
+           activeCwd: () => { const c = chats.get(active); return (c && c.cwd) || ''; },
            // task board hooks: chain chip on the tab + focus a step's seat
            setSeatBadge: (id, text) => {
              const c = chats.get(id);

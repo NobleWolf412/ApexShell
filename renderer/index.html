@@ -24,6 +24,7 @@
   <span class="brand">APEX</span>
   <div id="caption">
     <button id="codeBadge" type="button" hidden></button>
+    <button id="btnHelp" title="Gestures &amp; shortcuts">?</button>
     <button id="btnMenu" title="Menu" aria-haspopup="menu" aria-expanded="false">&#9776;</button>
     <button id="btnMin" title="Minimize">&#x2500;</button>
     <button id="btnMax" title="Maximize">&#x25A1;</button>
@@ -60,6 +61,37 @@
 <div id="backgroundPanel"></div>
 <div id="toast"></div>
 
+<!-- gesture & shortcut cheat-sheet (the ? button; Esc or click-away closes) -->
+<div id="helpOverlay" hidden>
+  <div class="helpCard">
+    <div class="helpTitle">GESTURES &amp; SHORTCUTS</div>
+    <div class="helpCols">
+      <div>
+        <div class="helpHead">AI rail (right edge)</div>
+        <div class="helpRow"><b>hover</b> a seat button &#8212; its menu (chats, history, workspaces)</div>
+        <div class="helpRow"><b>double-click</b> &#8212; new chat in the default workspace</div>
+        <div class="helpRow"><b>right-click</b> &#8212; that persona's launch defaults</div>
+        <div class="helpRow"><b>drag the rail</b> &#8212; open the bar (defaults + usage)</div>
+        <div class="helpHead">Panes (left tabs + top bar)</div>
+        <div class="helpRow"><b>click</b> a tab &#8212; toggle it open at quarter</div>
+        <div class="helpRow"><b>drag</b> a tab &#8212; pull to quarter or full (full covers the other side)</div>
+        <div class="helpRow"><b>click a tracker chip</b> (top bar) &#8212; jump to that tracker</div>
+      </div>
+      <div>
+        <div class="helpHead">Chats</div>
+        <div class="helpRow"><b>dials above the input</b> &#8212; model / effort / permissions, live</div>
+        <div class="helpRow"><b>Delegate &#8594;</b> &#8212; hand this chat's work to another persona</div>
+        <div class="helpRow"><b>click a file path</b> &#8212; renders in the VIEWER</div>
+        <div class="helpHead">Keyboard</div>
+        <div class="helpRow"><b>Ctrl+1&#8230;5</b> &#8212; toggle the dock tabs</div>
+        <div class="helpRow"><b>Ctrl+T</b> &#8212; new blank chat</div>
+        <div class="helpRow"><b>Esc</b> &#8212; collapse every pane</div>
+        <div class="helpRow"><b>Ctrl+scroll / Ctrl+&#177; / Ctrl+0</b> &#8212; zoom</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- the stage -->
 <div class="stage">
   <div class="stageBackground" aria-hidden="true"></div>
@@ -72,7 +104,9 @@
   <div class="sidePane dockPane" id="dock-viewer" data-tab="viewer" data-order="10">
     <div class="paneBody viewerPane">
       <div class="vwHead"><span class="vwName">nothing shown yet</span>
+        <button class="vwPin" title="Pin this view — other seats' artifacts stop replacing it (they still queue in the strip below)" hidden>&#9737;</button>
         <button class="vwOpen" title="Open with the system app">&#8599;</button></div>
+      <div class="vwHist" hidden></div>
       <div class="vwBody"><div class="paneNote">The seats' show-and-tell surface.
         Three ways things land here:<br><br>
         &#8226; a chat <b>writes or edits a file</b> &#8212; it renders on its own<br>
