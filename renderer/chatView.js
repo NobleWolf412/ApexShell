@@ -998,16 +998,24 @@ window.ApexChat = (function () {
     const sel = c.wrap.querySelector('.mode');
     if (sel) sel.value = m.current;        // the dial tells the truth while we ask
     if (c.busy) {
-      ApexToast('seat is mid-turn — let it finish, then switch to bypass');
+      ApexToast('seat is mid-turn — let it finish, then change the permission mode');
       return;
     }
-    const ok = window.confirm(
-      'Bypass can only be set when a seat starts — the Claude CLI refuses it mid-session.\n\n' +
-      'Restart this seat in BYPASS? Every tool call runs with no prompt, including ' +
-      'destructive ones.\n\nThe conversation resumes where it left off; nothing is lost.');
-    if (!ok) return;
-    ApexToast('restarting seat in bypass — history carries over');
-    ApexBus.post('seatRelaunch', { id: c.id, permissions: 'bypassPermissions' });
+    const mode = m.mode;
+    // Two triggers reach here: bypass (launch-only, DANGEROUS — keep the hard
+    // confirm) and a codex mode change (no live wire — a benign seamless
+    // restart like the effort dial). Use m.mode, never a hardcoded bypass.
+    if (mode === 'bypassPermissions') {
+      const ok = window.confirm(
+        'Bypass can only be set when a seat starts — the CLI refuses it mid-session.\n\n' +
+        'Restart this seat in BYPASS? Every tool call runs with no prompt, including ' +
+        'destructive ones.\n\nThe conversation resumes where it left off; nothing is lost.');
+      if (!ok) return;
+      ApexToast('restarting seat in bypass — history carries over');
+    } else {
+      ApexToast('restarting seat to apply ' + mode + ' — history carries over');
+    }
+    ApexBus.post('seatRelaunch', { id: c.id, permissions: mode });
   });
   ApexBus.on('seatModel', (m) => {         // engine echo — the CLI's word, not ours
     const c = chats.get(m.id);

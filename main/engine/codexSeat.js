@@ -354,18 +354,22 @@ function startCodexSeat({ cwd, log, onEvent, onExit, resume, effort, permissionM
   const dispose = () => {
     disposed = true;
     try { child.stdin.end(); } catch { /* gone */ }
-    // shell:true makes `child` the cmd shim — kill() alone left the real codex
-    // process running underneath (same shape as the Claude lane's ✕ ghost,
-    // 2026-07-14). Take the tree.
-    if (process.platform === 'win32' && child.pid &&
-        child.exitCode === null && !child.signalCode) {
-      try {
-        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'],
-              { windowsHide: true, stdio: 'ignore' }).unref();
-      } catch { /* gone */ }
-    } else {
-      try { child.kill(); } catch { /* gone */ }
-    }
+    // Give an in-flight JSON-RPC teardown the same 1500ms clean-exit window the
+    // Claude lane grants (structural audit D2, 2026-07-17) — killing instantly
+    // truncated it. shell:true makes `child` the cmd shim, so kill() alone left
+    // the real codex process running (the ✕-ghost shape, 2026-07-14): take the
+    // TREE as the backstop.
+    setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode) return;   // already exited clean
+      if (process.platform === 'win32' && child.pid) {
+        try {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'],
+                { windowsHide: true, stdio: 'ignore' }).unref();
+        } catch { /* gone */ }
+      } else {
+        try { child.kill(); } catch { /* gone */ }
+      }
+    }, 1500);
   };
 
   return { send, interrupt, respondPermission, replay, setModel, dispose };

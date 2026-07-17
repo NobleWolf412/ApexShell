@@ -29,8 +29,9 @@
 .led.good     .dot { background:var(--good);     box-shadow:0 0 7px var(--good); }
 .led.warning  .dot { background:var(--warning);  box-shadow:0 0 7px var(--warning); }
 .led.critical .dot { background:var(--critical); box-shadow:0 0 7px var(--critical); }
+.led.idle     .dot { background:var(--dim); }   /* nothing to report yet — deliberate neutral, no glow */
 .led.good .ic { color:var(--good); } .led.warning .ic { color:var(--warning); }
-.led.critical .ic { color:var(--critical); }
+.led.critical .ic { color:var(--critical); } .led.idle .ic { color:var(--dim); }
 
 .gauge { display:flex; flex-direction:column; align-items:center; }
 .gauge svg { width:150px; height:96px; overflow:visible; }

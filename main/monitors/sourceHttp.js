@@ -42,6 +42,29 @@ function postJson(url, obj, timeoutMs = 8000) {
 
 const mem = new Map();   // paneId -> { lastSeq, busy, timer, stopped }
 
+// This source forwards a REMOTE endpoint's JSON into the widget bind layer.
+// Coerce each bound field to the type its widget kind expects, so a malformed
+// or hostile endpoint can't hand a gauge a string or a list a scalar (the
+// renderer guards too, but the source owns the trust boundary). Unbound fields
+// pass through untouched — the renderer only reads bound ones. (Audit F4.)
+const LED_STATES = new Set(['good', 'warning', 'critical', 'idle']);
+function coerceByKind(pane, data) {
+  const kinds = {};
+  for (const w of (pane.widgets || [])) if (w.bind) kinds[w.bind] = w.kind;
+  const out = {};
+  for (const [k, v] of Object.entries(data || {})) {
+    switch (kinds[k]) {
+      case 'gauge': out[k] = Number.isFinite(+v) ? +v : 0; break;
+      case 'led':   out[k] = LED_STATES.has(v) ? v : 'idle'; break;
+      case 'list':
+      case 'tiles': out[k] = Array.isArray(v) ? v : []; break;
+      case 'stat':  out[k] = (v == null || typeof v === 'object') ? '' : v; break;
+      default:      out[k] = v;   // unbound, or log/settings — not rendered by value
+    }
+  }
+  return out;
+}
+
 function start(pane, ctx) {
   const src = pane.source;
   const remote = src.pane || pane.id;
@@ -58,7 +81,7 @@ function start(pane, ctx) {
       schedule(false);
       return;
     }
-    ctx.emit(p.data);
+    ctx.emit(coerceByKind(pane, p.data));
     for (const entry of p.log || []) {
       if (entry.i > st.lastSeq) { st.lastSeq = entry.i; ctx.log(entry.line); }
     }

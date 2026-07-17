@@ -177,9 +177,14 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
       catch { log(`   (unparseable line ignored)`); }
     }
   });
+  // onExit fires at most once, and NOT after dispose — unifying the lane
+  // contract with codex (structural audit D1, 2026-07-17). Previously it fired
+  // unconditionally and leaned on the host's entry.closed to suppress the ghost
+  // `dead`; guarding here makes the seat own that, one contract across lanes.
+  let disposed = false;
   child.stderr.on('data', (c) => log(`stderr: ${c.toString('utf8').trim()}`));
-  child.on('exit', (code) => { log(`exit: ${code}`); onExit(code); });
-  child.on('error', (err) => { log(`spawn error: ${err.message}`); onExit(-1); });
+  child.on('exit', (code) => { log(`exit: ${code}`); if (!disposed) onExit(code); });
+  child.on('error', (err) => { log(`spawn error: ${err.message}`); if (!disposed) onExit(-1); });
 
   const write = (obj) => {
     const line = JSON.stringify(obj);
@@ -200,7 +205,10 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
      *  Bundle-verified shape: {type:'addRules', rules:[{toolName, ruleContent}],
      *  behavior:'allow'|'deny'|'ask',
      *  destination:'userSettings'|'projectSettings'|'localSettings'|'session'}. */
-    respondPermission(requestId, allow, input, updates) {
+    // Uniform lane signature (requestId, allow, input, updates, choice) —
+    // Claude uses the first four; `choice` is codex-only today but declared
+    // everywhere so a future "remember choice" has one convention (audit D4).
+    respondPermission(requestId, allow, input, updates, _choice) {
       const ok = { behavior: 'allow', updatedInput: input };
       if (allow && Array.isArray(updates) && updates.length) ok.updatedPermissions = updates;
       write({
@@ -255,6 +263,7 @@ function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissio
      *  survived, kept streaming through the inherited pipe (the ✕-during-load
      *  ghost's engine, 2026-07-14) and kept burning the in-flight turn. */
     dispose() {
+      disposed = true;
       try { child.stdin.end(); } catch { /* already gone */ }
       setTimeout(() => {
         if (child.exitCode !== null || child.signalCode) return;   // already exited clean

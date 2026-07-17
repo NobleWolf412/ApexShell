@@ -163,6 +163,10 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         if (record && !entry.local) record(entry.persona, m.sessionId, entry.title, entry.cwd);
       }
       if (m.type === 'permission') entry.permQueue.push(m);
+      // Lane events not special-cased above (e.g. localSeat's `localUsage`) are
+      // forwarded raw ON PURPOSE — app-side consumers own them (main/seats.js
+      // relays localUsage into the usage ledger; the renderer shows no context
+      // meter for local seats, chatView.js). Not drift — don't "route" them here.
       post({ type: 'seatEvt', id, m });
     };
     if (opts.launch && opts.launch.mode === 'pty') {
@@ -434,14 +438,20 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         // R26 — live permission-mode change on a running seat. Mode names are
         // an allowlist: this wire reaches the CLI's own control channel.
         const MODES = new Set(['manual', 'auto', 'acceptEdits', 'dontAsk', 'bypassPermissions']);
-        if (entry.local || entry.pty || !MODES.has(msg.mode) || !entry.seat.setPermissionMode) break;
-        // Bypass is LAUNCH-ONLY — the CLI refuses it mid-session unless the
-        // process started with --dangerously-skip-permissions (which we will
-        // never do: it would defeat `manual` for every seat). Asking anyway just
-        // earns a refusal, so route it to the restart path the effort dial
-        // already uses: same session resumed, nothing lost (J44).
-        if (msg.mode === 'bypassPermissions' && entry.mode !== 'bypassPermissions') {
-          post({ type: 'seatModeRelaunchNeeded', id: msg.id, mode: msg.mode, current: entry.mode });
+        if (entry.local || entry.pty || !MODES.has(msg.mode)) break;
+        // Two cases need a RESTART instead of a live switch, both routed to the
+        // path the effort dial uses (same session resumed, nothing lost, J44):
+        //   (a) bypassPermissions is LAUNCH-ONLY — the CLI refuses it mid-session
+        //       unless started with --dangerously-skip-permissions (never).
+        //   (b) codex has NO live mode wire (no setPermissionMode) but DOES
+        //       support every policy at launch (policyFor) — so a codex mode
+        //       change relaunches rather than silently dropping the dial
+        //       (structural audit C2, 2026-07-17).
+        const noLiveModeWire = !entry.seat.setPermissionMode;
+        const bypassNeedsLaunch = msg.mode === 'bypassPermissions' && entry.mode !== 'bypassPermissions';
+        if (noLiveModeWire || bypassNeedsLaunch) {
+          if (entry.mode !== msg.mode)   // a no-op change needs no restart
+            post({ type: 'seatModeRelaunchNeeded', id: msg.id, mode: msg.mode, current: entry.mode });
           break;
         }
         entry.modeWanted = msg.mode;          // provisional until the CLI answers

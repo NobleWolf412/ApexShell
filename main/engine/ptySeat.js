@@ -48,14 +48,28 @@ function startPtySeat({ command, args, cwd, cols, rows, log, onEvent, onExit }) 
     fileArgs = ['/c', command, ...(args || [])];
   }
   log(`pty spawn: ${file} ${fileArgs.join(' ')}  (cwd=${cwd}, ${cols || 120}x${rows || 30})`);
-  const p = pty.spawn(file, fileArgs, {
-    name: 'xterm-256color',
-    cols: cols || 120,
-    rows: rows || 30,
-    cwd,
-    env,
-    useConpty: true,
-  });
+  // node-pty throws SYNCHRONOUSLY on ConPTY / bad-cwd failure — unlike the
+  // async lanes (child.on('error')). Unwrapped, that unwinds into
+  // seatHost.create(), which has no catch. Fail like the pty-unavailable path:
+  // an async dead seat, never a thrown create. (Structural audit C1, 2026-07-17.)
+  let p;
+  try {
+    p = pty.spawn(file, fileArgs, {
+      name: 'xterm-256color',
+      cols: cols || 120,
+      rows: rows || 30,
+      cwd,
+      env,
+      useConpty: true,
+    });
+  } catch (e) {
+    log(`pty spawn failed: ${e.message}`);
+    setTimeout(() => {
+      onEvent({ type: 'ptyData', data: `\r\n  terminal failed to start: ${e.message}\r\n` });
+      onExit(-1);
+    }, 0);
+    return { write() {}, resize() {}, send() {}, respondPermission() {}, interrupt() {}, dispose() {} };
+  }
 
   // Tee the terminal byte stream to state/transcripts/ so downstream tools can
   // archive PTY sessions (agy et al. — whose native stores are unparseable)

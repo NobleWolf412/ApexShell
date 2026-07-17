@@ -6,7 +6,10 @@
 'use strict';
 window.ApexMonitors = (function () {
   const grids = [];
-  const ICONS = { good: '✓', warning: '!', critical: '✕' };
+  // 'idle' = a source with nothing to report yet (sourceMcp's cold-start / no
+  // focused project). Its glyph mirrors sourceMcp's own GLYPH.idle so the LED
+  // reads '·', not the '?' fallback. (Structural audit D5, 2026-07-17.)
+  const ICONS = { good: '✓', warning: '!', critical: '✕', idle: '·' };
   const angle = (v, max) => -110 + 220 * Math.min(1, Math.max(0, v / max));
   const pt = (deg) => {
     const r = (deg - 90) * Math.PI / 180;
@@ -139,7 +142,10 @@ window.ApexMonitors = (function () {
     } else if (cfg.kind === 'list') {
       const rows = el.querySelector('.rows');
       rows.textContent = '';
-      for (const r of v) {
+      // array-guard like tiles: a non-array bind (e.g. an http-json endpoint
+      // handing a scalar to a list widget) would otherwise throw and break the
+      // whole pane's update loop. (Structural audit C3, 2026-07-17.)
+      for (const r of (Array.isArray(v) ? v : [])) {
         const div = document.createElement('div');
         div.className = 'row';
         div.innerHTML = '<span></span><span></span>';

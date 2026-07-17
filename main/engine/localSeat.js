@@ -332,7 +332,7 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
       persist('user', text);
       run();
     },
-    respondPermission(requestId, allow) {
+    respondPermission(requestId, allow, _input, _updates, _choice) {   // uniform lane arity (audit D4)
       const p = pendingPerms.get(requestId);
       if (p) { pendingPerms.delete(requestId); p.resolve(!!allow); }
     },
