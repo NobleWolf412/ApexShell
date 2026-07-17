@@ -395,7 +395,7 @@ gate('delegate-from-chat: a live rail chat becomes step 1 and hands off on its p
   seats.entries.set('chat1', { id: 'chat1', persona: 'Architect', title: 'Architect — big design',
     cwd: repo, sessionId: 'sess-rail', pty: false, local: false });
   const before = seats.created.length;
-  bus.send('taskDelegateFromChat', { id: 'chat1', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat1', target: 'Auditor' });
   const t = bus.lastList()[0];
   assert.equal(t.status, 'running');
   assert.equal(t.auto, true);
@@ -423,7 +423,7 @@ gate('delegate-from-chat REUSES an existing live persona seat (no duplicate spaw
   seats.entries.set('chatA', { id: 'chatA', persona: 'Architect', title: 'Architect — plan',
     cwd: repo, sessionId: 'sess-A', pty: false, local: false });
   seats.live.add('chatA');
-  bus.send('taskDelegateFromChat', { id: 'chatA', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chatA', target: 'Auditor' });
   const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatA');
   turn('chatA', { status: 'done', summary: 'plan ready', artifacts: ['C:\\repo\\plan.md'] });
   // wrap-turn for chatA settles: released but still alive (fromRail step 0)
@@ -437,7 +437,7 @@ gate('delegate-from-chat REUSES an existing live persona seat (no duplicate spaw
 
   // Now: from the still-alive Auditor chat, delegate back to Architect.
   const beforeCreated = seats.created.length;
-  bus.send('taskDelegateFromChat', { id: auditorSeatId, target: 'Architect' });
+  tasks._test.taskDelegateFromChat({ id: auditorSeatId, target: 'Architect' });
   const t2 = bus.lastList().find((x) => x.id !== t1.id && x.steps[0] && x.steps[0].seatId === auditorSeatId);
   assert.ok(t2, 'a second task was created');
   turn(auditorSeatId, { status: 'done', summary: 'here it is again', artifacts: ['C:\\repo\\v2.md'] });
@@ -459,7 +459,7 @@ gate('delegate-from-chat complete: TARGET seat also stays alive (user keeps chat
   seats.entries.set('chat-tgt', { id: 'chat-tgt', persona: 'Architect', title: 'Architect — brief',
     cwd: repo, sessionId: 'sess-rail-tgt', pty: false, local: false });
   seats.live.add('chat-tgt');
-  bus.send('taskDelegateFromChat', { id: 'chat-tgt', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat-tgt', target: 'Auditor' });
   turn('chat-tgt', { status: 'done', summary: 'brief handed to auditor',
     artifacts: ['C:\\repo\\brief.md'] });
   seats.emit({ type: 'seatEvt', id: 'chat-tgt', m: { type: 'result', ok: true } });
@@ -494,7 +494,7 @@ gate('delegate-from-chat advance: rail seat wraps for memory but is NOT closed',
   seats.entries.set('chat5', { id: 'chat5', persona: 'Architect', title: 'Architect — outline',
     cwd: repo, sessionId: 'sess-rail-5', pty: false, local: false });
   seats.live.add('chat5');
-  bus.send('taskDelegateFromChat', { id: 'chat5', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat5', target: 'Auditor' });
   const beforeCloses = seats.commands.filter((c) => c.type === 'closeSeat' && c.id === 'chat5').length;
   turn('chat5', { status: 'done', summary: 'outline handed off',
     artifacts: ['C:\\repo\\outline.md'] });
@@ -511,7 +511,7 @@ gate('delegate-from-chat bounce: rail step 0 reuses the SAME live seat (no resum
   seats.entries.set('chat6', { id: 'chat6', persona: 'Coder', title: 'Coder — patch',
     cwd: repo, sessionId: 'sess-rail-6', pty: false, local: false });
   seats.live.add('chat6');
-  bus.send('taskDelegateFromChat', { id: 'chat6', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat6', target: 'Auditor' });
   turn('chat6', { status: 'done', summary: 'patch ready', artifacts: ['C:\\repo\\p.js'] });
   seats.emit({ type: 'seatEvt', id: 'chat6', m: { type: 'result', ok: true } });    // wrap settles
   const auditorSeatId = seats.created[seats.created.length - 1].id;
@@ -531,7 +531,7 @@ gate('delegate-from-chat repair: no-packet re-asks the SAME rail seat (no relaun
   seats.entries.set('chat3', { id: 'chat3', persona: 'Architect', title: 'Architect — sketch',
     cwd: repo, sessionId: 'sess-rail-3', pty: false, local: false });
   const beforeCreated = seats.created.length;
-  bus.send('taskDelegateFromChat', { id: 'chat3', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat3', target: 'Auditor' });
   // first turn ends with no packet → one quiet re-ask into chat3
   turn('chat3');
   let t = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chat3');
@@ -551,7 +551,7 @@ gate('delegate-from-chat retry: after two misses, Retry re-asks the same rail se
   seats.entries.set('chat4', { id: 'chat4', persona: 'Architect', title: 'Architect — plan',
     cwd: repo, sessionId: 'sess-rail-4', pty: false, local: false });
   const beforeCreated = seats.created.length;
-  bus.send('taskDelegateFromChat', { id: 'chat4', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chat4', target: 'Auditor' });
   turn('chat4');                                                 // miss #1 → repair
   turn('chat4');                                                 // miss #2 → attention: no-packet
   let t = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chat4');
@@ -571,13 +571,13 @@ gate('delegate-from-chat retry: after two misses, Retry re-asks the same rail se
 
 gate('delegate-from-chat guards: unknown target, non-chat seats, already-chained chats', () => {
   const before = bus.lastList().length;
-  bus.send('taskDelegateFromChat', { id: 'chat1', target: 'Auditor' });   // chat1 now bound (wrapping)
+  tasks._test.taskDelegateFromChat({ id: 'chat1', target: 'Auditor' });   // chat1 now bound (wrapping)
   assert.ok(bus.toasts().some((x) => /already part of a task/.test(x)));
   seats.entries.set('term1', { id: 'term1', persona: 'cmd', pty: true, cwd: repo });
-  bus.send('taskDelegateFromChat', { id: 'term1', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'term1', target: 'Auditor' });
   assert.ok(bus.toasts().some((x) => /only persona/.test(x)));
   seats.entries.set('chat2', { id: 'chat2', persona: 'Scribe', cwd: repo, sessionId: 's2' });
-  bus.send('taskDelegateFromChat', { id: 'chat2', target: 'Nobody' });
+  tasks._test.taskDelegateFromChat({ id: 'chat2', target: 'Nobody' });
   assert.ok(bus.toasts().some((x) => /unknown persona/.test(x)));
   assert.equal(bus.lastList().length, before, 'no task created by refused delegations');
 });
@@ -603,7 +603,7 @@ gate('bounce fallback: user closed the rail chat → resume-launch instead of sa
   seats.entries.set('chatFB', { id: 'chatFB', persona: 'Coder', title: 'Coder — fb',
     cwd: repo, sessionId: 'sess-fb', pty: false, local: false });
   seats.live.add('chatFB');
-  bus.send('taskDelegateFromChat', { id: 'chatFB', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chatFB', target: 'Auditor' });
   const tId = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatFB').id;
   turn('chatFB', { status: 'done', summary: 'work done', artifacts: ['C:\\repo\\w.js'] });
   seats.emit({ type: 'seatEvt', id: 'chatFB', m: { type: 'result', ok: true } });   // wrap settles
@@ -638,8 +638,8 @@ gate('reuse atomicity: two concurrent delegations to the same persona — only O
   seats.entries.set('claimant2', { id: 'claimant2', persona: 'Coder', title: 'Coder — c2',
     cwd: isoRepo, sessionId: 'sess-c2', pty: false, local: false });
   seats.live.add('claimant2');
-  bus.send('taskDelegateFromChat', { id: 'claimant1', target: 'Architect' });
-  bus.send('taskDelegateFromChat', { id: 'claimant2', target: 'Architect' });
+  tasks._test.taskDelegateFromChat({ id: 'claimant1', target: 'Architect' });
+  tasks._test.taskDelegateFromChat({ id: 'claimant2', target: 'Architect' });
   const beforeCreated = seats.created.length;
   turn('claimant1', { status: 'done', summary: 'first done' });          // advances → hijacks chatShared
   const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'claimant1');
@@ -690,7 +690,7 @@ const closeChat = (id) => { seats.entries.delete(id); seats.live.delete(id); sea
 gate('REPRO: closing a rail chat mid-delegate fails the step (no zombie) — task shows a clear state', () => {
   seats.entries.set('zc', { id: 'zc', persona: 'Architect', title: 'Architect — wip', cwd: repo, sessionId: 'sz' });
   seats.live.add('zc');
-  bus.send('taskDelegateFromChat', { id: 'zc', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'zc', target: 'Auditor' });
   let t = bus.lastList()[0];
   assert.equal(t.steps[0].status, 'running');           // source is step 0, running
   closeChat('zc');                                       // user closes the chat before it hands off
@@ -704,7 +704,7 @@ gate('REPRO: delegate-from-chat where the source never emits a packet stalls (do
   seats.entries.set('np', { id: 'np', persona: 'Architect', title: 'Architect — chatty', cwd: repo, sessionId: 'snp' });
   seats.live.add('np');
   const before = seats.created.length;
-  bus.send('taskDelegateFromChat', { id: 'np', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'np', target: 'Auditor' });
   const id = bus.lastList()[0].id;
   turn('np');                                            // result, no apex-handoff block → repair re-ask
   turn('np');                                            // second miss → loud gate
@@ -816,7 +816,7 @@ gate('released rail chat keeps updating the SAME list — no fork after route en
   seats.emit({ type: 'seatEvt', id: 'chatT', m: { type: 'result', ok: true } });
   const boardCount = bus.lastList().length;
   // delegate: the card folds into the delegation task instead of duplicating
-  bus.send('taskDelegateFromChat', { id: 'chatT', target: 'Auditor' });
+  tasks._test.taskDelegateFromChat({ id: 'chatT', target: 'Auditor' });
   const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatT');
   assert.equal(bus.lastList().length, boardCount, 'card folded, not duplicated');
   assert.equal(t1.todos.length, 2, 'checklist carried into the delegation');

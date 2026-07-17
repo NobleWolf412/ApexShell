@@ -1154,7 +1154,11 @@ function register(deps) {
 
   unobserve = api.seats.observeSeats(onSeatMessage);
 
-  const verbs = { taskCreate, taskStart, taskDelegate, taskDelegateFromChat,
+  // taskDelegateFromChat is deliberately NOT a bus verb anymore: the chat's
+  // Hand off → button posts seatHandoff (instant, seats.js) since 15aed3b.
+  // The function + fromRail machinery stay for LEGACY persisted rail tasks
+  // and their drill coverage — reachable only via _test, never the wire.
+  const verbs = { taskCreate, taskStart, taskDelegate,
                   taskPause, taskResume, taskRetry, taskUpdate, taskDelete,
                   taskMarkDone, taskTodoToggle, taskRouteSave, taskRouteDelete };
   for (const [type, fn] of Object.entries(verbs))
@@ -1202,6 +1206,6 @@ function isChainSeat(id) { return bindings.has(id); }
 
 // exposed for the headless drill only
 const _test = { get tasks() { return tasks; }, byId, composeKickoff, onSeatMessage,
-                assertFromRailInvariant, findReuseSeat };
+                assertFromRailInvariant, findReuseSeat, taskDelegateFromChat };
 
 module.exports = { register, dispose, isChainSeat, _test };
