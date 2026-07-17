@@ -2,8 +2,10 @@
    title bar, ☰ menu, toast. Every color is a var — the theme panel owns them. */
 :root {
   --bg: #0d0b12; --surface: #151021; --edge: #241d33;
-  --text: #cfc9de; --dim: #5a5470; --faint: #4a4560;
-  --accent: #7c5cff; --good: #16a34a; --warning: #d97706; --critical: #dc2626;
+  /* text tiers raised for readability — prior --dim / --faint faded into --bg
+     on dark panes (the operator, 2026-07-17: "text fades into the background") */
+  --text: #ece7ff; --dim: #9c94b8; --faint: #6f6788;
+  --accent: #a08bff; --good: #22c55e; --warning: #f59e0b; --critical: #f87171;
   --bar-h: 40px; --title-h: 34px;
   --quarter: calc(0.26 * (100vh - var(--title-h)));
 }
@@ -169,6 +171,15 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .apxPrompt .apxPromptBtns button:hover { color: var(--text); border-color: var(--accent); }
 .apxPrompt .apxPromptBtns button.primary { color: var(--text);
   background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* wide variant: the handoff-summary box needs room for a multiline draft */
+.apxPrompt.apxPromptWide .apxPromptBox { min-width: 520px; max-width: 720px; }
+.apxPrompt .apxPromptSub { font-size: 11.5px; color: var(--dim); line-height: 1.5;
+  margin-top: -4px; }
+.apxPrompt .apxPromptArea { background: var(--bg); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 7px; font-size: 12.5px;
+  padding: 8px 10px; outline: none; font-family: inherit; resize: vertical;
+  min-height: 160px; }
+.apxPrompt .apxPromptArea:focus { border-color: var(--accent); }
 
 /* —— the ? cheat-sheet overlay —— */
 #helpOverlay { position: fixed; inset: 0; z-index: 1350; display: flex;
@@ -187,3 +198,38 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 #helpOverlay .helpRow { font-size: 12.5px; color: var(--text); line-height: 1.7; }
 #helpOverlay .helpRow b { color: var(--accent); font-weight: 600; }
 #titlebar #btnHelp { font-weight: 600; }
+
+/* —— Glow / pulse pass (the operator, 2026-07-17): lift kicker labels off the
+   background with a soft accent halo, breathe live status dots so state reads
+   at a glance. Uses only existing tokens — theme picker still owns every color.
+   Respects prefers-reduced-motion. */
+.wordmark, .paneTitle, .advBand .advHead, #themePanel h3, #backgroundPanel h3,
+#appMenu .menuKicker {
+  text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 32%, transparent),
+               0 0 14px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+/* the tracker chips already carry a static glow on their dots — this makes the
+   status-bearing ones breathe so the eye catches state changes without noise */
+.chip.good .dot, .chip.warning .dot, .chip.critical .dot {
+  animation: statusDotPulse 2.2s ease-in-out infinite;
+}
+.chip.good .dot     { --pulseC: var(--good); }
+.chip.warning .dot  { --pulseC: var(--warning); }
+.chip.critical .dot { --pulseC: var(--critical); animation-duration: 1.4s; }
+@keyframes statusDotPulse {
+  0%, 100% { box-shadow: 0 0 4px  color-mix(in srgb, var(--pulseC) 55%, transparent),
+                         0 0 8px  color-mix(in srgb, var(--pulseC) 30%, transparent); }
+  50%      { box-shadow: 0 0 10px color-mix(in srgb, var(--pulseC) 80%, transparent),
+                         0 0 20px color-mix(in srgb, var(--pulseC) 45%, transparent); }
+}
+/* chip labels + value: bring them out of --dim's fade on hover with a warmer
+   halo tied to the chip's status (or accent as the default) */
+.chip:hover b { text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent); }
+.chip.good b        { color: var(--text); }
+.chip.warning b     { color: var(--text); }
+.chip.critical b    { color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .chip.good .dot, .chip.warning .dot, .chip.critical .dot,
+  #caption #codeBadge, .dockTab .vDot { animation: none !important; }
+}
