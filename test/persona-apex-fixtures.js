@@ -47,13 +47,18 @@ function treeSnapshot(root) {
 }
 
 function assertLaunchOrder(personaId) {
-  const kickoff = creator.seatKickoff(personaId);
+  // ABSOLUTE-path kickoff (2026-07-17): the seat's cwd is the project repo, not
+  // the persona home, so the kickoff hands absolute paths to the workspace.
+  const root = 'C:/ws';
+  const home = `${root}/personas/${personaId}`;
+  const kickoff = creator.seatKickoff(personaId, root);
   const ordered = [
-    '1. foundation.md',
-    `2. personas/${personaId}/${personaId}.md (authoritative identity)`,
-    `3. personas/${personaId}/memory/MEMORY.md`,
-    `4. personas/${personaId}/scratchpad.md`,
-    `5. personas/${personaId}/collaboration.json if it exists`,
+    `${root}/foundation.md`,
+    `${home}/${personaId}.md`,
+    `${home}/scratchpad.md`,
+    `${home}/collaboration.json`,
+    `${home}/memory/projects/<project>/state.md`,
+    `${home}/memory/projects/<project>/MEMORY.md`,
   ];
   let cursor = -1;
   for (const marker of ordered) {

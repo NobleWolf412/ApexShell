@@ -975,6 +975,9 @@ window.ApexChat = (function () {
     }
   }
   ApexBus.on('seatNew', mountSeat);
+  // main asks us to bring a seat forward (a handoff that RESUMED a live chat
+  // instead of spawning a fresh one — focus it so the user sees the pickup)
+  ApexBus.on('seatReveal', (m) => { if (m && m.id && chats.has(m.id)) switchTo(m.id); });
   ApexBus.on('seatMode', (m) => {          // engine echo — the CLI's word, not ours
     const c = chats.get(m.id);
     if (!c || c.pty) return;
