@@ -14,6 +14,7 @@ const monitors = require('./monitors');
 const seats = require('./seats');
 const tasks = require('./tasks');
 const auditWatch = require('./audit');
+const skills = require('./skills');
 const terminal = require('./terminal');
 const artifacts = require('./artifacts');
 const extensions = require('./extensions');
@@ -115,6 +116,7 @@ function createWindow() {
   extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
   tasks.register();   // after extensions — routes validate against live presets
   auditWatch.register();   // live-auditor watch manager (opt-in per seat)
+  skills.register();       // Claude Code skills surface (list / create / promote recipes)
   terminal.register({ cwd: seats.defaultCwd });
   liveUpdate.register(() => win);
   liveUpdate.consumeRestore();

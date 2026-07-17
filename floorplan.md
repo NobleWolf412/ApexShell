@@ -30,6 +30,8 @@ ApexShell/
 │   │                      delegation chains (routes, handoff gates, bounce)
 │   ├── audit.js           the LIVE AUDITOR: opt-in per-seat shadow review —
 │   │                      watches a seat, runs a haiku disposable per turn
+│   ├── skills.js          Claude Code skills surface: scan/create SKILL.md
+│   │                      (personal + per-repo), promote persona recipes
 │   ├── engine/            THE ENGINE (Electron-free, harness-gated)
 │   │   ├── seatHost.js    seat roster/truth; create/close/wrap/permissions
 │   │   ├── claudeSeat.js  Claude stream-json lane (spawns `claude -p`)
@@ -60,6 +62,7 @@ ApexShell/
 │   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel
 │   ├── taskBoard.js       the TASKS dock pane (workflow-layer projection)
 │   ├── auditPane.js       the AUDIT dock pane (live-auditor projection)
+│   ├── skillPane.js       the SKILLS dock pane (author/list Claude skills)
 │   ├── termView.js        xterm mount for PTY seats
 │   ├── terminalDock.js    built-in TERMINAL dock projection
 │   ├── monitors.js        tracker grid renderer (widget kinds)

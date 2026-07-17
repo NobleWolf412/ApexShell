@@ -14,6 +14,7 @@
 <link rel="stylesheet" href="lib/xterm/xterm.css">
 <link rel="stylesheet" href="styles/taskboard.css">
 <link rel="stylesheet" href="styles/audit.css">
+<link rel="stylesheet" href="styles/skills.css">
 <link rel="stylesheet" href="styles/theme.css">
 </head>
 <body>
@@ -117,6 +118,17 @@
     </div>
     <div class="dockTab" data-tab="audit">AUDIT<span class="auDot" hidden></span></div>
   </div>
+  <!-- Claude Code skills: list, author, and promote persona recipes to skills. -->
+  <div class="sidePane dockPane" id="dock-skills" data-tab="skills" data-order="19">
+    <div class="paneBody skillsPane">
+      <div class="skHead"><span class="skTitle">SKILLS</span>
+        <span class="skNote">Claude Code skills your persona seats auto-discover</span></div>
+      <div class="skForm"></div>
+      <div class="skRecipes"></div>
+      <div class="skInstalled"></div>
+    </div>
+    <div class="dockTab" data-tab="skills">SKILLS</div>
+  </div>
 
   <div class="sidePane aiPane" id="aiPane">
     <div class="aiRail" id="aiRail">
@@ -168,6 +180,7 @@
 <script src="chatView.js"></script>
 <script src="taskBoard.js"></script>
 <script src="auditPane.js"></script>
+<script src="skillPane.js"></script>
 <script src="viewer.js"></script>
 <script src="usage.js"></script>
 <script src="shell.js"></script>
