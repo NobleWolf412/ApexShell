@@ -422,6 +422,27 @@ function register() {
       }
     } catch { /* no transcript — the brief says so and the target asks the user */ }
     const require_handoff = require('./engine/handoff');
+    // Handing BACK to a persona you're already talking to should CONTINUE that
+    // chat (its full context), not open a fresh amnesiac seat (the operator,
+    // 2026-07-17: "shouldn't it have gone back to the original architect").
+    // Reuse a live manual chat of the target in this cwd; exclude the source
+    // itself and chain workers (⛓ title) so a manual handoff can't hijack an
+    // auto-chain step. Most-recent match wins.
+    const reuse = host.list()
+      .filter((s) => s.id !== src.id && s.persona === target && !s.pty && !s.local &&
+        !String(s.title || '').includes('⛓') &&
+        (!s.cwd || path.resolve(s.cwd) === path.resolve(cwd)))
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    if (reuse) {
+      const brief = require_handoff.composeHandoffBrief({
+        sourcePersona: src.persona || 'a persona', cwd, recentText, seated: true });
+      seatCommand({ type: 'seatSend', id: reuse.id, text: brief });
+      bus.post('seatEvt', { id: reuse.id, m: { type: 'user', text: brief } });
+      bus.post('seatReveal', { id: reuse.id });
+      bus.post('toast', { text: 'Resumed your ' + target + ' chat — handed the ' +
+        (src.persona || 'chat') + ' work into it (full context kept).' });
+      return;
+    }
     const kickoff = require_handoff.composeHandoffBrief({
       sourcePersona: src.persona || 'a persona', targetKickoff: (presets.get(target) || {}).kickoff,
       cwd, recentText,

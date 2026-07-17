@@ -177,22 +177,30 @@ function createPackage(workspace, draft) {
   }
 }
 
-function seatKickoff(personaId) {
-  const base = `personas/${personaId}`;
+function seatKickoff(personaId, workspaceRoot) {
+  // ABSOLUTE paths: a persona's cwd is the PROJECT repo it works in, NOT its
+  // own home — so workspace-relative paths resolved against the wrong root and
+  // the seat burned ~20 tool calls hunting for its own files (observed live
+  // 2026-07-17, incl. searching the deleted apex-personas). Forward slashes:
+  // Node/tools accept them on Windows and they read cleanly.
+  const root = String(workspaceRoot || '.').replace(/\\/g, '/').replace(/\/+$/, '');
+  const home = `${root}/personas/${personaId}`;
   return [
     `[seat-launch] You are being seated as the portable persona “${personaId}”.`,
-    'Load and follow these workspace-relative files in order:',
-    '1. foundation.md (note the TIERED memory rules — do NOT bulk-read memory)',
-    `2. ${base}/${personaId}.md (authoritative identity)`,
-    `3. ${base}/scratchpad.md`,
-    `4. ${base}/collaboration.json if it exists`,
-    'Then resolve your PROJECT from the repository you are working in, and read',
-    'ONLY these two (they are enough to resume — page in specific notes on demand):',
-    `  • ${base}/memory/projects/<project>/state.md   (working memory: where the work stands now)`,
-    `  • ${base}/memory/projects/<project>/MEMORY.md   (the index — one line per note)`,
-    'Do NOT read the whole memory tree; pull a note file only when the task reaches',
-    'it. If those files do not exist, the project is fresh. Never mix repos (foundation.md).',
-    'Provider, model, credentials, and live permissions come from Apex runtime settings, not the persona package.',
+    'Your persona files are at the ABSOLUTE paths below. Your working directory is',
+    'the PROJECT repo, NOT your persona home — do not look for these relative to cwd.',
+    'Load and follow, in order:',
+    `1. ${root}/foundation.md   (note the TIERED memory rules — do NOT bulk-read memory)`,
+    `2. ${home}/${personaId}.md   (authoritative identity)`,
+    `3. ${home}/scratchpad.md`,
+    `4. ${home}/collaboration.json   (if it exists)`,
+    'Then resolve your PROJECT (the repo you are working in — a lowercase-hyphenated',
+    'slug of its folder name) and read ONLY these two to resume (page in notes on demand):',
+    `  • ${home}/memory/projects/<project>/state.md   (working memory: where the work stands)`,
+    `  • ${home}/memory/projects/<project>/MEMORY.md   (the index — one line per note)`,
+    'Do NOT read the whole memory tree; pull a note file only when the task reaches it.',
+    'If those files do not exist, the project is fresh. Never mix repos (foundation.md).',
+    'Provider, model, credentials, and live permissions come from Apex runtime settings.',
     'Confirm you are seated in one short line, then wait for the user’s actual work.',
   ].join('\n');
 }
@@ -211,7 +219,7 @@ function listPresets(workspace) {
     presets.push({
       name: displayName,
       title: 'New chat — ' + displayName,
-      kickoff: seatKickoff(entry.name),
+      kickoff: seatKickoff(entry.name, root),
       cwd: root,
     });
   }

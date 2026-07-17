@@ -119,7 +119,7 @@ function contractText(canBounce) {
     '  "summary": "<what you did / concluded, for the next step>",',
     '  "artifacts": ["<absolute file paths the next step needs>"],',
     '  "plan": ["<optional: the task\'s phases A→Z, one item each — becomes its checklist>"],',
-    '  "planDone": [<optional: numbers of checklist items you completed this step — numbered against your "plan" array if you emit one, otherwise against the PLAN shown in your kickoff>],',
+    '  "planDone": [<REQUIRED when a PLAN was shown in your kickoff: the numbers of EVERY checklist item you finished this step — a done-but-unchecked item strands the board. Numbered against your "plan" if you emit one, otherwise against the kickoff PLAN>],',
     (canBounce ? '  "findings": "<for bounce: what must change and why>",' : null),
     '  "decision": "<for needs-decision: the question only the user can answer>" }',
     '```',
@@ -129,7 +129,9 @@ function contractText(canBounce) {
         'summary as notes). Bounces are budgeted; when the budget runs out the task escalates ' +
         'to the user. A verdict of "good enough to proceed, with notes" is status done. '
       : 'If this task has multiple phases, lay them out in "plan" so every later step and the ' +
-        'user can see and check off progress. ') +
+        'user can see and check off progress. When a PLAN is already shown in your kickoff, ' +
+        'you MUST list in "planDone" every item you finished — leaving a completed phase ' +
+        'unchecked strands it on the board. ') +
     '"needs-decision" pauses the chain for the user. Do not emit the block until you are finished.',
   ].filter((l) => l !== null).join('\n');
 }
@@ -138,7 +140,7 @@ function contractText(canBounce) {
 // a plain-text brief of the source's recent work — NO dependency on the source
 // emitting a machine packet (the fragile path that stalled). The recent output
 // is context, explicitly not instructions to obey.
-function composeHandoffBrief({ sourcePersona, targetKickoff, cwd, recentText }) {
+function composeHandoffBrief({ sourcePersona, targetKickoff, cwd, recentText, seated }) {
   const brief = [
     '<apex-handoff-brief>',
     'The user handed this work to you from the ' + (sourcePersona || 'previous') + ' persona.',
@@ -150,6 +152,10 @@ function composeHandoffBrief({ sourcePersona, targetKickoff, cwd, recentText }) 
     'Pick up from here. If you need their full reasoning or the exact goal, ask the user.',
     '</apex-handoff-brief>',
   ].join('\n');
+  // `seated`: the target seat is ALREADY open (a handoff BACK to a persona you
+  // were just talking to reuses its live chat) — don't re-seat it, just hand it
+  // the brief on top of the context it already holds.
+  if (seated) return brief;
   return '[seat-launch] ' + (targetKickoff ? targetKickoff + '\n\n' : '') + brief;
 }
 

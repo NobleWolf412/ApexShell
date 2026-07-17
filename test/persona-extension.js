@@ -1130,7 +1130,10 @@ function completeDisposableTest(bus, draft, disposableSeat) {
       assert.equal(presets[0].cwd, workspace);
       assert.match(presets[0].kickoff, /foundation\.md/);
       assert.match(presets[0].kickoff, /personas\/rowan\/rowan\.md/);
-      assert.match(presets[0].kickoff, /runtime settings, not the persona package/);
+      // the kickoff moved to ABSOLUTE persona paths (cwd = the project repo,
+      // not the persona home) — assert the new shape's essentials
+      assert.match(presets[0].kickoff, /Apex runtime settings\./);
+      assert.match(presets[0].kickoff, /ABSOLUTE paths/);
     });
 
     await gate('permanent creation never overwrites and rolls back invalid output', () => {
