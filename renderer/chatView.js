@@ -320,7 +320,14 @@ window.ApexChat = (function () {
     if (c.term) c.term.dispose();
     c.wrap.remove();
     chats.delete(id);
-    if (active === id) { active = null; const next = [...chats.keys()].pop(); if (next) switchTo(next); }
+    if (active === id) {
+      active = null;
+      const next = [...chats.keys()].pop();
+      if (next) switchTo(next);
+      // last chat closed → no project is focused; tell the MCP tracker so it
+      // stops showing the closed chat's repo (switchTo won't fire here)
+      else ApexBus.post('seatFocus', { cwd: '' });
+    }
     renderTabs();
     if (!chats.size) { area.hidden = true; stage.style.display = ''; }
   }

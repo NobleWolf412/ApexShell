@@ -76,7 +76,7 @@ function projectsInventory() {
 // ---- live health for the focused project (Claude Code's own view) ----
 function probeClaude(cwd) {
   return new Promise((resolve) => {
-    exec('claude mcp list', { cwd, timeout: 45000, windowsHide: true, maxBuffer: 1 << 20 }, (_err, stdout) => {
+    exec('claude mcp list', { cwd, timeout: 45000, windowsHide: true, maxBuffer: 1 << 20 }, (err, stdout) => {
       const map = {};
       for (const line of String(stdout || '').split(/\r?\n/)) {
         const i = line.indexOf(': '), j = line.lastIndexOf(' - ');
@@ -91,7 +91,10 @@ function probeClaude(cwd) {
         else continue;
         map[name] = { sev, transport: transportOf(detail) };
       }
-      resolve(map);
+      // an exec failure that parsed NOTHING is a real problem (claude off PATH,
+      // auth-broken, timeout) — surface it, don't render a false "0 active".
+      const failed = !!err && Object.keys(map).length === 0;
+      resolve({ map, failed, err: err ? (err.message || String(err)) : null });
     });
   });
 }
@@ -126,7 +129,10 @@ function buildAvailable(probe) {
 }
 
 // ---- source lifecycle ----
-let currentCwd = process.cwd();
+// '' = no chat focused yet. The Available inventory reads configs (cwd-free)
+// and always renders; Active needs a project, so with no focus it stays empty
+// with an honest note rather than probing the app's own launch directory.
+let currentCwd = '';
 let latestRefresh = null;     // always the current pane's refresh (survives reload)
 let focusBound = false;
 
@@ -137,35 +143,61 @@ function start(pane, ctx) {
   const refresh = async () => {
     if (inflight) return;
     inflight = true;
+    const probedCwd = currentCwd;   // remember what THIS pass reflects
     try {
-      const probe = await probeClaude(currentCwd);
-      const active = buildActive(probe, codexGlobal());
-      const available = buildAvailable(probe);
-      const worst = active.reduce((w, s) => (SEV_RANK[s.sev] > SEV_RANK[w] ? s.sev : w), 'good');
+      // Available is cwd-independent — always compute it. Active needs a focused
+      // project; probe only when we have one.
+      const probeRes = probedCwd ? await probeClaude(probedCwd) : { map: {}, failed: false };
+      const available = buildAvailable(probeRes.map);
       if (disposed) return;
-      ctx.emit({
-        status: active.length ? worst : 'idle',
-        activeText: active.length + ' active',
-        availText: available.length + ' available',
-        project: repoName(currentCwd),
-        active: active.map((s) => ({
-          name: s.name,
-          value: (GLYPH[s.sev] || '·') + ' ' + [...s.lanes].join('+') + ' · ' + s.transport,
-        })),
-        available: available.map((s) => ({ name: s.name, value: s.scope + ' · ' + s.transport })),
-      });
+      if (!probedCwd) {
+        ctx.emit({
+          status: 'idle', activeText: '—', availText: available.length + ' available',
+          project: '(no chat focused)',
+          active: [{ name: 'focus a chat', value: 'to see its project\'s live servers' }],
+          available: available.map((s) => ({ name: s.name, value: s.scope + ' · ' + s.transport })),
+        });
+      } else if (probeRes.failed) {
+        ctx.log('mcp: `claude mcp list` failed — ' + probeRes.err);
+        ctx.emit({
+          status: 'critical', activeText: 'probe failed', availText: available.length + ' available',
+          project: repoName(probedCwd),
+          active: [{ name: 'claude mcp list failed', value: probeRes.err || 'is the CLI on PATH & signed in?' }],
+          available: available.map((s) => ({ name: s.name, value: s.scope + ' · ' + s.transport })),
+        });
+      } else {
+        const active = buildActive(probeRes.map, codexGlobal());
+        const worst = active.reduce((w, s) => (SEV_RANK[s.sev] > SEV_RANK[w] ? s.sev : w), 'good');
+        ctx.emit({
+          status: active.length ? worst : 'idle',
+          activeText: active.length + ' active',
+          availText: available.length + ' available',
+          project: repoName(probedCwd),
+          active: active.map((s) => ({
+            name: s.name,
+            value: (GLYPH[s.sev] || '·') + ' ' + [...s.lanes].join('+') + ' · ' + s.transport,
+          })),
+          available: available.map((s) => ({ name: s.name, value: s.scope + ' · ' + s.transport })),
+        });
+      }
     } catch (e) { ctx.log('mcp source error: ' + e.message); }
-    finally { inflight = false; }
+    finally {
+      inflight = false;
+      // a focus that arrived mid-probe changed currentCwd — the pane still
+      // shows the OLD project. Re-run so it catches up (C12: trailing refresh).
+      if (!disposed && currentCwd !== probedCwd) refresh();
+    }
   };
 
   latestRefresh = refresh;
   // one focus listener for the life of the process (the bus has no off());
-  // it drives whichever pane is current via latestRefresh.
+  // it drives whichever pane is current via latestRefresh. Empty cwd is a real
+  // signal ("no chat focused" — last chat closed), not something to ignore.
   if (!focusBound) {
     focusBound = true;
     bus.on('seatFocus', (m) => {
       const cwd = m && typeof m.cwd === 'string' ? m.cwd : '';
-      if (cwd && cwd !== currentCwd) { currentCwd = cwd; if (latestRefresh) latestRefresh(); }
+      if (cwd !== currentCwd) { currentCwd = cwd; if (latestRefresh) latestRefresh(); }
     });
   }
 
