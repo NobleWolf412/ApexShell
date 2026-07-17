@@ -546,7 +546,11 @@ function dispose() {
   if (unobserve) unobserve();
 }
 
+// Is this seat currently running a chain step? (the live auditor suppresses
+// its own pass on chain seats — the chain has its own audit gate.)
+function isChainSeat(id) { return bindings.has(id); }
+
 // exposed for the headless drill only
 const _test = { get tasks() { return tasks; }, byId, composeKickoff, onSeatMessage };
 
-module.exports = { register, dispose, _test };
+module.exports = { register, dispose, isChainSeat, _test };

@@ -6,6 +6,8 @@
 // the watched persona's memory.
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const seats = require('./seats');
 const bus = require('./bus');
 const audit = require('./engine/audit');
@@ -13,8 +15,12 @@ const audit = require('./engine/audit');
 const DEBOUNCE_MS = 4000;      // let a burst of turns settle before spending a pass
 const MAX_TURNS = 6;           // rolling window
 const TURN_CAP = 8 * 1024;     // per-turn byte cap (keep the tail)
+const PERSONAS_WORKSPACE = path.join(__dirname, '..', 'state', 'extensions', 'personas', 'workspace.json');
 
-const watched = new Map();     // seatId -> { turns, curAssistant, timer, running, count }
+// session config (set from the AUDIT pane): auto-off ceiling + whose voice.
+const cfg = { autoOff: false, budget: 50000, borrow: 'Auditor' };
+
+const watched = new Map();     // seatId -> { turns, curAssistant, timer, running, count, estTokens }
 let unobserve = null;
 
 function register() {
@@ -24,10 +30,57 @@ function register() {
     if (m.on) startWatch(m.id); else stopWatch(m.id);
   });
   bus.on('auditOnce', (m) => { if (m && m.id) runAudit(m.id); });
+  bus.on('auditConfig', (m) => {
+    if (m) {
+      if (typeof m.autoOff === 'boolean') cfg.autoOff = m.autoOff;
+      if (Number.isFinite(m.budget) && m.budget > 0) cfg.budget = Math.round(m.budget);
+      if (Object.prototype.hasOwnProperty.call(m, 'borrow')) { cfg.borrow = m.borrow || null; briefCache.name = undefined; }
+    }
+    bus.post('auditConfig', { autoOff: cfg.autoOff, budget: cfg.budget, borrow: cfg.borrow });
+  });
   // a reloaded renderer rebuilds its view — tell it what's still watched
   bus.on('ready', () => {
-    for (const [id, w] of watched) bus.post('auditState', { id, on: true, count: w.count });
+    bus.post('auditConfig', { autoOff: cfg.autoOff, budget: cfg.budget, borrow: cfg.borrow });
+    for (const [id, w] of watched) bus.post('auditState', { id, on: true, count: w.count, estTokens: w.estTokens });
   });
+}
+
+// ---- borrow a persona's voice (identity only — never its memory) ----
+let briefCache = { name: undefined, text: null };
+function personaWorkspace() {
+  try {
+    const c = JSON.parse(fs.readFileSync(PERSONAS_WORKSPACE, 'utf8'));
+    if (c && typeof c.workspace === 'string' && fs.existsSync(c.workspace)) return c.workspace;
+  } catch { /* not configured */ }
+  return null;
+}
+function resolveBrief() {
+  if (!cfg.borrow) return null;
+  if (briefCache.name === cfg.borrow) return briefCache.text;
+  let text = null;
+  try {
+    const ws = personaWorkspace();
+    if (ws) {
+      const personasDir = path.join(ws, 'personas');
+      for (const d of fs.readdirSync(personasDir, { withFileTypes: true })) {
+        if (!d.isDirectory() || d.name.startsWith('.')) continue;
+        let bp;
+        try { bp = JSON.parse(fs.readFileSync(path.join(personasDir, d.name, 'blueprint.json'), 'utf8')); }
+        catch { continue; }
+        if (bp.display_name && bp.display_name.toLowerCase() === cfg.borrow.toLowerCase()) {
+          text = [bp.identity && bp.identity.response, bp.mission && bp.mission.response,
+                  bp.communication && bp.communication.response].filter(Boolean).join('\n\n') || null;
+          break;
+        }
+      }
+    }
+  } catch { text = null; }
+  briefCache = { name: cfg.borrow, text };
+  return text;
+}
+function isChainSeat(id) {
+  try { const tasks = require('./tasks'); return typeof tasks.isChainSeat === 'function' && tasks.isChainSeat(id); }
+  catch { return false; }
 }
 
 function startWatch(id) {
@@ -76,20 +129,38 @@ function scheduleAudit(id, w) {
 function runAudit(id) {
   const w = watched.get(id);
   if (!w || w.running || !w.turns.length) return;
+  // suppress on chain steps — the Task Board chain has its own audit gate, no
+  // point double-billing the same work.
+  if (isChainSeat(id)) {
+    bus.post('auditFindings', { id, findings: [], error: null, count: w.count,
+      estTokens: w.estTokens || 0, suppressed: true });
+    return;
+  }
   w.running = true;
   w.count++;
-  bus.post('auditRunning', { id, count: w.count });
+  const brief = resolveBrief();
+  const prompt = audit.auditPrompt(w.turns, brief);
+  // estimated spend for the ceiling (~4 chars/token in + a small reply)
+  w.estTokens = (w.estTokens || 0) + Math.ceil(prompt.length / 4) + 250;
+  bus.post('auditRunning', { id, count: w.count, estTokens: w.estTokens });
   let out = '';
   let controller = null;
   const finish = (findings, error) => {
     if (!w.running) return;
     w.running = false;
     try { if (controller) controller.close(); } catch { /* already closed */ }
-    bus.post('auditFindings', { id, findings: findings || [], error: error || null, count: w.count });
+    bus.post('auditFindings', { id, findings: findings || [], error: error || null,
+      count: w.count, estTokens: w.estTokens });
+    // ceiling: auto-stop this watch once it crosses the configured budget
+    if (cfg.autoOff && w.estTokens >= cfg.budget && watched.has(id)) {
+      stopWatch(id);
+      bus.post('toast', { text: 'Live audit auto-stopped — this seat hit the ~' +
+        cfg.budget.toLocaleString() + '-token ceiling.' });
+    }
   };
   try {
     controller = seats.startDisposable({
-      kickoff: audit.auditPrompt(w.turns),
+      kickoff: prompt,
       model: 'haiku',
       effort: 'low',
       onEvent: (ev) => {

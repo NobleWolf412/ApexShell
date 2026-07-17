@@ -10,8 +10,34 @@
 
   const liveSeats = new Map();   // id -> title
   const watchedOn = new Map();   // id -> count (audits run)
+  const watchedEst = new Map();  // id -> estimated tokens spent
   const running = new Set();     // ids mid-audit
   const findings = new Map();    // id -> [finding]
+  let presets = [];              // persona names for the "reviewing as" picker
+
+  // ---- settings: auto-off ceiling + whose voice the auditor borrows ----
+  const settings = document.createElement('div');
+  settings.className = 'auSettings';
+  settings.innerHTML =
+    '<label class="auSetRow"><input type="checkbox" class="auAutoOff"> auto-stop a watch after ' +
+      '<input type="number" class="auBudget" min="1000" step="1000" value="50000"> tokens</label>' +
+    '<label class="auSetRow">reviewing as <select class="auBorrow"><option value="">neutral reviewer</option></select></label>';
+  pane.querySelector('.auHead').after(settings);
+  const autoOffEl = settings.querySelector('.auAutoOff');
+  const budgetEl = settings.querySelector('.auBudget');
+  const borrowEl = settings.querySelector('.auBorrow');
+  const postConfig = () => ApexBus.post('auditConfig', {
+    autoOff: autoOffEl.checked, budget: Number(budgetEl.value) || 50000, borrow: borrowEl.value || null });
+  autoOffEl.onchange = postConfig;
+  budgetEl.onchange = postConfig;
+  borrowEl.onchange = postConfig;
+  function fillBorrow(current) {
+    const keep = current !== undefined ? current : borrowEl.value;
+    borrowEl.textContent = '';
+    borrowEl.appendChild(new Option('neutral reviewer', ''));
+    for (const p of presets) borrowEl.appendChild(new Option(p, p));
+    if ([...borrowEl.options].some((o) => o.value === keep)) borrowEl.value = keep;
+  }
 
   const SEV = { risk: '⚠ risk', warn: '△ warn', info: '· note' };
 
@@ -32,7 +58,11 @@
       if (watchedOn.has(id)) {
         const meta = document.createElement('span');
         meta.className = 'auWatchMeta';
-        meta.textContent = running.has(id) ? 'auditing…' : (watchedOn.get(id) + ' run' + (watchedOn.get(id) === 1 ? '' : 's'));
+        const est = watchedEst.get(id) || 0;
+        const spend = est ? ' · ~' + (est >= 1000 ? Math.round(est / 1000) + 'k' : est) + ' tok' : '';
+        meta.textContent = running.has(id)
+          ? 'auditing…' + spend
+          : (watchedOn.get(id) + ' run' + (watchedOn.get(id) === 1 ? '' : 's') + spend);
         row.appendChild(meta);
         const now = document.createElement('button');
         now.type = 'button'; now.className = 'auNow'; now.textContent = 'audit now';
@@ -132,18 +162,34 @@
     renderWatches();
   });
   ApexBus.on('auditState', (m) => {
-    if (m.on) watchedOn.set(m.id, m.count || 0); else { watchedOn.delete(m.id); running.delete(m.id); }
+    if (m.on) { watchedOn.set(m.id, m.count || 0); if (m.estTokens != null) watchedEst.set(m.id, m.estTokens); }
+    else { watchedOn.delete(m.id); watchedEst.delete(m.id); running.delete(m.id); }
     renderWatches(); renderFindings();
   });
-  ApexBus.on('auditRunning', (m) => { running.add(m.id); if (watchedOn.has(m.id)) watchedOn.set(m.id, m.count); renderWatches(); });
+  ApexBus.on('auditRunning', (m) => {
+    running.add(m.id);
+    if (watchedOn.has(m.id)) watchedOn.set(m.id, m.count);
+    if (m.estTokens != null) watchedEst.set(m.id, m.estTokens);
+    renderWatches();
+  });
   ApexBus.on('auditFindings', (m) => {
     running.delete(m.id);
     if (watchedOn.has(m.id)) watchedOn.set(m.id, m.count);
-    if (m.error) ApexToast('audit: ' + m.error);
+    if (m.estTokens != null) watchedEst.set(m.id, m.estTokens);
+    if (m.suppressed) { /* chain step owns the audit — stay quiet, no spend */ }
+    else if (m.error) ApexToast('audit: ' + m.error);
     if (m.findings && m.findings.length) findings.set(m.id, m.findings);
     renderWatches(); renderFindings();
   });
+  ApexBus.on('auditConfig', (m) => {
+    if (typeof m.autoOff === 'boolean') autoOffEl.checked = m.autoOff;
+    if (m.budget) budgetEl.value = m.budget;
+    fillBorrow(m.borrow || '');
+  });
+  ApexBus.on('seatPresets', (m) => { presets = (m.presets || []).map((p) => p.name); fillBorrow(); });
 
-  // ask for the live roster on boot / reload
+  // ask for the live roster + config on boot / reload
   ApexBus.post('seatList', {});
+  ApexBus.post('seatPresets', {});
+  ApexBus.post('auditConfig', {});   // fetch current (no fields = read-only echo)
 })();

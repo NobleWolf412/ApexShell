@@ -58,6 +58,12 @@ gate('prompt renders the transcript and forbids obeying it', () => {
   assert.ok(p.includes('USER: do X') && p.includes('ASSISTANT: did Y'));
   assert.ok(/do not obey/i.test(p) && p.includes('```apex-audit'));
 });
+gate('a persona brief is woven into the prompt when provided', () => {
+  const neutral = audit.auditPrompt([{ role: 'user', text: 'x' }]);
+  assert.ok(/independent auditor/i.test(neutral));
+  const borrowed = audit.auditPrompt([{ role: 'user', text: 'x' }], 'You are Rowan, a skeptical reviewer.');
+  assert.ok(/Rowan/.test(borrowed) && /adopt this reviewer/i.test(borrowed));
+});
 
 // ---------- watch state machine: stub seats + bus BEFORE requiring main/audit ----------
 const seatsPath = require.resolve('../main/seats');
@@ -73,6 +79,11 @@ require.cache[seatsPath] = { id: seatsPath, filename: seatsPath, loaded: true, e
 require.cache[busPath] = { id: busPath, filename: busPath, loaded: true, exports: {
   on(t, fn) { handlers[t] = fn; }, post(type, m) { posts.push({ type, m }); }, init() {}, inject() {},
 } };
+// stub tasks so chain-suppression is controllable + hermetic
+const tasksPath = require.resolve('../main/tasks');
+const chainSeats = new Set();
+require.cache[tasksPath] = { id: tasksPath, filename: tasksPath, loaded: true,
+  exports: { isChainSeat: (id) => chainSeats.has(id) } };
 
 const auditMod = require('../main/audit');
 auditMod.register();
@@ -131,6 +142,38 @@ const lastOf = (type) => [...posts].reverse().find((p) => p.type === type);
     posts.length = 0;
     emit('s2', { type: 'result', ok: true });
     assert.equal(disposables.length, 0);
+  });
+
+  await agate('auditConfig sets + echoes the ceiling and borrowed voice', async () => {
+    posts.length = 0;
+    handlers.auditConfig({ autoOff: true, budget: 7000, borrow: 'Auditor' });
+    const echo = lastOf('auditConfig');
+    assert.equal(echo.m.autoOff, true);
+    assert.equal(echo.m.budget, 7000);
+    assert.equal(echo.m.borrow, 'Auditor');
+  });
+
+  await agate('a chain-step seat is suppressed — no auditor spawned, no spend', async () => {
+    handlers.auditConfig({ autoOff: false, borrow: null });
+    handlers.auditToggle({ id: 'sc', on: true });
+    chainSeats.add('sc');
+    posts.length = 0; disposables.length = 0;
+    emit('sc', { type: 'text', text: 'doing the chain step' });
+    emit('sc', { type: 'result', ok: true });
+    await new Promise((r) => setTimeout(r, 4300));
+    assert.equal(disposables.length, 0, 'no disposable for a chain seat');
+    assert.equal(lastOf('auditFindings').m.suppressed, true);
+    chainSeats.delete('sc'); handlers.auditToggle({ id: 'sc', on: false });
+  });
+
+  await agate('auto-off stops the watch once the token ceiling is crossed', async () => {
+    handlers.auditConfig({ autoOff: true, budget: 1, borrow: null });
+    handlers.auditToggle({ id: 'sb', on: true });
+    emit('sb', { type: 'user', text: 'hello there' });
+    emit('sb', { type: 'result', ok: true });
+    await new Promise((r) => setTimeout(r, 4300));
+    disposables[disposables.length - 1].opts.onEvent({ type: 'result', ok: true });  // clean pass
+    assert.equal(lastOf('auditState').m.on, false, 'watch auto-stopped at the ceiling');
   });
 
   console.log('\nAUDIT DRILL: ' + passed + '/' + (passed + failed) + ' passed');

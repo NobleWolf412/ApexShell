@@ -11,6 +11,16 @@
 .dockTab .auDot.risk { background: var(--critical, var(--warning)); }
 .dockTab .auDot[hidden] { display: none; }
 
+/* settings: ceiling + borrowed voice */
+.auSettings { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  border: 1px solid var(--edge); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, var(--accent) 4%); }
+.auSetRow { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--dim); flex-wrap: wrap; }
+.auSetRow input[type="number"] { width: 72px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 2px 5px; font-size: 10.5px; }
+.auSetRow select { background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 2px 6px; font-size: 10.5px; }
+.auSetRow input[type="checkbox"] { accent-color: var(--accent); }
+
 /* watch toggles */
 .auWatch { display: flex; flex-direction: column; gap: 6px; }
 .auWatchRow { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
