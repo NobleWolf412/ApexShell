@@ -14,6 +14,7 @@
   let routes = [];
   let personas = [];            // registered preset names (seatPresets push)
   let openHistories = new Set();   // task ids with the history fold open
+  let collapsedRepos = new Set();  // repo groups folded away
 
   // ---------- new-task form ----------
   let chips = [];               // the persona sequence being built
@@ -250,7 +251,12 @@
       b.onclick = fn;
       btns.appendChild(b);
     };
-    if (t.status !== 'done') {
+    // Route already finished but held open by unchecked todos (advance()'s
+    // 'complete' attention gate). currentStep is past the last step, so
+    // Delegate/Retry would silently no-op inside main. Show the real move
+    // instead: check the boxes or Mark done to force-settle.
+    const routeOver = t.currentStep >= t.steps.length;
+    if (t.status !== 'done' && !routeOver) {
       if (cur && cur.status === 'pending')
         mk('▶ Start', 'launch this step\'s persona seat',
           () => ApexBus.post('taskStart', { id: t.id }), 'tkGo');
@@ -268,6 +274,9 @@
           () => ApexBus.post('taskPause', { id: t.id }));
       mk('Retry', 'relaunch the current step in a fresh seat',
         () => ApexBus.post('taskRetry', { id: t.id }));
+    } else if (routeOver && t.status !== 'done') {
+      mk('✓ Mark done', 'the route is finished — settle the task even with todos unchecked',
+        () => ApexBus.post('taskMarkDone', { id: t.id }), 'tkGo');
     }
     if (cur && cur.seatId != null && window.ApexChat && ApexChat.hasSeat(cur.seatId))
       mk('Open seat', 'jump to this step\'s chat', () => ApexChat.focusSeat(cur.seatId));
@@ -310,25 +319,31 @@
     if (!tasks.length) {
       const n = document.createElement('div');
       n.className = 'paneNote';
-      n.textContent = 'No tasks yet — NEW TASK starts one. A task follows a route of ' +
-        'personas (design → audit → code); each step runs in its own seat and hands ' +
-        'a packet to the next. For unattended auto-chains, give the personas ' +
-        'acceptEdits/dontAsk defaults so they never stall on a permission card.';
+      n.innerHTML = 'This board is for <b>planned, multi-step work</b> — a build or refactor that ' +
+        'moves through a route of personas with a checklist of phases. Press <b>NEW TASK</b> to ' +
+        'lay one out.<br><br><span class="tkNoteDim">To just pass one chat to another persona, ' +
+        'use <b>Hand off →</b> above the chat — it never touches this board.</span>';
       list.appendChild(n);
     }
-    // group by repo — multi-repo work is the point
+    // group by repo — multi-repo work is the point; groups collapse so a busy
+    // repo can be folded away while you work in another (the operator's ask)
     const groups = new Map();
     for (const t of tasks) {
       if (!groups.has(t.cwd)) groups.set(t.cwd, []);
       groups.get(t.cwd).push(t);
     }
     for (const [cwd, group] of groups) {
-      const h = document.createElement('div');
-      h.className = 'tkGroup';
-      h.textContent = (cwd.split(/[\\/]/).filter(Boolean).pop() || cwd);
-      h.title = cwd;
+      const collapsed = collapsedRepos.has(cwd);
+      const needs = group.filter((t) => t.status === 'needs-attention').length;
+      const h = document.createElement('button');
+      h.className = 'tkGroup' + (collapsed ? ' collapsed' : '');
+      h.title = cwd + ' — click to ' + (collapsed ? 'expand' : 'collapse');
+      h.textContent = (collapsed ? '▸ ' : '▾ ') +
+        (cwd.split(/[\\/]/).filter(Boolean).pop() || cwd) +
+        '  (' + group.length + (needs ? ', ' + needs + ' need you' : '') + ')';
+      h.onclick = () => { if (collapsed) collapsedRepos.delete(cwd); else collapsedRepos.add(cwd); render(); };
       list.appendChild(h);
-      for (const t of group) list.appendChild(card(t));
+      if (!collapsed) for (const t of group) list.appendChild(card(t));
     }
     // attention count on the folder tab
     const needs = tasks.filter((t) => t.status === 'needs-attention').length;
@@ -353,12 +368,101 @@
   ApexBus.on('taskList', (m) => { tasks = m.tasks || []; render(); });
   ApexBus.on('taskRoutes', (m) => { routes = m.routes || []; if (!form.hidden) fillSelects(); });
   ApexBus.on('taskCwdPicked', (m) => { if (m.path) cwdIn.value = m.path; });
+
+  // Build a starter handoff summary from what the board already knows: the
+  // task title, checked/unchecked todos, artifacts + summary from any prior
+  // step's packet. The user rarely knows what to type here — this gives them
+  // a working draft they can edit or send as-is.
+  function generateHandoffTemplate(task) {
+    const step = task.steps[task.currentStep];
+    const lines = [step.persona + ' — wrap-up for "' + task.title + '":'];
+    const done = (task.todos || []).filter((t) => t.done);
+    const open = (task.todos || []).filter((t) => !t.done);
+    if (done.length) {
+      lines.push('', 'Completed:');
+      for (const t of done) lines.push('- ' + t.text);
+    }
+    if (open.length) {
+      lines.push('', 'Not done (for next step):');
+      for (const t of open) lines.push('- ' + t.text);
+    }
+    const artifacts = new Set();
+    for (const s of task.steps) {
+      if (s.packet && Array.isArray(s.packet.artifacts))
+        for (const a of s.packet.artifacts) artifacts.add(a);
+    }
+    if (artifacts.size) {
+      lines.push('', 'Artifacts:');
+      for (const a of artifacts) lines.push('- ' + a);
+    }
+    const prior = task.currentStep > 0 ? task.steps[task.currentStep - 1] : null;
+    if (prior && prior.packet && prior.packet.summary) {
+      lines.push('', 'Prior step (' + prior.persona + '):', prior.packet.summary);
+    }
+    return lines.join('\n');
+  }
+
+  // A textarea-based prompt with a Generate button that fills the box from
+  // task state. Same visual language as ApexPrompt but multiline, wider, and
+  // resolves the raw text (null on cancel). Singleton like ApexPrompt.
+  function handoffPrompt({ header, note, task }) {
+    return new Promise((resolve) => {
+      if (document.querySelector('.apxPrompt')) { resolve(null); return; }
+      const wrap = document.createElement('div');
+      wrap.className = 'apxPrompt apxPromptWide';
+      const box = document.createElement('div');
+      box.className = 'apxPromptBox';
+      const msg = document.createElement('div');
+      msg.className = 'apxPromptMsg';
+      msg.textContent = header;
+      const sub = document.createElement('div');
+      sub.className = 'apxPromptSub';
+      sub.textContent = note;
+      const ta = document.createElement('textarea');
+      ta.className = 'apxPromptArea';
+      ta.rows = 12;
+      ta.maxLength = 4000;
+      ta.placeholder = 'What did the seat do? What must the next step know?';
+      const btns = document.createElement('div');
+      btns.className = 'apxPromptBtns';
+      const gen = document.createElement('button');
+      gen.textContent = 'Generate from task';
+      gen.title = 'fill the box with a draft built from the task title, checked todos, and prior packets — you can edit it';
+      const ok = document.createElement('button');
+      ok.className = 'primary';
+      ok.textContent = 'Hand off';
+      const cancel = document.createElement('button');
+      cancel.textContent = 'Cancel';
+      const done = (v) => { wrap.remove(); resolve(v); };
+      gen.onclick = () => { ta.value = generateHandoffTemplate(task); ta.focus(); };
+      ok.onclick = () => done(ta.value);
+      cancel.onclick = () => done(null);
+      ta.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd+Enter sends; plain Enter inserts a newline (multiline field)
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(ta.value); }
+        else if (e.key === 'Escape') { e.stopPropagation(); done(null); }
+      });
+      wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) done(null); });
+      btns.append(gen, cancel, ok);
+      box.append(msg, sub, ta, btns);
+      wrap.appendChild(box);
+      document.body.appendChild(wrap);
+      ta.focus();
+    });
+  }
+
   // The typed-summary box — the TRUE last resort (main already tried the
-  // packet and asked the seat). The message says WHY it's being asked.
+  // packet and asked the seat). The message says WHY it's being asked, and
+  // Generate builds a starter draft so the operator isn't staring at empty.
   ApexBus.on('taskNeedSummary', async (m) => {
-    const s = await ApexPrompt(m.persona + ' can\'t supply a handoff packet — ' +
-      (m.reason || 'no packet available') +
-      '. Your summary below hands off in its place:');
+    const task = tasks.find((t) => t.id === m.id);
+    if (!task) return;
+    const s = await handoffPrompt({
+      header: m.persona + ' needs a handoff summary',
+      note: (m.reason || 'no packet available') +
+        '. Type what to hand to the next step, or click "Generate from task" for a starter draft.',
+      task,
+    });
     if (s && s.trim()) ApexBus.post('taskDelegate', { id: m.id, summary: s });
   });
   ApexBus.on('seatPresets', (m) => {

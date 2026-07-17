@@ -405,20 +405,20 @@ window.ApexChat = (function () {
     // away from the composer (accidental-click distance is the point)
     const ac = chats.get(active);
     if (ac) {
-      // Delegate → hand this chat's work to another persona: the chat becomes
-      // step 1 of a task, writes its handoff packet, and the target opens with
-      // it automatically — no pre-planned task, no copy/paste relay.
+      // Delegate → hand this chat's work to another persona: opens the target's
+      // seat NOW, seeded with this chat's recent output. Instant — no board
+      // task, no waiting on a machine packet. The original chat stays open.
       if (!ac.pty && !ac.local && !ac.dead && presetNames.length) {
         const db = document.createElement('button');
         db.id = 'delegateBtn';
         const rec = ac.persona && handoffMap[ac.persona];
-        db.textContent = rec ? 'Delegate → ' + rec : 'Delegate →';
+        db.textContent = rec ? 'Hand off → ' + rec : 'Hand off →';
         db.title = (rec
           ? rec + ' is the natural next persona — its collaboration contract accepts what ' +
             ac.persona + ' produces. Click to confirm or pick someone else. '
-          : 'hand this chat\'s work to another persona — ') +
-          'the chat wraps up a handoff packet and the next seat opens with it ' +
-          '(the chain shows on the TODO board)';
+          : 'hand this work to another persona — ') +
+          'opens their chat right now with a brief of what you did here; this chat stays ' +
+          'open for reference. (For a planned multi-step build, use the TODO board instead.)';
         // pulse when there is finished work sitting here: the chat has produced
         // something and is idle — the exact moment a handoff makes sense
         if (!ac.busy && ac.everSent && !ac.wrapping && !ac.wrapped && !ac.permQueue.length)
@@ -443,7 +443,7 @@ window.ApexChat = (function () {
     railMenu.textContent = '';
     const head = document.createElement('div');
     head.className = 'rmHead';
-    head.textContent = 'DELEGATE TO';
+    head.textContent = 'HAND OFF TO';
     railMenu.appendChild(head);
     const rec = c.persona && handoffMap[c.persona];
     let options = presetNames.filter((n) => n !== c.persona &&
@@ -457,7 +457,7 @@ window.ApexChat = (function () {
       if (name === rec) b.title = 'its collaboration contract accepts what this persona produces';
       b.onclick = () => {
         hideRailMenu();
-        ApexBus.post('taskDelegateFromChat', { id: c.id, target: name });
+        ApexBus.post('seatHandoff', { id: c.id, target: name });
       };
       railMenu.appendChild(b);
     }

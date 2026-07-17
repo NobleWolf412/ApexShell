@@ -51,7 +51,11 @@
 .tasksPane .tkList { display: flex; flex-direction: column; gap: 8px; }
 .tasksPane .tkGroup { font-size: 10.5px; letter-spacing: .18em; font-weight: 600;
   color: var(--dim); text-transform: uppercase; border-bottom: 1px solid var(--edge);
-  padding: 8px 0 4px; }
+  padding: 8px 0 4px; width: 100%; text-align: left; background: none; border-top: 0;
+  border-left: 0; border-right: 0; cursor: pointer; }
+.tasksPane .tkGroup:hover { color: var(--text); }
+.tasksPane .tkGroup.collapsed { color: var(--faint); }
+.tasksPane .tkNoteDim { color: var(--faint); font-size: 10.5px; }
 .tasksPane .tkCard { border: 1px solid var(--edge); border-radius: 10px;
   padding: 10px 12px; background: var(--surface); display: flex;
   flex-direction: column; gap: 6px; }

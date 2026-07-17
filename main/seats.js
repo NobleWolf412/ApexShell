@@ -400,6 +400,41 @@ function register() {
   };
   bus.on('seatCreate', createFromMessage);
 
+  // Instant handoff (Delegate → on a chat): open the TARGET persona's seat now,
+  // seeded with the source chat's recent output as a plain-text brief. No board
+  // task, no apex-handoff packet gate — the fragile "source must emit JSON"
+  // dependency is exactly what stalled. The source chat stays open for
+  // reference; the target takes focus (a fresh seat becomes the active chat).
+  bus.on('seatHandoff', (msg) => {
+    if (!host || !msg || !msg.id) return;
+    const src = host.list().find((s) => s.id === msg.id);
+    if (!src || src.pty || src.local) { bus.post('toast', { text: 'only a persona/Claude chat can hand off' }); return; }
+    const target = (typeof msg.target === 'string' && msg.target.trim()) || '';
+    if (!presets.get(target)) { bus.post('toast', { text: 'unknown persona: ' + (target || '(none)') }); return; }
+    const cwd = (src.cwd && fs.existsSync(src.cwd)) ? src.cwd : seatCwd(src.persona);
+    let recentText = '';
+    try {
+      if (src.sessionId && !String(src.sessionId).startsWith('codex:')) {
+        const { backfill } = require('./engine/transcripts');
+        const { messages } = backfill(src.sessionId, path.join(os.homedir(), '.claude', 'projects'));
+        recentText = (messages || []).filter((m) => m.type === 'text').slice(-3)
+          .map((m) => m.text).join('\n\n');
+      }
+    } catch { /* no transcript — the brief says so and the target asks the user */ }
+    const require_handoff = require('./engine/handoff');
+    const kickoff = require_handoff.composeHandoffBrief({
+      sourcePersona: src.persona || 'a persona', targetKickoff: (presets.get(target) || {}).kickoff,
+      cwd, recentText,
+    });
+    try {
+      createTaskSeat({ persona: target, title: target + ' ← ' + (src.persona || 'chat'), cwd, kickoff });
+      bus.post('toast', { text: 'Handed off to ' + target + ' — picking up from ' +
+        (src.persona || 'the chat') + '. The original chat stays open for reference.' });
+    } catch (e) {
+      bus.post('toast', { text: 'Handoff failed: ' + e.message });
+    }
+  });
+
   bus.on('seatHistory', () =>
     bus.post('seatHistory', { history: store.chatHistory() }));
   // A reloaded window asks what survived; the roster was previously push-only.
