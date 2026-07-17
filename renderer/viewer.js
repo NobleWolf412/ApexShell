@@ -18,11 +18,15 @@ window.ApexViewer = (() => {
   let curPath = null;
   let curKey = null;
   let pinned = false;
-  let expectKey = null;          // a history click re-requests — its arrival may pass the pin
+  let expectKey = null;          // a history click re-shows — its key passes the pin
+  let pasteSeq = 0;              // makes pathless (pasted/sent) artifacts uniquely keyed
   const HIST_MAX = 6;
   const history = [];            // [{key, name, m}] most-recent-first; m = the artifact push
 
-  const keyOf = (m) => m.path || ('pasted:' + (m.name || 'image'));
+  // Path artifacts key by path (so a file's live-refresh collapses to one entry);
+  // pathless ones (pasted/sent images) get a stamped unique key ONCE, so two with
+  // the same name (e.g. both "sent image") don't collide into a single slot.
+  const keyOf = (m) => m.path || (m.__vwKey || (m.__vwKey = 'pasted:' + (++pasteSeq)));
 
   openBtn.onclick = () => {
     if (curPath) ApexBus.post('openPath', { path: curPath });
@@ -55,14 +59,13 @@ window.ApexViewer = (() => {
       b.textContent = h.name;
       b.title = (h.m.path || 'pasted image') + ' — click to show';
       b.onclick = () => {
-        if (h.m.path) {
-          // re-request through main: fresh read + the file watcher re-arms
-          expectKey = h.key;
-          ApexBus.post('artifactOpen', { id: h.m.id, path: h.m.path });
-        } else {
-          expectKey = h.key;
-          show(h.m);            // pasted images have no file to re-read
-        }
+        // Re-show from the stored snapshot — NOT a round-trip through main.
+        // Re-requesting armed a fresh fs.watch keyed to the (often dead) source
+        // seat, leaking one watcher per click. A live seat's further writes
+        // still flow in through the normal 'artifact' push; looking back at a
+        // past artifact needs no watcher.
+        expectKey = h.key;     // let it pass the pin
+        show(h.m);
       };
       histEl.appendChild(b);
     }
