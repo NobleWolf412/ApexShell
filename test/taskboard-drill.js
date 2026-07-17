@@ -100,11 +100,23 @@ function makeSeats() {
     created, commands, live, entries,
     emit(m) { if (observer) observer(m); },
     observeSeats(fn) { observer = fn; return () => { observer = null; }; },
-    createTaskSeat(opts) { const id = 's' + (++n); created.push({ id, opts }); live.add(id); return id; },
+    createTaskSeat(opts) {
+      const id = 's' + (++n);
+      created.push({ id, opts });
+      live.add(id);
+      // richer entry so reuse-lookup can match by persona + cwd, mirroring real seats.js
+      entries.set(id, { id, persona: opts.persona, cwd: opts.cwd, sessionId: null });
+      return id;
+    },
     presetInfo: (name) => PRESETS[name] || null,
     presetNames: () => Object.keys(PRESETS),
     seatCommand(msg) { commands.push(msg); },
     seatEntry(id) { return entries.get(id) || (live.has(id) ? { id } : null); },
+    listSeats() {
+      const out = [];
+      for (const id of live) out.push(entries.get(id) || { id });
+      return out;
+    },
     closeSeat(id) { live.delete(id); commands.push({ type: 'closeSeat', id }); },
   };
 }
@@ -267,14 +279,38 @@ gate('malformed packet trips the gate; a later good packet recovers', () => {
   assert.equal(t.status, 'done');
 });
 
-gate('no packet on an auto chain trips the gate', () => {
+gate('no packet on an auto chain: one quiet re-ask, then the gate on the second miss', () => {
   bus.send('taskCreate', { title: 'silent seat', cwd: repo,
     route: ['Coder'], auto: true, start: true });
   const id = bus.lastList()[0].id;
   const seatId = seats.created[seats.created.length - 1].id;
-  turn(seatId);                                                  // result, no packet
-  const t = bus.lastList().find((x) => x.id === id);
+  const beforeCmds = seats.commands.length;
+  turn(seatId);                                                  // first miss → repair
+  let t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.status, 'running', 'first miss must NOT trip the gate');
+  assert.equal(t.steps[0].repairSent, true);
+  const repair = seats.commands.slice(beforeCmds).find(
+    (c) => c.type === 'seatSend' && c.id === seatId);
+  assert.ok(repair, 're-ask was sent to the same seat');
+  assert.ok(/apex-task-repair/.test(repair.text));
+  assert.ok(repair.text.includes('apex-handoff'));
+  turn(seatId);                                                  // second miss → gate
+  t = bus.lastList().find((x) => x.id === id);
   assert.equal(t.attention.reason, 'no-packet');
+  assert.ok(/two turns/.test(t.attention.detail));
+});
+
+gate('no packet on an auto chain: repair recovers when the seat then emits a packet', () => {
+  bus.send('taskCreate', { title: 'forgetful seat', cwd: repo,
+    route: ['Coder'], auto: true, start: true });
+  const id = bus.lastList()[0].id;
+  const seatId = seats.created[seats.created.length - 1].id;
+  turn(seatId);                                                  // first miss → repair
+  let t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.status, 'running');
+  turn(seatId, { status: 'done', summary: 'oops, here you go' });
+  t = bus.lastList().find((x) => x.id === id);
+  assert.equal(t.status, 'done');                                // single-step chain completed
 });
 
 let deadId = null;
@@ -321,6 +357,159 @@ gate('delegate-from-chat: a live rail chat becomes step 1 and hands off on its p
   assert.equal(auditor.opts.cwd, repo, 'target inherits the chat\'s repo');
 });
 
+gate('delegate-from-chat REUSES an existing live persona seat (no duplicate spawn)', () => {
+  // The classic loop: user is in an Architect chat, delegates to Auditor,
+  // Auditor then delegates back to Architect — that should return to the SAME
+  // Architect session, not launch a fresh one.
+  seats.entries.set('chatA', { id: 'chatA', persona: 'Architect', title: 'Architect — plan',
+    cwd: repo, sessionId: 'sess-A', pty: false, local: false });
+  seats.live.add('chatA');
+  bus.send('taskDelegateFromChat', { id: 'chatA', target: 'Auditor' });
+  const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatA');
+  turn('chatA', { status: 'done', summary: 'plan ready', artifacts: ['C:\\repo\\plan.md'] });
+  // wrap-turn for chatA settles: released but still alive (fromRail step 0)
+  seats.emit({ type: 'seatEvt', id: 'chatA', m: { type: 'result', ok: true } });
+  assert.ok(seats.live.has('chatA'), 'Architect seat still alive');
+  const auditorSeatId = t1.steps[1].seatId;
+  // Task 1's Auditor is now the live target seat. Its packet completes the chain.
+  turn(auditorSeatId, { status: 'done', summary: 'audit passed' });
+  seats.emit({ type: 'seatEvt', id: auditorSeatId, m: { type: 'result', ok: true } });
+  assert.ok(seats.live.has(auditorSeatId), 'Auditor seat also stays alive');
+
+  // Now: from the still-alive Auditor chat, delegate back to Architect.
+  const beforeCreated = seats.created.length;
+  bus.send('taskDelegateFromChat', { id: auditorSeatId, target: 'Architect' });
+  const t2 = bus.lastList().find((x) => x.id !== t1.id && x.steps[0] && x.steps[0].seatId === auditorSeatId);
+  assert.ok(t2, 'a second task was created');
+  turn(auditorSeatId, { status: 'done', summary: 'here it is again', artifacts: ['C:\\repo\\v2.md'] });
+  // advance runs startStep for step 1 (Architect) → should REUSE chatA, not launch a new seat
+  assert.equal(seats.created.length, beforeCreated, 'no new Architect seat created — reused chatA');
+  const t2Now = bus.lastList().find((x) => x.id === t2.id);
+  assert.equal(t2Now.steps[1].seatId, 'chatA', 'step 1 hijacked the existing Architect chat');
+  assert.equal(t2Now.steps[1].reused, true);
+  assert.equal(t2Now.steps[1].fromRail, true);
+  // the task body was posted into chatA (not the [seat-launch] prefixed kickoff)
+  const sends = seats.commands.filter((c) => c.type === 'seatSend' && c.id === 'chatA'
+    && /<apex-task /.test(c.text) && /HANDOFF PACKET from Auditor/.test(c.text));
+  assert.ok(sends.length >= 1, 'reused seat got the composed task body via seatSend');
+  assert.ok(!sends[sends.length - 1].text.startsWith('[seat-launch]'),
+    'no seat-launch prefix on a reused seat — persona kickoff was already given');
+});
+
+gate('delegate-from-chat complete: TARGET seat also stays alive (user keeps chatting)', () => {
+  seats.entries.set('chat-tgt', { id: 'chat-tgt', persona: 'Architect', title: 'Architect — brief',
+    cwd: repo, sessionId: 'sess-rail-tgt', pty: false, local: false });
+  seats.live.add('chat-tgt');
+  bus.send('taskDelegateFromChat', { id: 'chat-tgt', target: 'Auditor' });
+  turn('chat-tgt', { status: 'done', summary: 'brief handed to auditor',
+    artifacts: ['C:\\repo\\brief.md'] });
+  seats.emit({ type: 'seatEvt', id: 'chat-tgt', m: { type: 'result', ok: true } });
+  const auditorSeatId = seats.created[seats.created.length - 1].id;
+  const beforeCloses = seats.commands.filter((c) => c.type === 'closeSeat' && c.id === auditorSeatId).length;
+  // auditor emits final packet → chain completes
+  turn(auditorSeatId, { status: 'done', summary: 'audit signed off' });
+  const t = bus.lastList().find((x) => x.id === bus.lastList().find(
+    (y) => y.steps[0] && y.steps[0].seatId === 'chat-tgt').id);
+  assert.equal(t.status, 'done');
+  // wrap sent to write memory
+  assert.ok(seats.commands.some((c) => c.type === 'seatWrap' && c.id === auditorSeatId));
+  // wrap-turn result: binding released, seat NOT closed
+  seats.emit({ type: 'seatEvt', id: auditorSeatId, m: { type: 'result', ok: true } });
+  const afterCloses = seats.commands.filter((c) => c.type === 'closeSeat' && c.id === auditorSeatId).length;
+  assert.equal(afterCloses, beforeCloses, 'target seat must NOT be closed on chain completion');
+  assert.ok(seats.live.has(auditorSeatId), 'target Auditor seat stays alive for the user');
+});
+
+gate('regular chain complete: final worker seat still closes (unchanged for non-rail tasks)', () => {
+  bus.send('taskCreate', { title: 'plain build', cwd: repo,
+    route: ['Coder'], auto: true, start: true });
+  const seatId = seats.created[seats.created.length - 1].id;
+  turn(seatId, { status: 'done', summary: 'shipped' });
+  assert.ok(seats.commands.some((c) => c.type === 'seatWrap' && c.id === seatId));
+  seats.emit({ type: 'seatEvt', id: seatId, m: { type: 'result', ok: true } });   // wrap turn settles
+  assert.ok(seats.commands.some((c) => c.type === 'closeSeat' && c.id === seatId),
+    'non-rail chain still closes its final worker');
+});
+
+gate('delegate-from-chat advance: rail seat wraps for memory but is NOT closed', () => {
+  seats.entries.set('chat5', { id: 'chat5', persona: 'Architect', title: 'Architect — outline',
+    cwd: repo, sessionId: 'sess-rail-5', pty: false, local: false });
+  seats.live.add('chat5');
+  bus.send('taskDelegateFromChat', { id: 'chat5', target: 'Auditor' });
+  const beforeCloses = seats.commands.filter((c) => c.type === 'closeSeat' && c.id === 'chat5').length;
+  turn('chat5', { status: 'done', summary: 'outline handed off',
+    artifacts: ['C:\\repo\\outline.md'] });
+  assert.ok(seats.commands.some((c) => c.type === 'seatWrap' && c.id === 'chat5'),
+    'wrap sent so the persona still writes its memory');
+  // the wrap-turn's result settles: binding released, seat NOT closed.
+  seats.emit({ type: 'seatEvt', id: 'chat5', m: { type: 'result', ok: true } });
+  const afterCloses = seats.commands.filter((c) => c.type === 'closeSeat' && c.id === 'chat5').length;
+  assert.equal(afterCloses, beforeCloses, 'rail seat must NOT be closed on advance');
+  assert.ok(seats.live.has('chat5'), 'rail seat stays alive for the user to keep chatting');
+});
+
+gate('delegate-from-chat bounce: rail step 0 reuses the SAME live seat (no resume-launch)', () => {
+  seats.entries.set('chat6', { id: 'chat6', persona: 'Coder', title: 'Coder — patch',
+    cwd: repo, sessionId: 'sess-rail-6', pty: false, local: false });
+  seats.live.add('chat6');
+  bus.send('taskDelegateFromChat', { id: 'chat6', target: 'Auditor' });
+  turn('chat6', { status: 'done', summary: 'patch ready', artifacts: ['C:\\repo\\p.js'] });
+  seats.emit({ type: 'seatEvt', id: 'chat6', m: { type: 'result', ok: true } });    // wrap settles
+  const auditorSeatId = seats.created[seats.created.length - 1].id;
+  const beforeCreated = seats.created.length;
+  turn(auditorSeatId, { status: 'bounce', findings: 'edge case unhandled' });
+  assert.equal(seats.created.length, beforeCreated,
+    'no resume-launched duplicate of the rail persona');
+  const bounces = seats.commands.filter((c) => c.type === 'seatSend' && c.id === 'chat6'
+    && /apex-task-bounce/.test(c.text));
+  assert.equal(bounces.length, 1, 'bounce findings posted into the SAME rail chat');
+  const t = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chat6');
+  assert.equal(t.currentStep, 0);
+  assert.equal(t.steps[0].status, 'running');
+});
+
+gate('delegate-from-chat repair: no-packet re-asks the SAME rail seat (no relaunch)', () => {
+  seats.entries.set('chat3', { id: 'chat3', persona: 'Architect', title: 'Architect — sketch',
+    cwd: repo, sessionId: 'sess-rail-3', pty: false, local: false });
+  const beforeCreated = seats.created.length;
+  bus.send('taskDelegateFromChat', { id: 'chat3', target: 'Auditor' });
+  // first turn ends with no packet → one quiet re-ask into chat3
+  turn('chat3');
+  let t = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chat3');
+  assert.equal(t.status, 'running', 'first miss must not trip the gate');
+  assert.equal(t.steps[0].repairSent, true);
+  const repairs = seats.commands.filter((c) => c.type === 'seatSend' && c.id === 'chat3'
+    && /apex-task-repair/.test(c.text));
+  assert.equal(repairs.length, 1, 'exactly one re-ask sent to the SAME rail seat');
+  assert.equal(seats.created.length, beforeCreated, 'no new seat launched by the repair');
+  // seat then emits its packet → auto advances, target Auditor launches
+  turn('chat3', { status: 'done', summary: 'sketch handed off', artifacts: ['C:\\repo\\sketch.md'] });
+  assert.equal(seats.created.length, beforeCreated + 1, 'target seat launches after recovery');
+  assert.equal(seats.created[seats.created.length - 1].opts.persona, 'Auditor');
+});
+
+gate('delegate-from-chat retry: after two misses, Retry re-asks the same rail seat (not a fresh launch)', () => {
+  seats.entries.set('chat4', { id: 'chat4', persona: 'Architect', title: 'Architect — plan',
+    cwd: repo, sessionId: 'sess-rail-4', pty: false, local: false });
+  const beforeCreated = seats.created.length;
+  bus.send('taskDelegateFromChat', { id: 'chat4', target: 'Auditor' });
+  turn('chat4');                                                 // miss #1 → repair
+  turn('chat4');                                                 // miss #2 → attention: no-packet
+  let t = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chat4');
+  assert.equal(t.attention.reason, 'no-packet');
+  assert.equal(t.steps[0].fromRail, true);
+  // Retry: MUST NOT createTaskSeat a fresh Architect (that would orphan chat4)
+  bus.send('taskRetry', { id: t.id });
+  assert.equal(seats.created.length, beforeCreated, 'no fresh seat launched by retry');
+  const wrapAsks = seats.commands.filter((c) => c.type === 'seatSend' && c.id === 'chat4'
+    && /apex-task id/.test(c.text) && /apex-handoff/.test(c.text));
+  assert.ok(wrapAsks.length >= 2, 'retry re-posts the wrap prompt into the same rail seat');
+  t = bus.lastList().find((x) => x.id === t.id);
+  assert.equal(t.status, 'running');
+  assert.equal(t.steps[0].repairSent, false, 'retry resets the repair quota');
+  assert.equal(t.steps[0].packetError, null);
+});
+
 gate('delegate-from-chat guards: unknown target, non-chat seats, already-chained chats', () => {
   const before = bus.lastList().length;
   bus.send('taskDelegateFromChat', { id: 'chat1', target: 'Auditor' });   // chat1 now bound (wrapping)
@@ -332,6 +521,79 @@ gate('delegate-from-chat guards: unknown target, non-chat seats, already-chained
   bus.send('taskDelegateFromChat', { id: 'chat2', target: 'Nobody' });
   assert.ok(bus.toasts().some((x) => /unknown persona/.test(x)));
   assert.equal(bus.lastList().length, before, 'no task created by refused delegations');
+});
+
+gate('fromRail invariant: save() throws if task-level and step0 flags drift', () => {
+  bus.send('taskCreate', { title: 'invariant probe', cwd: repo,
+    route: ['Coder'], auto: true });
+  const t = bus.lastList()[0];
+  assert.equal(t.fromRail, false, 'non-rail task starts explicit false');
+  assert.equal(t.steps[0].fromRail, false, 'non-rail step0 starts explicit false');
+  // Tamper: mark task rail without step0. Invariant must catch it.
+  const before = t.fromRail;
+  t.fromRail = true;
+  assert.throws(() => tasks._test.assertFromRailInvariant(t), /fromRail drift/);
+  t.fromRail = before;                                           // restore for later tests
+  // Tamper: mark a step of a non-rail task as reused. Invariant must catch it.
+  t.steps[0].reused = true;
+  assert.throws(() => tasks._test.assertFromRailInvariant(t), /rail step/);
+  delete t.steps[0].reused;
+});
+
+gate('bounce fallback: user closed the rail chat → resume-launch instead of same-seat re-bind', () => {
+  seats.entries.set('chatFB', { id: 'chatFB', persona: 'Coder', title: 'Coder — fb',
+    cwd: repo, sessionId: 'sess-fb', pty: false, local: false });
+  seats.live.add('chatFB');
+  bus.send('taskDelegateFromChat', { id: 'chatFB', target: 'Auditor' });
+  const tId = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'chatFB').id;
+  turn('chatFB', { status: 'done', summary: 'work done', artifacts: ['C:\\repo\\w.js'] });
+  seats.emit({ type: 'seatEvt', id: 'chatFB', m: { type: 'result', ok: true } });   // wrap settles
+  const auditorId = tasks._test.byId(tId).steps[1].seatId;
+  // Simulate user closing the rail chat AFTER advance but BEFORE bounce.
+  seats.entries.delete('chatFB');
+  seats.live.delete('chatFB');
+  const beforeCreated = seats.created.length;
+  turn(auditorId, { status: 'bounce', findings: 'edge case' });
+  // Same-seat path is skipped (seatEntry(prev.seatId) → null). Resume path
+  // fires: createTaskSeat with resume:'sess-fb'.
+  assert.equal(seats.created.length, beforeCreated + 1, 'resume-launch spawned a new seat');
+  const relaunched = seats.created[seats.created.length - 1];
+  assert.equal(relaunched.opts.persona, 'Coder');
+  assert.equal(relaunched.opts.resume, 'sess-fb', 'resumed the rail chat\'s session id');
+  const t = tasks._test.byId(tId);
+  assert.equal(t.currentStep, 0);
+  assert.equal(t.steps[0].status, 'running');
+});
+
+gate('reuse atomicity: two concurrent delegations to the same persona — only ONE hijacks', () => {
+  // Fresh repo so the cwd-filter excludes any Architect seats left behind by
+  // prior tests — this test is about the check-then-bind window, not cleanup.
+  const isoRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-iso-'));
+  seats.entries.set('chatShared', { id: 'chatShared', persona: 'Architect',
+    title: 'Architect — shared', cwd: isoRepo, sessionId: 'sess-shared',
+    pty: false, local: false });
+  seats.live.add('chatShared');
+  seats.entries.set('claimant1', { id: 'claimant1', persona: 'Coder', title: 'Coder — c1',
+    cwd: isoRepo, sessionId: 'sess-c1', pty: false, local: false });
+  seats.live.add('claimant1');
+  seats.entries.set('claimant2', { id: 'claimant2', persona: 'Coder', title: 'Coder — c2',
+    cwd: isoRepo, sessionId: 'sess-c2', pty: false, local: false });
+  seats.live.add('claimant2');
+  bus.send('taskDelegateFromChat', { id: 'claimant1', target: 'Architect' });
+  bus.send('taskDelegateFromChat', { id: 'claimant2', target: 'Architect' });
+  const beforeCreated = seats.created.length;
+  turn('claimant1', { status: 'done', summary: 'first done' });          // advances → hijacks chatShared
+  const t1 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'claimant1');
+  assert.equal(t1.steps[1].seatId, 'chatShared', 'first claim gets the live seat');
+  assert.equal(t1.steps[1].reused, true);
+  assert.equal(seats.created.length, beforeCreated, 'no new seat created for the winner');
+  // While task 1 is still active on chatShared, task 2 advances → chatShared
+  // is bindings.has → skip reuse → createTaskSeat a fresh Architect.
+  turn('claimant2', { status: 'done', summary: 'second done' });
+  const t2 = bus.lastList().find((x) => x.steps[0] && x.steps[0].seatId === 'claimant2');
+  assert.notEqual(t2.steps[1].seatId, 'chatShared', 'second claim must NOT double-bind');
+  assert.equal(t2.steps[1].reused, undefined, 'second claim did not hijack');
+  assert.equal(seats.created.length, beforeCreated + 1, 'exactly one fresh seat for the loser');
 });
 
 gate('routes save, list, and feed creation', () => {

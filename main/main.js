@@ -272,7 +272,24 @@ app.whenReady().then(() => {
       return new Response('bad request: ' + e.message, { status: 400 });
     }
   });
-  createWindow();
+  // A throw anywhere in the boot sequence used to die as an unhandled
+  // rejection: process alive, no window, nothing in the log — undiagnosable
+  // from the outside (2026-07-17, a task-store assert). Boot failures must be
+  // LOUD: log the stack, show it, and exit instead of idling as a zombie.
+  try {
+    createWindow();
+  } catch (err) {
+    try {
+      fs.appendFileSync(path.join(__dirname, '..', 'state', 'logs',
+        'main-' + new Date().toISOString().slice(0, 10) + '.log'),
+        new Date().toISOString().slice(11, 19) + ' BOOT FAILED: ' + err.stack + '\n');
+    } catch { /* the dialog still tells the story */ }
+    dialog.showErrorBox('Apex failed to start',
+      String(err.stack || err).slice(0, 1500) +
+      '\n\nDetails: state/logs/main-<date>.log');
+    app.exit(1);
+    return;
+  }
   // Smoke-test hook: APEX_SMOKE=1 opens the window, then quits after 3s —
   // exit 0 only if the renderer logged no console errors.
   if (process.env.APEX_SMOKE === '1') {

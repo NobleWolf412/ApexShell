@@ -25,6 +25,11 @@ const MAX_ROUTE = 8;
 
 // Gates — every reason the chain stops for the user.
 // malformed-packet | no-packet | step-error | decision | bounce-limit | complete
+//
+// One quiet repair: on the FIRST no-packet of an auto step we re-ask the seat
+// once (step.repairSent), only surfacing to the user if the second turn is
+// still packet-less. The whole layer exists so the user isn't hand-carrying
+// packets — asking them to type one is a last resort, not a first response.
 
 let api = null;               // { bus, seats } — injected for the headless drill
 let TASKS_FILE = null;
@@ -40,7 +45,31 @@ const newId = () => 't-' + now() + '-' + Math.random().toString(36).slice(2, 6);
 const byId = (id) => tasks.find((t) => t.id === id) || null;
 const toast = (text) => api.bus.post('toast', { text });
 
+// Invariant: fromRail is BINARY and set at creation. A task is either a rail
+// task (task.fromRail === true, step 0 fromRail === true, task.fromRail drives
+// keep-alive on the final step) or a normal chain task (task.fromRail === false,
+// no step is fromRail). Silent drift here would flip seat lifecycle — a normal
+// chain worker staying alive forever, or a rail chat closing under the user.
+// The flag is never rewritten after creation; this check makes that explicit.
+function assertFromRailInvariant(task) {
+  const taskRail = task.fromRail === true;
+  const step0Rail = !!(task.steps[0] && task.steps[0].fromRail === true);
+  if (taskRail !== step0Rail) {
+    throw new Error('fromRail drift on ' + task.id + ': task=' + task.fromRail +
+      ' step0=' + (task.steps[0] && task.steps[0].fromRail));
+  }
+  if (!taskRail) {
+    for (const s of task.steps) {
+      if (s.fromRail === true || s.reused === true) {
+        throw new Error('non-rail task ' + task.id + ' has rail step ' + s.index +
+          ' (fromRail=' + s.fromRail + ' reused=' + s.reused + ')');
+      }
+    }
+  }
+}
+
 function save() {
+  for (const t of tasks) assertFromRailInvariant(t);
   store.writeJsonAtomic(TASKS_FILE, { schema: 1, tasks });
 }
 function publish() {
@@ -62,7 +91,11 @@ function attention(task, reason, detail) {
 }
 
 // ---------- kickoff composition ----------
-function composeKickoff(task, stepIndex) {
+// The task body — the <apex-task>…</apex-task> block that carries the packet,
+// route, and contract. Same content whether we're launching a fresh seat or
+// posting into a reused live one; the outer [seat-launch] + persona kickoff
+// only makes sense for fresh launches.
+function composeTaskBody(task, stepIndex) {
   const step = task.steps[stepIndex];
   const total = task.steps.length;
   const preset = api.seats.presetInfo(step.persona) || {};
@@ -89,7 +122,74 @@ function composeKickoff(task, stepIndex) {
   }
   lines.push(handoff.contractText(stepIndex > 0));
   lines.push('</apex-task>');
-  return '[seat-launch] ' + (preset.kickoff ? preset.kickoff + '\n\n' : '') + lines.join('\n');
+  return lines.join('\n');
+}
+function composeKickoff(task, stepIndex) {
+  const step = task.steps[stepIndex];
+  const preset = api.seats.presetInfo(step.persona) || {};
+  return '[seat-launch] ' + (preset.kickoff ? preset.kickoff + '\n\n' : '') + composeTaskBody(task, stepIndex);
+}
+
+// Find a live persona chat we could hijack as the target of a delegation.
+//
+// Reuse preconditions (all four must hold):
+//   1. same persona name (strict === on s.persona)
+//   2. same cwd — compared via path.resolve() on both sides so C:\repo and
+//      C:/repo/ normalize equal; Windows case differences persist (NTFS is
+//      case-insensitive but path.resolve preserves case), so a user manually
+//      typing a differently-cased path could miss reuse — acceptable edge.
+//   3. NOT task-bound — bindings.has(id) is the single source of truth for
+//      "seat id owned by some task step" (populated in taskDelegateFromChat
+//      and startStep, cleared in finishWrap/releaseWrap/taskRetry/taskDelete
+//      and on seatGone).
+//   4. NOT mid-wrap — wraps.has(id) means the seat sent seatWrap and hasn't
+//      settled its wrap turn yet; still writing memory.
+//
+// Atomicity: Node's event loop is single-threaded and this function + the
+// startStep bind are called synchronously (no await between them), so nothing
+// can interleave. The defensive re-check at bind time (startStep) is for
+// resilience against future refactors, not a current race.
+function findReuseSeat(persona, cwd) {
+  if (!api.seats.listSeats) return null;
+  const wantCwd = cwd ? path.resolve(cwd) : null;
+  const list = api.seats.listSeats();
+  let match = null;
+  for (const s of list) {
+    if (!s || s.pty || s.local) continue;
+    if (s.persona !== persona) continue;
+    if (wantCwd && s.cwd && path.resolve(s.cwd) !== wantCwd) continue;
+    if (bindings.has(s.id)) continue;   // task-bound → not available
+    if (wraps.has(s.id)) continue;       // mid-wrap → still writing memory
+    match = s;                            // last match wins (most recently created)
+  }
+  return match ? match.id : null;
+}
+
+// The wrap-up prompt posted into a rail chat when the user hits Delegate →.
+// Factored out so taskRetry can re-post it into the SAME seat when the first
+// attempt produced no packet (see taskRetry / repair path).
+function delegateWrapText(task, target) {
+  return [
+    '<apex-task id="' + task.id + '" step="1/2">',
+    'The user is delegating this chat\'s work to ' + target + '.',
+    'Wrap up your CURRENT work product for handoff: what you concluded, where the',
+    'artifacts live (absolute paths — your scratchpad/memory files count), and what',
+    'the next persona needs to know. Do not start new work.',
+    handoff.contractText(false),
+    '</apex-task>',
+  ].join('\n');
+}
+
+// Single quiet re-ask when a seat ends its turn without a packet. Terse on
+// purpose — the seat already saw the full contract in its kickoff/wrap prompt.
+function repairText(task, canBounce) {
+  return [
+    '<apex-task-repair id="' + task.id + '">',
+    'Your previous message did not include the apex-handoff block. Emit it NOW,',
+    'and ONLY it — the fenced ```apex-handoff JSON, nothing else.',
+    handoff.contractText(canBounce),
+    '</apex-task-repair>',
+  ].join('\n');
 }
 
 function bounceText(task, fromPersona, packet, stepIndex) {
@@ -115,6 +215,35 @@ function startStep(task) {
     attention(task, 'step-error', 'persona "' + step.persona + '" is not registered');
     return;
   }
+  // Reuse: for delegate-from-chat tasks, if the target persona already has a
+  // live chat in this cwd (typically the one the user was talking to before),
+  // hijack it instead of spawning a duplicate. The user's continuing thread
+  // with that persona stays in one place.
+  //
+  // Defensive re-check at bind: findReuseSeat + bind is atomic under Node's
+  // single-threaded loop (both synchronous, no await between), but a future
+  // async refactor could break that. Re-validating bindings.has/wraps.has and
+  // seatEntry() right before we bind means such a refactor would fall through
+  // to createTaskSeat rather than double-bind.
+  const reuseId = task.fromRail ? findReuseSeat(step.persona, task.cwd) : null;
+  if (reuseId && !bindings.has(reuseId) && !wraps.has(reuseId)
+      && api.seats.seatEntry(reuseId)) {
+    const entry = api.seats.seatEntry(reuseId);
+    bindings.set(reuseId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+    Object.assign(step, { status: 'running', seatId: reuseId,
+                          sessionId: (entry && entry.sessionId) || null,
+                          packet: null, packetError: null, repairSent: false,
+                          fromRail: true, reused: true,
+                          startedAt: now(), endedAt: 0, waiting: null });
+    const text = composeTaskBody(task, task.currentStep);
+    api.seats.seatCommand({ type: 'seatSend', id: reuseId, text });
+    api.bus.post('seatEvt', { id: reuseId, m: { type: 'user', text } });
+    task.status = 'running';
+    task.attention = null;
+    task.updatedAt = now();
+    publish();
+    return;
+  }
   let seatId;
   try {
     seatId = api.seats.createTaskSeat({
@@ -129,8 +258,11 @@ function startStep(task) {
     return;
   }
   bindings.set(seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+  // NOTE: fromRail is deliberately not in this Object.assign — the flag is
+  // creation-time and immutable. A fresh createTaskSeat step is never rail.
   Object.assign(step, { status: 'running', seatId, sessionId: null, packet: null,
-                        packetError: null, startedAt: now(), endedAt: 0, waiting: null });
+                        packetError: null, repairSent: false,
+                        startedAt: now(), endedAt: 0, waiting: null });
   task.status = 'running';
   task.attention = null;
   task.updatedAt = now();
@@ -138,18 +270,33 @@ function startStep(task) {
 }
 
 /** Wrap-then-close a finished step's seat: the persona writes its memory and
- *  reflection, then the seat closes on its wrap turn's result (backstopped). */
+ *  reflection, then the seat closes on its wrap turn's result (backstopped).
+ *  Rail chats (delegate-from-chat step 0) use wrapAndRelease instead — they
+ *  are live user conversations, not synthesized workers; killing them mid-chat
+ *  is the surprise the user hit. Both paths still write memory on wrap. */
 function wrapAndClose(seatId) {
   if (!api.seats.seatEntry(seatId)) return;
   api.seats.seatCommand({ type: 'seatWrap', id: seatId });
-  wraps.set(seatId, setTimeout(() => finishWrap(seatId), WRAP_BACKSTOP_MS));
+  wraps.set(seatId, { timer: setTimeout(() => finishWrap(seatId), WRAP_BACKSTOP_MS), close: true });
+}
+function wrapAndRelease(seatId) {
+  if (!api.seats.seatEntry(seatId)) return;
+  api.seats.seatCommand({ type: 'seatWrap', id: seatId });
+  wraps.set(seatId, { timer: setTimeout(() => releaseWrap(seatId), WRAP_BACKSTOP_MS), close: false });
 }
 function finishWrap(seatId) {
-  const timer = wraps.get(seatId);
-  if (timer) clearTimeout(timer);
+  const w = wraps.get(seatId);
+  if (w && w.timer) clearTimeout(w.timer);
   wraps.delete(seatId);
   bindings.delete(seatId);
   api.seats.closeSeat(seatId);
+}
+function releaseWrap(seatId) {
+  const w = wraps.get(seatId);
+  if (w && w.timer) clearTimeout(w.timer);
+  wraps.delete(seatId);
+  bindings.delete(seatId);
+  // deliberately no closeSeat — the rail chat stays alive for the user.
 }
 
 function advance(task) {
@@ -157,7 +304,14 @@ function advance(task) {
   step.status = 'done';
   step.endedAt = now();
   step.waiting = null;
-  if (step.seatId != null) wrapAndClose(step.seatId);
+  // Keep alive: (a) the source rail chat itself, (b) the FINAL seat of any
+  // delegate-from-chat task — that seat is the user's continuing conversation
+  // with the target persona, not a disposable chain worker.
+  const isFinal = task.currentStep === task.steps.length - 1;
+  if (step.seatId != null) {
+    if (step.fromRail || (isFinal && task.fromRail)) wrapAndRelease(step.seatId);
+    else wrapAndClose(step.seatId);
+  }
   task.currentStep++;
   if (task.currentStep < task.steps.length) {
     startStep(task);
@@ -186,7 +340,29 @@ function bounce(task, fromIndex, packet) {
   prev.bounceFindings = { from: from.persona,
                           findings: packet.findings, artifacts: packet.artifacts };
   Object.assign(prev, { status: 'running', startedAt: now(), endedAt: 0,
-                        packet: null, packetError: null, waiting: null });
+                        packet: null, packetError: null, repairSent: false,
+                        waiting: null });
+  // fromRail step 0 with a still-alive rail seat: re-bind and post the bounce
+  // findings into the SAME chat rather than spawning a resumed duplicate.
+  //
+  // Fallback triggers — a SEAM QUERY (seatEntry) not a try/catch:
+  //   api.seats.seatEntry(prev.seatId) returns null when the user manually
+  //   closed the rail chat between advance and bounce (the ✕ button removes
+  //   the seat from host.list()). When that happens we drop through to the
+  //   resume path below (createTaskSeat with resume:sessionId), and if that
+  //   throws too, we drop again to a fresh startStep. Each level is a strict
+  //   downgrade: same-seat > resumed session > fresh persona seat.
+  if (prev.fromRail && prev.seatId != null && api.seats.seatEntry(prev.seatId)) {
+    bindings.set(prev.seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+    const text = bounceText(task, from.persona, packet, task.currentStep);
+    api.seats.seatCommand({ type: 'seatSend', id: prev.seatId, text });
+    api.bus.post('seatEvt', { id: prev.seatId, m: { type: 'user', text } });
+    task.status = 'running';
+    task.attention = null;
+    task.updatedAt = now();
+    publish();
+    return;
+  }
   // Resume the previous step's SESSION — the worker keeps its full context.
   // (Review steps are always fresh seats; independence is preserved because
   // only the WORKER's session round-trips.)
@@ -242,10 +418,11 @@ function onPacket(task, stepIndex, packet) {
 
 // ---------- the seat observer (the whole trick) ----------
 function onSeatMessage(m) {
-  // wrap-close handshake first: a wrapped seat's next result closes it,
-  // regardless of task binding state.
+  // wrap handshake first: a wrapped seat's next result either closes it
+  // (normal chain worker) or just releases the task binding (rail chat).
   if (m.type === 'seatEvt' && m.m && m.m.type === 'result' && wraps.has(m.id)) {
-    finishWrap(m.id);
+    if (wraps.get(m.id).close) finishWrap(m.id);
+    else releaseWrap(m.id);
     return;
   }
   if (m.type === 'seatGone') { bindings.delete(m.id); return; }
@@ -292,11 +469,19 @@ function onSeatMessage(m) {
     const { raw, error } = handoff.extractPacket(turnText);
     if (error === 'no-packet') {
       step.packetError = 'no-packet';
-      // Pause loudly only for AUTO chains mid-run; a manual task just shows
-      // "no packet yet" on its card — the operator may be chatting with it.
+      // Auto chain, mid-run, first miss: re-ask the SAME seat once before we
+      // dump this on the user. Second miss falls through to the loud gate.
+      if (task.auto && task.status === 'running' && !step.repairSent) {
+        step.repairSent = true;
+        const text = repairText(task, b.stepIndex > 0);
+        api.seats.seatCommand({ type: 'seatSend', id: m.id, text });
+        api.bus.post('seatEvt', { id: m.id, m: { type: 'user', text } });
+        publish();
+        return;
+      }
       if (task.auto && task.status === 'running')
         attention(task, 'no-packet',
-          'the seat finished a turn without a handoff packet — reply in its chat or Retry');
+          'the seat finished two turns without a handoff packet — reply in its chat or Retry');
       else publish();
       return;
     }
@@ -351,13 +536,15 @@ function taskCreate(msg) {
     cwd,
     status: 'open',
     auto: !!msg.auto,
+    fromRail: false,               // explicit: non-rail chain (see assertFromRailInvariant)
     route: routeSteps.map((persona) => ({ persona })),
     currentStep: 0,
     bounces: 0,
     maxBounces: 2,
     steps: routeSteps.map((persona, index) => ({
       index, persona, status: 'pending', seatId: null, sessionId: null,
-      packet: null, packetError: null, bounceFindings: null, waiting: null,
+      packet: null, packetError: null, repairSent: false, bounceFindings: null,
+      fromRail: false, waiting: null,
       startedAt: 0, endedAt: 0,
     })),
     attention: null,
@@ -411,11 +598,28 @@ function taskRetry(msg) {
   if (!task || task.status === 'done') return;
   const step = task.steps[task.currentStep];
   if (!step) return;
+  // Delegate-from-chat step 0 is a hijacked rail seat — no createTaskSeat ever
+  // ran for it. Retry MUST re-ask the same seat (if still alive), not relaunch
+  // a bare persona seat that would orphan the rail conversation.
+  if (step.fromRail && step.seatId != null && api.seats.seatEntry(step.seatId)) {
+    Object.assign(step, { status: 'running', packet: null, packetError: null,
+                          repairSent: false, waiting: null,
+                          startedAt: now(), endedAt: 0 });
+    task.status = 'running';
+    task.attention = null;
+    task.updatedAt = now();
+    const text = delegateWrapText(task, step.delegateTarget || task.steps[1] && task.steps[1].persona);
+    api.seats.seatCommand({ type: 'seatSend', id: step.seatId, text });
+    api.bus.post('seatEvt', { id: step.seatId, m: { type: 'user', text } });
+    publish();
+    return;
+  }
   if (step.seatId != null && api.seats.seatEntry(step.seatId)) {
     bindings.delete(step.seatId);
     api.seats.closeSeat(step.seatId);
   }
-  Object.assign(step, { seatId: null, packet: null, packetError: null, waiting: null });
+  Object.assign(step, { seatId: null, packet: null, packetError: null,
+                        repairSent: false, waiting: null });
   startStep(task);
 }
 
@@ -482,16 +686,26 @@ function taskDelegateFromChat(msg) {
     id: newId(), title, cwd,
     status: 'running',
     auto: true,                     // the whole point — advance without another click
+    // fromRail on the task itself so advance() also keeps the TARGET seat alive
+    // when the chain completes — delegating to Architect is the user opening a
+    // new conversation with Architect, not spinning up a disposable worker.
+    fromRail: true,
     route: [{ persona: source }, { persona: target }],
     currentStep: 0,
     bounces: 0, maxBounces: 2,
     steps: [
       { index: 0, persona: source, status: 'running', seatId, sessionId: entry.sessionId || null,
-        packet: null, packetError: null, bounceFindings: null, waiting: null,
-        startedAt: now(), endedAt: 0 },
+        packet: null, packetError: null, repairSent: false, bounceFindings: null,
+        // fromRail: this step 0 is a HIJACKED rail chat — no createTaskSeat
+        // was ever called for it. Retry must re-ask the same seat, not launch
+        // a fresh one (that would orphan the rail context).
+        fromRail: true, delegateTarget: target,
+        waiting: null, startedAt: now(), endedAt: 0 },
       { index: 1, persona: target, status: 'pending', seatId: null, sessionId: null,
-        packet: null, packetError: null, bounceFindings: null, waiting: null,
-        startedAt: 0, endedAt: 0 },
+        packet: null, packetError: null, repairSent: false, bounceFindings: null,
+        // fromRail:false at rest — startStep flips it true only if a live seat
+        // of the target persona is found and hijacked (see findReuseSeat).
+        fromRail: false, waiting: null, startedAt: 0, endedAt: 0 },
     ],
     attention: null,
     createdAt: now(), updatedAt: now(),
@@ -499,15 +713,7 @@ function taskDelegateFromChat(msg) {
   tasks.unshift(task);
   prune();
   bindings.set(seatId, { taskId: task.id, stepIndex: 0, buf: '' });
-  const text = [
-    '<apex-task id="' + task.id + '" step="1/2">',
-    'The user is delegating this chat\'s work to ' + target + '.',
-    'Wrap up your CURRENT work product for handoff: what you concluded, where the',
-    'artifacts live (absolute paths — your scratchpad/memory files count), and what',
-    'the next persona needs to know. Do not start new work.',
-    handoff.contractText(false),
-    '</apex-task>',
-  ].join('\n');
+  const text = delegateWrapText(task, target);
   api.seats.seatCommand({ type: 'seatSend', id: seatId, text });
   // seatSend never echoes — same manual user-event post the engine's wrap uses
   api.bus.post('seatEvt', { id: seatId, m: { type: 'user', text } });
@@ -543,6 +749,20 @@ function register(deps) {
   tasks = Array.isArray(savedTasks.tasks) ? savedTasks.tasks : [];
   const savedRoutes = readState(ROUTES_FILE);
   routes = Array.isArray(savedRoutes.routes) ? savedRoutes.routes : [];
+
+  // MIGRATE, then assert: tasks persisted before the fromRail flags existed
+  // (or mid-refactor) must be coerced into a valid shape — the invariant's job
+  // is to catch RUNTIME drift, not to brick the boot on legacy data (which it
+  // did: a pre-refactor delegation task in tasks.json threw inside register,
+  // the whenReady chain died unhandled, and the app sat windowless, 2026-07-17).
+  for (const task of tasks) {
+    if (!Array.isArray(task.steps)) task.steps = [];
+    task.fromRail = task.fromRail === true ||
+      !!(task.steps[0] && task.steps[0].fromRail === true);
+    if (!task.fromRail) {
+      for (const s of task.steps) { delete s.fromRail; delete s.reused; }
+    }
+  }
 
   // Boot reconciliation: a step left 'running' has no live seat anymore (seat
   // ids never survive a restart — only sessionIds do). Surface it, don't guess.
@@ -608,6 +828,7 @@ function dispose() {
 function isChainSeat(id) { return bindings.has(id); }
 
 // exposed for the headless drill only
-const _test = { get tasks() { return tasks; }, byId, composeKickoff, onSeatMessage };
+const _test = { get tasks() { return tasks; }, byId, composeKickoff, onSeatMessage,
+                assertFromRailInvariant, findReuseSeat };
 
 module.exports = { register, dispose, isChainSeat, _test };
