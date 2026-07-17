@@ -69,7 +69,16 @@ function assertFromRailInvariant(task) {
 }
 
 function save() {
-  for (const t of tasks) assertFromRailInvariant(t);
+  // The invariant is a diagnostic tripwire for a real bug — but THROWING here
+  // froze the board silently: publish() calls save() first, so the throw
+  // skipped the taskList push and only hit a console the GUI never shows.
+  // Surface it to the operator and keep persisting/pushing.
+  try {
+    for (const t of tasks) assertFromRailInvariant(t);
+  } catch (e) {
+    console.error('[tasks] invariant tripped:', e.message);
+    toast('task-state warning (a bug — see logs): ' + e.message);
+  }
   store.writeJsonAtomic(TASKS_FILE, { schema: 1, tasks });
 }
 function publish() {
@@ -244,6 +253,26 @@ function applyTodoPlan(task, block) {
     done: old.some((t) => t.done && t.text.toLowerCase() === text.toLowerCase()),
   }));
   for (const i of block.done) task.todos[i].done = true;
+  task.updatedAt = now();
+}
+
+// Additive merge — for a CHAIN step, whose checklist is built across steps
+// (onPacket appends each packet's plan). Replacing wholesale would erase
+// earlier phases when a later persona lists only its own; instead add new
+// items and mark done by text match. Free rail chats keep applyTodoPlan
+// (replace): a single chat owns and re-emits its whole block.
+function mergeTodoPlan(task, block) {
+  if (!Array.isArray(task.todos)) task.todos = [];
+  for (const text of block.plan) {
+    if (task.todos.length >= 30) break;
+    if (!task.todos.some((t) => t.text.toLowerCase() === text.toLowerCase()))
+      task.todos.push({ text, done: false });
+  }
+  for (const i of block.done) {
+    const text = block.plan[i];
+    const hit = task.todos.find((t) => t.text.toLowerCase() === text.toLowerCase());
+    if (hit) hit.done = true;
+  }
   task.updatedAt = now();
 }
 
@@ -622,7 +651,7 @@ function onSeatMessage(m) {
     // same block as free chats; the handoff packet's plan/planDone still rules
     // at hand-off (onPacket dedupes).
     const todoBlock = extractTodoBlock(turnText);
-    if (todoBlock && !todoBlock.error) { applyTodoPlan(task, todoBlock); publish(); }
+    if (todoBlock && !todoBlock.error) { mergeTodoPlan(task, todoBlock); publish(); }
     const { raw, error } = handoff.extractPacket(turnText);
     if (error === 'no-packet') {
       step.packetError = 'no-packet';
@@ -639,15 +668,13 @@ function onSeatMessage(m) {
       if (task.auto && task.status === 'running')
         attention(task, 'no-packet',
           'the seat finished two turns without a handoff packet — reply in its chat or Retry');
-      else if (step.delegateWanted) {
-        // manual lane: the user's Delegate is pending and the asked seat still
-        // came back packet-less — NOW the hand-typed summary is genuinely the
-        // last resort, so offer it unprompted.
-        step.delegateWanted = false;
-        api.bus.post('taskNeedSummary', { id: task.id, persona: step.persona,
-          reason: 'it was asked to wrap up and still produced no packet' });
-        publish();
-      } else publish();
+      // Manual lane: do NOT auto-pop the summary box here. Clicking Delegate
+      // mid-turn queues the wrap-up ask behind the in-flight turn, and THAT
+      // turn's result lands here packet-less through no fault of the ask —
+      // popping the box now is the premature-box bug. delegateWanted stays
+      // set; a second Delegate click (taskDelegate) is the deliberate,
+      // race-free path to the typed-summary box.
+      else publish();
       return;
     }
     if (error) {
@@ -820,9 +847,12 @@ function taskResume(msg) {
   task.status = step && step.status === 'running' ? 'running' : 'open';
   task.attention = null;
   task.updatedAt = now();
-  // a done-packet that landed while paused advances now (auto chains)
-  if (task.auto && step && step.packet && step.packet.status === 'done'
-      && step.status === 'running') { advance(task); return; }
+  // a packet that landed while paused was parked by onPacket (it returns early
+  // when paused) — process it now that we're live again (auto chains)
+  if (task.auto && step && step.packet && step.status === 'running') {
+    if (step.packet.status === 'done') { advance(task); return; }
+    if (step.packet.status === 'bounce') { bounce(task, task.currentStep, step.packet); return; }
+  }
   publish();
 }
 
@@ -893,6 +923,16 @@ function taskDelegateFromChat(msg) {
     todos: [],
     createdAt: now(), updatedAt: now(),
   };
+  // Reconcile a board task this same chat already spawned via apex-todo: fold
+  // its checklist into the delegation and drop the standalone card, else it
+  // lingers forever (status 'open', prune only drops done/failed) as a zombie.
+  const prior = chatTasks.get(seatId);
+  const priorTask = prior ? byId(prior.id) : null;
+  if (priorTask && priorTask.status !== 'done') {
+    if (Array.isArray(priorTask.todos) && priorTask.todos.length) task.todos = priorTask.todos;
+    tasks = tasks.filter((t) => t.id !== priorTask.id);
+  }
+  chatTasks.delete(seatId);
   tasks.unshift(task);
   prune();
   bindings.set(seatId, { taskId: task.id, stepIndex: 0, buf: '' });

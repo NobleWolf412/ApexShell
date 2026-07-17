@@ -15,6 +15,7 @@ const audit = require('./engine/audit');
 const { backfill } = require('./engine/transcripts');
 
 const DEBOUNCE_MS = 4000;      // let a burst of turns settle before spending a pass
+const AUDIT_BACKSTOP_MS = 90000;   // a hung/quota-stalled pass must not wedge the watch forever
 const MAX_TURNS = 6;           // rolling window
 const TURN_CAP = 8 * 1024;     // per-turn byte cap (keep the tail)
 const PERSONAS_WORKSPACE = path.join(__dirname, '..', 'state', 'extensions', 'personas', 'workspace.json');
@@ -128,6 +129,7 @@ function stopWatch(id, reason) {
   const w = watched.get(id);
   if (!w) return;
   if (w.timer) clearTimeout(w.timer);
+  if (w.backstop) { clearTimeout(w.backstop); w.backstop = null; }
   if (w.controller) { try { w.controller.close(); } catch { /* already gone */ } w.controller = null; }
   const wasMidPass = w.running;
   w.running = false;
@@ -193,6 +195,7 @@ function runAudit(id) {
   const finish = (findings, error) => {
     if (!w.running) return;
     w.running = false;
+    if (w.backstop) { clearTimeout(w.backstop); w.backstop = null; }
     try { if (w.controller) w.controller.close(); } catch { /* already closed */ }
     w.controller = null;
     bus.post('auditFindings', { id, findings: findings || [], error: error || null,
@@ -204,6 +207,9 @@ function runAudit(id) {
         cfg.budget.toLocaleString() + '-token ceiling.' });
     }
   };
+  // a disposable seat that never emits result/dead (hung, quota-stalled) would
+  // leave w.running true forever — the watch would never audit again. Backstop it.
+  w.backstop = setTimeout(() => finish([], 'audit pass timed out'), AUDIT_BACKSTOP_MS);
   try {
     // stored on the watch so stopWatch can CANCEL a pass mid-flight
     w.controller = seats.startDisposable({
