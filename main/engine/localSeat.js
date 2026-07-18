@@ -157,6 +157,8 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
   const messages = [{ role: 'system', content: SYSTEM() }];
   let aborter = null;
   let disposed = false;
+  let running = false, rerun = false;   // serialize turns (audit M1): overlapping
+                                        // run() loops scrambled messages[]/aborter
   let model = MODEL;
   const pendingPerms = new Map();   // requestId -> {resolve}
   const sessionId = 'local-' + Date.now().toString(36);
@@ -285,7 +287,13 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
 
   // ---- the turn loop: model → tools → model, until text with no calls ----
   async function run() {
+    // one turn at a time. A send arriving mid-turn (its user message is already
+    // in messages[]) sets rerun; the finally re-runs so it isn't lost, without
+    // a second loop racing the first's aborter/messages (audit M1).
+    if (running) { rerun = true; return; }
+    running = true;
     try {
+     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const { text, toolCalls } = await callModel();
         if (!toolCalls.length) {
@@ -318,6 +326,10 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
       onEvent({ type: 'text', text: '⚠ local model error: ' + e.message +
         (/fetch/i.test(e.message) ? ' — is Ollama running?' : '') });
       onEvent({ type: 'result', ok: false });
+     }
+    } finally {
+      running = false;
+      if (rerun && !disposed) { rerun = false; run(); }   // a send landed mid-turn
     }
   }
 
