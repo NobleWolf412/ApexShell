@@ -17,14 +17,6 @@ function findArchitectPreset(presetNames) {
   return names.find((n) => n.toLowerCase().includes('architect')) || null;
 }
 
-// The route Lift-off proposes before the user edits it: just the Architect,
-// alone — "starts with a read-only advisor" (§ Builder state machine), left
-// for the user to extend before launch.
-function defaultRoute(presetNames) {
-  const architect = findArchitectPreset(presetNames);
-  return architect ? [architect] : null;
-}
-
 // User-typed route (or none, which falls back to the Architect alone).
 function normalizeRouteInput(input, fallbackPersona) {
   const steps = Array.isArray(input)
@@ -54,7 +46,6 @@ function planDelegateRoute({ presetNames, route }) {
 module.exports = {
   MAX_ROUTE,
   findArchitectPreset,
-  defaultRoute,
   normalizeRouteInput,
   planDelegateRoute,
 };
