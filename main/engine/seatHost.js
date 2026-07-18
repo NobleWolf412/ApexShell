@@ -235,7 +235,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         resume: opts.resume,
         ...(opts.launch || {}),
         log: (l) => log(`[${id}] ${l}`),
-        onEvent: (evt) => routeEvt(evt, postM, log),
+        onEvent: (evt) => routeEvt(evt, postM, log, learnWindow),
         onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
       });
     }
@@ -311,7 +311,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         noSessionPersistence: true,
         tools: '',
         log: (line) => log(`[${label}] ${line}`),
-        onEvent: (event) => routeEvt(event, deliver, log),
+        onEvent: (event) => routeEvt(event, deliver, log, learnWindow),
         onExit: (code) => {
           disposables.delete(controller);
           cleanup();
@@ -529,7 +529,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
 }
 
 // Raw stream-json events → the view vocabulary (unchanged from seats.js).
-function routeEvt(evt, post, log) {
+function routeEvt(evt, post, log, learnWindow) {
   switch (evt.type) {
     case 'system':
       if (evt.subtype === 'init') post({
