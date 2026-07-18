@@ -20,8 +20,15 @@
   a live board-task binding (`main/tasks.js`'s `chatTasks`, now surfaced to
   the renderer as `boundSeatIds`) — a suggestion, never a gate. New
   `test/consult-drill.js` (pure contract + lifecycle state machine, zero LLM
-  spend), chained into `test:core`. No model/effort dial yet — lands with the
-  disposable launch override already in the engine (slice 2).
+  spend), chained into `test:core`.
+- **Consult v1, slice 2** (polish): the picker gains a model/effort dial (the
+  disposable launch override, App Builder slice 5 — steers that one consult's
+  seat only; omitted stays the default lane model) and a Claude usage
+  snapshot (session/weekly %) so spend is visible before send. "Send to
+  composer" now sends just the selected text when part of the reply is
+  selected, otherwise the whole reply. Consult → is listed in the `?`
+  gestures/shortcuts overlay beside Hand off →. `test/consult-drill.js`
+  gained launch-override passthrough coverage (22/22).
 
 - **STUDIO shell** (`extensions/studio/`): a new dock pane (order 20 — the slot
   PERSONAS held) that hosts the builders as sub-views behind PERSONAS|PROJECTS

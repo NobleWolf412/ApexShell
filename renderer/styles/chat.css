@@ -403,10 +403,18 @@
 }
 #consultMenu[hidden] { display: none; }
 #consultMenu .rmHead { color: var(--faint); font-size: 10px; letter-spacing: .1em; padding: 0 2px; }
+#consultMenu .cmUsage { color: var(--faint); font-size: 10.5px; padding: 0 2px; }
 #consultMenu select.cmPersona {
   background: var(--bg); color: var(--text); border: 1px solid var(--edge);
   border-radius: 5px; padding: 4px 6px; font-size: 12px;
 }
+#consultMenu .cmDials { display: flex; gap: 6px; }
+#consultMenu .cmDials select {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--dim); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 3px 5px; font-size: 11px; cursor: pointer;
+}
+#consultMenu .cmDials select:hover { color: var(--text); }
 #consultMenu label.cmFresh { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; }
 #consultMenu label.cmFresh input { accent-color: var(--accent); cursor: pointer; }
 #consultMenu textarea.cmQuestion {

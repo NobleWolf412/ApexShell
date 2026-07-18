@@ -308,17 +308,20 @@ Full spec: `design/consult-v1.md`.
   the chat. Nothing the consultant says reaches the seat's transcript, the
   workflow layer, or memory — the user is the only merge point (send-to-
   composer fills, never sends).
-- **Picker → kickoff**: pick a persona (or "just a model") + a fresh-eyes
-  toggle + a question. A persona consult inlines tier 1 (`foundation.md` +
-  its own canonical, full text, the same identity a seated persona reads)
-  always, and tier 2 (its OWN `memory/projects/<slug>/state.md` +
-  `MEMORY.md`, project slug resolved from the CHAT's cwd) unless fresh-eyes
-  is on. Missing tier-2 files inline nothing and say nothing (fresh project);
-  an oversized file truncates with a notice; note files are NEVER inlined
-  (tool-less — paging one in is impossible). A bare-model consult carries no
-  identity tier at all, just the digest and the question.
-  No model/effort dial in slice 1 — lands with the disposable launch override
-  (App Builder slice 5) already in the engine.
+- **Picker → kickoff**: pick a persona (or "just a model") + an optional
+  model/effort dial (the disposable launch override, App Builder slice 5 —
+  steers THIS consult's seat only, omitted = the default lane model, byte-
+  identical to slice 1) + a fresh-eyes toggle + a question, with the current
+  Claude usage snapshot (session/weekly %, from the same ambient `usageData`
+  push the rail bars use) rendered so spend is visible before send. A persona
+  consult inlines tier 1 (`foundation.md` + its own canonical, full text, the
+  same identity a seated persona reads) always, and tier 2 (its OWN
+  `memory/projects/<slug>/state.md` + `MEMORY.md`, project slug resolved from
+  the CHAT's cwd) unless fresh-eyes is on. Missing tier-2 files inline nothing
+  and say nothing (fresh project); an oversized file truncates with a notice;
+  note files are NEVER inlined (tool-less — paging one in is impossible). A
+  bare-model consult carries no identity tier at all, just the digest and the
+  question.
 - **Turns**: kickoff + up to 4 follow-ups (5 replies total) riding the SAME
   disposable controller (`controller.send`, not a fresh spawn); each follow-up
   prefixes a fresh digest delta. The 6th is refused with a notice pointing at
@@ -332,10 +335,15 @@ Full spec: `design/consult-v1.md`.
   board-task binding (`main/tasks.js`'s `chatTasks`, surfaced to the renderer
   as `boundSeatIds` on every `taskList` post) — the natural next step is
   suggested, never forced.
+- **Send to composer**: fills the operator's composer with the whole reply, or
+  just the current text selection when one is anchored inside the reply
+  (cheap selection-level send, slice 2) — never sends either way.
 - Guardrails: the consultant's reply is untrusted text, rendered exactly like
   chat prose (escaped + linkified, `chatView.js`'s `md()`) — never parsed for
   verbs, never auto-inserted. Main never inspects reply content either; it is
   forwarded verbatim over the bus.
+- Consult → is also listed in the `?` gestures/shortcuts overlay, beside
+  Hand off →, spelling out the opposite-of-handoff distinction.
 
 ## Verification duties (inherited by anyone who edits)
 

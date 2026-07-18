@@ -136,13 +136,24 @@ function onStart(m) {
     projectTier, freshEyes, digestText: CE.renderDigest(CE.windowDigest(turns)), question,
   });
 
+  // Slice 2: the disposable launch override (App Builder slice 5) — a picker
+  // model/effort choice steers this ONE consult's seat; omitted (the default)
+  // is byte-identical to slice 1, the default lane model. A bad tier is the
+  // engine's own validation gate (createDisposable) to reject, not ours to
+  // pre-guess — it surfaces as a clean consultError via startTurn's catch.
+  const launch = (m.launch && typeof m.launch === 'object' &&
+    (typeof m.launch.model === 'string' || typeof m.launch.effort === 'string'))
+    ? { model: typeof m.launch.model === 'string' ? m.launch.model : undefined,
+        effort: typeof m.launch.effort === 'string' ? m.launch.effort : undefined }
+    : undefined;
+
   const state = {
     persona: personaName, freshEyes, turnsUsed: 0, maxTurns: CE.CONSULT_MAX_TURNS,
     seenTurnCount: turns.length, curText: '', running: true, controller: null, backstop: null,
   };
   consults.set(id, state);
   bus.post('consultState', { id, open: true, persona: personaName, turnsUsed: 0, maxTurns: state.maxTurns });
-  startTurn(id, state, kickoff, true);
+  startTurn(id, state, kickoff, true, launch);
 }
 
 function onSend(m) {
@@ -168,8 +179,10 @@ function onSend(m) {
 // `first`: true = create the disposable (its kickoff IS this text); false =
 // send() on the SAME controller (design/consult-v1.md §4: follow-ups ride the
 // same controller). Either way a hung/quota-stalled pass must not wedge the
-// consult forever (the relationship pass's 120s backstop pattern).
-function startTurn(id, state, text, first) {
+// consult forever (the relationship pass's 120s backstop pattern). `launch`
+// only applies to the first turn — it steers what gets spawned, not a
+// follow-up on an already-running seat.
+function startTurn(id, state, text, first, launch) {
   state.curText = '';
   state.backstop = setTimeout(() => finishTurn(id, state, null, 'consult pass timed out'), BACKSTOP_MS);
   const onEvent = (ev) => {
@@ -186,7 +199,7 @@ function startTurn(id, state, text, first) {
     }
   };
   try {
-    if (first) state.controller = seats.startDisposable({ kickoff: text, onEvent });
+    if (first) state.controller = seats.startDisposable({ kickoff: text, onEvent, launch });
     else state.controller.send(text);
   } catch (e) { finishTurn(id, state, null, e.message); }
 }

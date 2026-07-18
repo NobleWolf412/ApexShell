@@ -243,6 +243,21 @@ const reset = () => { posts.length = 0; disposables.length = 0; };
     chainSeats.delete('sc');
   });
 
+  await agate('slice 2: a picker model/effort choice forwards as a launch override', async () => {
+    reset();
+    seatEntries.set('sL', { sessionId: null, cwd: '' });
+    handlers.consultStart({ id: 'sL', persona: null, question: 'x', launch: { model: 'haiku', effort: 'low' } });
+    assert.deepEqual(disposables[0].opts.launch, { model: 'haiku', effort: 'low' });
+    handlers.consultClose({ id: 'sL' });
+  });
+
+  await agate('slice 2: omitting launch stays undefined — byte-identical to slice 1', async () => {
+    reset();
+    handlers.consultStart({ id: 'sL', persona: null, question: 'x' });
+    assert.equal(disposables[0].opts.launch, undefined);
+    handlers.consultClose({ id: 'sL' });
+  });
+
   await agate('a missing seat is refused', async () => {
     reset();
     handlers.consultStart({ id: 'ghost-seat', persona: null, question: 'x' });

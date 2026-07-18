@@ -16,6 +16,7 @@ window.ApexChat = (function () {
   let presetNames = [];           // registered personas — the delegate menu's options
   let handoffMap = {};            // persona -> natural next persona (collaboration contracts)
   let boundTaskSeats = new Set(); // seat ids with a live board-task binding (Hand off → accent)
+  let latestUsage = null;         // last usageData push — the Consult picker's spend snapshot
 
   // ---------- DOM scaffold ----------
   const stage = document.querySelector('.stage');
@@ -518,8 +519,10 @@ window.ApexChat = (function () {
     if (e.key === 'Escape' && !consultMenu.hidden) hideConsultMenu();
   });
 
-  // The picker: persona (or bare model) + fresh-eyes + a pre-focused question
-  // box. The click IS the approval (§The flow, step 1) — no second confirm.
+  // The picker: persona (or bare model) + model/effort dial + fresh-eyes + a
+  // pre-focused question box. The click IS the approval (§The flow, step 1) —
+  // no second confirm; the usage snapshot renders here so spend is visible
+  // before send.
   function openConsultMenu(anchor, c) {
     consultMenu.textContent = '';
     const head = document.createElement('div');
@@ -527,11 +530,37 @@ window.ApexChat = (function () {
     head.textContent = 'CONSULT →';
     consultMenu.appendChild(head);
 
+    if (latestUsage && latestUsage.claude) {
+      const u = latestUsage.claude;
+      const pct = (x) => (x && typeof x.pct === 'number') ? Math.round(x.pct) + '%' : '—';
+      const usageLine = document.createElement('div');
+      usageLine.className = 'cmUsage';
+      usageLine.textContent = 'Claude usage — session ' + pct(u.session) + ' · weekly ' + pct(u.weekly) +
+        (u.stale ? ' (stale)' : '');
+      usageLine.title = 'the current spend snapshot, so cost is visible before you send this consult';
+      consultMenu.appendChild(usageLine);
+    }
+
     const sel = document.createElement('select');
     sel.className = 'cmPersona';
     sel.appendChild(new Option('Just a model', ''));
     for (const name of presetNames) sel.appendChild(new Option(name, name));
     consultMenu.appendChild(sel);
+
+    const dialRow = document.createElement('div');
+    dialRow.className = 'cmDials';
+    const modelSel = document.createElement('select');
+    modelSel.className = 'cmModel';
+    modelSel.title = 'steer THIS consult only — the disposable seat, not your own dials';
+    modelSel.appendChild(new Option('default model', ''));
+    for (const m of ['fable', 'opus', 'sonnet', 'haiku']) modelSel.appendChild(new Option(m, m));
+    const effortSel = document.createElement('select');
+    effortSel.className = 'cmEffort';
+    effortSel.title = 'steer THIS consult only';
+    effortSel.appendChild(new Option('default effort', ''));
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) effortSel.appendChild(new Option(e, e));
+    dialRow.append(modelSel, effortSel);
+    consultMenu.appendChild(dialRow);
 
     const freshRow = document.createElement('label');
     freshRow.className = 'cmFresh';
@@ -555,8 +584,10 @@ window.ApexChat = (function () {
     const fire = () => {
       const question = qa.value.trim();
       if (!question) { qa.focus(); return; }
+      const launch = (modelSel.value || effortSel.value)
+        ? { model: modelSel.value || undefined, effort: effortSel.value || undefined } : undefined;
       ApexBus.post('consultStart', { id: c.id, persona: sel.value || null,
-        freshEyes: freshCb.checked, question });
+        freshEyes: freshCb.checked, question, launch });
       hideConsultMenu();
     };
     send.onclick = fire;
@@ -618,11 +649,19 @@ window.ApexChat = (function () {
     composerBtn.className = 'ccToCompose';
     composerBtn.textContent = 'Send to composer';
     composerBtn.disabled = true;
-    composerBtn.title = 'fill your composer with the consultant\'s whole reply — never sends it for you';
+    composerBtn.title = 'fill your composer with the consultant\'s reply (select part of it first to ' +
+      'send only that) — never sends it for you';
     composerBtn.onclick = () => {
       if (!c.consult || !c.consult.replyText) return;
+      // selection-level send: a text selection anchored inside THIS reply
+      // wins over the whole thing — cheap enough for v1 (design/consult-v1.md
+      // §The flow, step 5's "implementer's call").
+      const sel = window.getSelection();
+      const selected = sel && !sel.isCollapsed && sel.toString().trim() &&
+        reply.contains(sel.anchorNode) && reply.contains(sel.focusNode) ? sel.toString().trim() : '';
+      const text = selected || c.consult.replyText;
       switchTo(c.id);
-      c.ta.value = (c.ta.value ? c.ta.value + '\n' : '') + c.consult.replyText;
+      c.ta.value = (c.ta.value ? c.ta.value + '\n' : '') + text;
       c.ta.focus();
       c.ta.dispatchEvent(new Event('input', { bubbles: true }));
     };
@@ -1226,6 +1265,9 @@ window.ApexChat = (function () {
     renderTabs();
   });
   ApexBus.post('taskList', {});
+  // ambient rail-usage push (main/usage.js) — the Consult picker's spend
+  // snapshot rides this instead of a dedicated request/response round trip
+  ApexBus.on('usageData', (m) => { latestUsage = (m && m.usage) || null; });
   // ---------- Consult v1: consult card projection (main/consult.js) ----------
   ApexBus.on('consultState', (m) => {
     const c = chats.get(m.id);
