@@ -294,6 +294,8 @@ function resolveElement(projectRoot, context, opts) {
 // The constants export wholesale as the module's public contract (the
 // suggest.js precedent): the drill pins the caps, surgeon.js renders the
 // tiers, and a future consumer imports rather than re-invents a number.
+// isSafeRelativePath is internal-only since the v2 sweep (nothing outside
+// called it; parseSourceHints applies its wall before a hint survives).
 module.exports = {
   MAX_WALK_FILES,
   MAX_FILE_BYTES,
@@ -307,7 +309,6 @@ module.exports = {
   TIER_CONFIDENCE,
   cleanContext,
   describeElement,
-  isSafeRelativePath,
   parseSourceHints,
   resolveElement,
 };

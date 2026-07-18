@@ -368,20 +368,23 @@ function createServerManager(options = {}) {
   return { start, stop, stopAll, state: stateOf, running };
 }
 
+// The constants export wholesale as the module's public contract (the
+// suggest.js precedent): the drill pins the ring/tail caps, main.js wires
+// the manager, and nothing re-invents a number. serversPath/normalizeConfig
+// and defaultSpawner/defaultPortProbe are internal-only since the v2 sweep
+// (nothing outside called them: config crosses through readServerConfig/
+// writeServerConfig, and the drill injects its own spawner/portProbe through
+// createServerManager's options — the seam, not the defaults, is public).
 module.exports = {
   SERVERS_FILE,
   LOG_RING_MAX,
   LOG_TAIL,
   READY_TIMEOUT_MS,
   PORT_POLL_MS,
-  serversPath,
-  normalizeConfig,
   readServerConfigs,
   readServerConfig,
   writeServerConfig,
   isCwdContained,
   assertCwdContained,
-  defaultSpawner,
-  defaultPortProbe,
   createServerManager,
 };

@@ -251,7 +251,9 @@ function buildKickoff({ displayName, intent, context, candidates } = {}) {
 
 // The constants export wholesale as the module's public contract (the
 // suggest.js precedent): the drill pins the caps and error names, C2+ wires
-// the seat, and nothing re-invents a number.
+// the seat, and nothing re-invents a number. extractReport is internal-only
+// since the v2 sweep (nothing outside called it; parseReply is the one
+// public door to the fenced-block parser and drills fail-closure through it).
 module.exports = {
   MAX_EDITS,
   DEMOTE_EDIT_THRESHOLD,
@@ -262,7 +264,6 @@ module.exports = {
   MAX_EDIT_PATH,
   EDIT_KINDS,
   MAX_INTENT_CHARS,
-  extractReport,
   classifyEditPath,
   validateReport,
   parseReply,

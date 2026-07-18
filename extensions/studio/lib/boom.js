@@ -360,13 +360,15 @@ function composeBoomKickoff({ displayName, intent, context, candidates, projectR
 
 // The constants export wholesale as the module's public contract (the
 // suggest.js precedent): the drill pins the caps and the ordering, main.js
-// wires the flow, and nothing re-invents a number.
+// wires the flow, and nothing re-invents a number. sliceIntent and
+// kickoffFileExcerpts are internal-only since the v2 sweep (nothing outside
+// called them; appendLedgerEntry/gitCommitBoom and composeBoomKickoff carry
+// their work).
 module.exports = {
   LEDGER_SCHEMA,
   MAX_LEDGER_ENTRIES,
   MAX_LEDGER_INTENT,
   MAX_KICKOFF_FILES,
-  sliceIntent,
   ledgerFile,
   backupRoot,
   resolveApplyPath,
@@ -380,6 +382,5 @@ module.exports = {
   gitCommitBoom,
   gitRevertBoom,
   revertBackup,
-  kickoffFileExcerpts,
   composeBoomKickoff,
 };

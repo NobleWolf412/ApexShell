@@ -429,6 +429,8 @@ function renderContractAddendum(tokens, components, manifest) {
 // The constants export wholesale as the module's public contract (the
 // design.js precedent); the drill pins the cap NUMBERS and the addendum's
 // load-bearing sentences on its own side so a drift here fails the gate.
+// isTokenRole is internal-only since the v2 sweep (nothing outside called
+// it; validateComponents carries its verdict).
 module.exports = {
   MAX_BINDINGS,
   MAX_COMPONENTS,
@@ -442,7 +444,6 @@ module.exports = {
   MAX_VARIANTS,
   SPINES_SCHEMA_VERSION,
   TOKEN_ROLES,
-  isTokenRole,
   renderContractAddendum,
   validateComponents,
   validateManifest,
