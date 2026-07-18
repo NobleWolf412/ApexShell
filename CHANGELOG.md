@@ -51,8 +51,6 @@
   services → stores), emitted as a valid flowchart marked source 'derived' —
   the drill holds its output to the module's OWN validator, so the fallback
   can never emit what the contract would refuse.
->>>>>>> worktree-agent-ae5855c3d3c503c38
-
 - **STUDIO v2, Wave S slice S2 — the studio boot mode, per-window captions,
   the ⧉ affordance, and the reopen preference** (`renderer/shell.js`,
   `renderer/styles/shell.css`, `main/main.js`, `main/bus.js`,
