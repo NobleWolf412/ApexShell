@@ -19,6 +19,10 @@ const blueprint = require('../extensions/studio/lib/blueprint');
 const studio = require('../extensions/studio/main');
 const drafts = require('../extensions/studio/lib/drafts');
 const modelPicker = require('../extensions/studio/lib/modelPicker');
+// The A4 core seam. Safe to require in plain node: main/bus.js's
+// require('electron') resolves to the npm package's path string outside an
+// Electron process, and nothing here calls the parts that need a window.
+const artifacts = require('../main/artifacts');
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-studio-mockup-'));
 let passed = 0, failed = 0;
@@ -319,6 +323,7 @@ function freshHarness(tag, { withPick, withPreview = true } = {}) {
 
   const bus = fakeBus();
   const controllers = [];
+  const serveCalls = { registered: [], revoked: [] };
   let started = null;
   studio.register({
     bus, stateDir,
@@ -330,9 +335,14 @@ function freshHarness(tag, { withPick, withPreview = true } = {}) {
       controllers.push(controller);
       return controller;
     } },
+    // A4: record exactly what the studio asks the served-file gate to admit.
+    serve: {
+      registerDir(token, dir) { serveCalls.registered.push({ token, dir }); },
+      revokeDir(token) { serveCalls.revoked.push(token); },
+    },
   });
   const screen = { id: 'home', title: 'Home', purpose: 'The main screen.' };
-  return { stateDir, workspace, bus, controllers, draft, screen,
+  return { stateDir, workspace, bus, controllers, draft, screen, serveCalls,
            latestStarted: () => started };
 }
 
@@ -524,6 +534,222 @@ gate('deleting a draft over the bus cleans its mockup files too', () => {
   const result = h.bus.posts.find((p) => p.type === 'projectsDraftResult').payload;
   assert.equal(result.ok, true);
   assert.ok(!fs.existsSync(dir), 'the draft\'s mockup dir died with the draft');
+});
+
+// ---------- A4: the served-file gate's directory seam (main/artifacts.js) ---
+// The wave's one core touch, drilled against the REAL module: registration is
+// scoped to exactly one directory's direct-child .html files; everything else
+// — other paths, traversal, sidecars, subdirs, unregistered/revoked tokens —
+// refuses, and the C2 exact-file behavior is untouched.
+function serveHarness(tag) {
+  const dir = path.join(scratch, tag, 'mockups', 'draft-a');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'home.html'), '<!doctype html><html></html>');
+  fs.writeFileSync(path.join(dir, 'home.json'), '{}');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  fs.writeFileSync(path.join(dir, 'sub', 'inner.html'), '<!doctype html><html></html>');
+  const outside = path.join(scratch, tag, 'outside.html');
+  fs.writeFileSync(outside, 'secret');
+  return { dir, outside };
+}
+
+gate('served-dir gate: registration admits exactly the dir\'s direct-child .html files', () => {
+  const h = serveHarness('serve-scope');
+  const file = path.join(h.dir, 'home.html');
+  assert.equal(artifacts.isServed(file), false, 'nothing serves before registration');
+  artifacts.registerServedDir('drill:serve-scope', h.dir);
+  assert.equal(artifacts.isServed(file), true, 'a direct-child .html serves');
+  // normalization: a path that wanders out and back still lands inside
+  assert.equal(artifacts.isServed(path.join(h.dir, '..', 'draft-a', 'home.html')), true);
+});
+
+gate('served-dir gate: sidecars, subdirs, traversal, and other paths all refuse', () => {
+  const h = serveHarness('serve-refuse');
+  artifacts.registerServedDir('drill:serve-refuse', h.dir);
+  assert.equal(artifacts.isServed(path.join(h.dir, 'home.json')), false, 'the provenance sidecar never serves');
+  assert.equal(artifacts.isServed(path.join(h.dir, 'sub', 'inner.html')), false, 'subdirectories refuse');
+  assert.equal(artifacts.isServed(path.join(h.dir, '..', '..', 'outside.html')), false, 'traversal past the root refuses');
+  assert.equal(artifacts.isServed(h.outside), false, 'a sibling path refuses');
+  assert.equal(artifacts.isServed(path.join(h.dir, 'missing.html')), false, 'a missing file refuses');
+  assert.equal(artifacts.isServed(path.join(os.homedir(), '.ssh', 'id_rsa')), false, 'the C2 case still refuses');
+});
+
+gate('served-dir gate: revoke closes the door; bad registrations throw', () => {
+  const h = serveHarness('serve-revoke');
+  const file = path.join(h.dir, 'home.html');
+  artifacts.registerServedDir('drill:serve-revoke', h.dir);
+  assert.equal(artifacts.isServed(file), true);
+  artifacts.revokeServedDir('drill:serve-revoke');
+  assert.equal(artifacts.isServed(file), false, 'a revoked dir refuses again');
+  assert.throws(() => artifacts.registerServedDir('', h.dir), /token/);
+  assert.throws(() => artifacts.registerServedDir('drill:bad', 'relative/dir'), /absolute/);
+});
+
+gate('served-dir gate: a symlink parked inside a registered dir never serves its target', () => {
+  const h = serveHarness('serve-link');
+  artifacts.registerServedDir('drill:serve-link', h.dir);
+  const link = path.join(h.dir, 'link.html');
+  try { fs.symlinkSync(h.outside, link, 'file'); }
+  catch { console.log('      (symlinks unavailable on this box — vector not constructible, skipped)'); return; }
+  assert.equal(artifacts.isServed(link), false);
+});
+
+// ---------- A4: the studio registers EXACTLY the draft's mockups dir ---------
+gate('the studio registers only the draft\'s own mockups dir and serves URIs from it', () => {
+  const h = freshHarness('serve-ctx');
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC,
+    h.draft.preview.generatedCanonicalHash);
+  h.bus.handlers.get('projectsMockupList')({ id: h.draft.id });
+  const expectedDir = path.join(h.stateDir, 'mockups', h.draft.id);
+  assert.ok(h.serveCalls.registered.length >= 1);
+  for (const call of h.serveCalls.registered) {
+    assert.equal(call.token, 'studio-mockups:' + h.draft.id);
+    assert.equal(call.dir, expectedDir, 'never a broader dir than the draft\'s own mockups');
+  }
+  const posted = h.bus.posts.find((p) => p.type === 'projectsMockupScreens').payload;
+  assert.equal(posted.generated[0].uri,
+    'apex://local/' + encodeURIComponent(path.join(expectedDir, 'home.html')));
+});
+
+gate('deleting a draft revokes its served-dir registration', () => {
+  const h = freshHarness('serve-revoke-on-delete');
+  h.bus.handlers.get('projectsDraftDelete')({ id: h.draft.id, confirmed: true });
+  assert.deepEqual(h.serveCalls.revoked, ['studio-mockups:' + h.draft.id]);
+});
+
+// ---------- A4: APPROVE MOCKUPS — recording, staleness, invalidation ---------
+gate('approve refuses when nothing up-to-date is generated', () => {
+  const h = freshHarness('approve-empty');
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  const result = h.bus.posts.find((p) => p.type === 'projectsMockupApproveResult').payload;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /no up-to-date mockup/);
+});
+
+gate('approve records {screens, canonicalHash} on the draft; validation warning clears', () => {
+  const h = freshHarness('approve-happy');
+  const hash = h.draft.preview.generatedCanonicalHash;
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC, hash);
+
+  // Before approval: the review report carries the plain-language warning.
+  h.bus.handlers.get('projectsPreviewValidate')({ id: h.draft.id });
+  let report = h.bus.posts.find((p) => p.type === 'projectsValidationStatus').payload.report;
+  assert.ok(report.warnings.some((w) => w.code === 'missing-mockups' && /approve/i.test(w.message)),
+    JSON.stringify(report.warnings));
+
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  const result = h.bus.posts.find((p) => p.type === 'projectsMockupApproveResult').payload;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.approval.screens, ['home']);
+  assert.equal(result.approval.canonicalHash, hash);
+  const onDisk = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.deepEqual(onDisk.mockupApproval.screens, ['home']);
+  assert.equal(onDisk.mockupApproval.canonicalHash, hash);
+  assert.equal(mockup.isApprovalCurrent(onDisk), true);
+  const screens = h.bus.posts.find((p) => p.type === 'projectsMockupScreens').payload;
+  assert.equal(screens.approvalCurrent, true);
+  assert.ok(h.bus.posts.some((p) => p.type === 'projectsDraftPatched'), 'the fresh draft rides back');
+
+  // After approval: the warning is gone (the package-to-be carries mockups/).
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsPreviewValidate')({ id: h.draft.id });
+  report = h.bus.posts.find((p) => p.type === 'projectsValidationStatus').payload.report;
+  assert.ok(!report.warnings.some((w) => w.code === 'missing-mockups'), JSON.stringify(report.warnings));
+});
+
+gate('a canonical move makes the approval stale; stale screens never enter a new approval', () => {
+  const h = freshHarness('approve-stale');
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC,
+    h.draft.preview.generatedCanonicalHash);
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  let draft = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.equal(mockup.isApprovalCurrent(draft), true);
+
+  // The blueprint moves on: approval survives on the draft but reads stale.
+  draft = drafts.updateDraft(h.stateDir, draft.id, draft.revision, {
+    answers: { idea: 'A completely different idea now, long enough to reshape the canonical.' },
+  });
+  draft = drafts.updateDraft(h.stateDir, draft.id, draft.revision, {
+    preview: blueprint.buildBundle(draft, 'snipersight'),
+  });
+  assert.equal(mockup.isApprovalCurrent(draft), false, 'hash moved — approval is stale');
+  // The one generated screen is now stale too, so re-approve refuses.
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupApprove')({ id: draft.id, expectedRevision: draft.revision });
+  const result = h.bus.posts.find((p) => p.type === 'projectsMockupApproveResult').payload;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /no up-to-date mockup/);
+});
+
+gate('regenerating a screen clears the recorded approval outright', () => {
+  const h = freshHarness('approve-regen');
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC,
+    h.draft.preview.generatedCanonicalHash);
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  assert.ok(drafts.readDraft(h.stateDir, h.draft.id).mockupApproval);
+
+  h.bus.handlers.get('projectsMockupPrepare')({ id: h.draft.id, screen: h.screen });
+  const prepared = h.bus.posts.at(-1).payload;
+  h.bus.handlers.get('projectsMockupRun')({
+    id: h.draft.id, screen: h.screen, expectedRevision: prepared.revision, approved: true,
+  });
+  const started = h.latestStarted();
+  started.onEvent({ type: 'text', text: fence(VALID_DOC) });
+  started.onEvent({ type: 'result', ok: true });
+  assert.equal(drafts.readDraft(h.stateDir, h.draft.id).mockupApproval, null,
+    'fresh pixels need fresh approval');
+});
+
+gate('drafts.validateMockupApproval fails closed on malformed shapes', () => {
+  const hash = 'a'.repeat(64);
+  const good = { screens: ['home'], canonicalHash: hash, approvedAt: new Date().toISOString() };
+  assert.doesNotThrow(() => drafts.validateMockupApproval(good));
+  assert.doesNotThrow(() => drafts.validateMockupApproval(null));
+  const bads = [
+    [], 'yes', { ...good, screens: [] }, { ...good, screens: ['../evil'] },
+    { ...good, screens: ['home', 'home'] }, { ...good, canonicalHash: 'nope' },
+    { ...good, approvedAt: 'not a date' }, { ...good, extra: true },
+  ];
+  for (const bad of bads)
+    assert.throws(() => drafts.validateMockupApproval(bad), /invalid|unknown/i, JSON.stringify(bad));
+});
+
+// ---------- A4: the Create-time package copy ---------------------------------
+gate('Create copies ONLY approved mockups (html + provenance) inside the atomic stage', () => {
+  const h = freshHarness('create-copy');
+  const hash = h.draft.preview.generatedCanonicalHash;
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC, hash);
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  const approvedDraft = drafts.readDraft(h.stateDir, h.draft.id);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsCreate')({
+    id: approvedDraft.id, expectedRevision: approvedDraft.revision, confirmed: true,
+  });
+  const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult').payload;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const dir = path.join(h.workspace, 'snipersight', 'mockups');
+  assert.equal(fs.readFileSync(path.join(dir, 'home.html'), 'utf8'), VALID_DOC);
+  const sidecar = JSON.parse(fs.readFileSync(path.join(dir, 'home.json'), 'utf8'));
+  assert.equal(sidecar.canonicalHash, hash, 'provenance rides along — the proof of what these were built from');
+  assert.ok(!result.warnings.some((w) => w.code === 'missing-mockups'), JSON.stringify(result.warnings));
+});
+
+gate('without a current approval, Create writes no mockups/ and validation warns', () => {
+  const h = freshHarness('create-unapproved');
+  // generated but never approved — it stays behind in draft state
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC,
+    h.draft.preview.generatedCanonicalHash);
+  const current = drafts.readDraft(h.stateDir, h.draft.id);
+  h.bus.handlers.get('projectsCreate')({
+    id: current.id, expectedRevision: current.revision, confirmed: true,
+  });
+  const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult').payload;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(!fs.existsSync(path.join(h.workspace, 'snipersight', 'mockups')),
+    'unapproved mockups stay behind');
+  assert.ok(result.warnings.some((w) => w.code === 'missing-mockups'), JSON.stringify(result.warnings));
+  assert.equal(mockup.collectApprovedMockups(h.stateDir, current).length, 0);
 });
 
 console.log('\nSTUDIO MOCKUP DRILL: ' + passed + '/' + (passed + failed) + ' passed');

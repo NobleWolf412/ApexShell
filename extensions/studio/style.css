@@ -267,3 +267,17 @@
   line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .studioView[data-builder="projects"] .pjPatchWhy { color: var(--dim); font-size: 11px;
   line-height: 1.5; margin-top: 6px; }
+
+/* the SEE step (slice A4): device-framed sandboxed mockup preview. The frame
+   is a real width, not a rescale — the mockup's own CSS answers it like a
+   viewport; max-width keeps the desktop preset usable in a quarter dock. */
+.studioView[data-builder="projects"] .pjSeeSwitcher { align-items: center; }
+.studioView[data-builder="projects"] .pjSeeWidths { margin-top: 10px; }
+.studioView[data-builder="projects"] .pjSeeFrame { max-width: 100%; margin-top: 10px;
+  border: 1px solid var(--edge); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.studioView[data-builder="projects"] .pjSeeIframe { display: block; width: 100%; height: 480px;
+  border: 0; background: #fff; }
+.studioView[data-builder="projects"] .pjSeeEmpty { padding: 28px 16px; }
+.studioView[data-builder="projects"] .pjSeeStale { padding: 8px 10px; color: var(--warning);
+  font-size: 11.5px; line-height: 1.5; border-bottom: 1px solid var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent); }

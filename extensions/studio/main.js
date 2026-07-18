@@ -117,7 +117,7 @@ function selectedWorkspace(stateDir) {
 // deterministic contract.validateProjectPackage the on-disk drill exercises. The
 // staged blueprint carries the approved hash, so a manual edit surfaces as the
 // contract's own canonical-drift warning too. The temp tree is always removed.
-function validateBundleReport(bundle) {
+function validateBundleReport(bundle, approvedMockups = []) {
   if (!bundle || typeof bundle !== 'object' || !contract.isSafeProjectId(bundle.projectId))
     throw new Error('Generate a canonical preview first.');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-studio-review-'));
@@ -132,6 +132,18 @@ function validateBundleReport(bundle) {
     fs.mkdirSync(path.join(dir, 'design'));
     fs.writeFileSync(path.join(dir, 'design', 'tokens.json'),
       design.serializeTokens(design.compileTokens(bundle.blueprint.look).tokens), 'utf8');
+    // Stage the approved mockups the same way (slice A4): with a CURRENT
+    // approval the package-to-be carries mockups/, so contract.js's
+    // missing-mockups warning fires exactly when Create would really produce
+    // a package without them — the "no approval yet" warning the spec asks
+    // validation to surface, stated once, in contract.js, not twice.
+    if (Array.isArray(approvedMockups) && approvedMockups.length) {
+      fs.mkdirSync(path.join(dir, 'mockups'));
+      for (const m of approvedMockups) {
+        fs.copyFileSync(m.htmlFile, path.join(dir, 'mockups', m.id + '.html'));
+        fs.copyFileSync(m.provenanceFile, path.join(dir, 'mockups', m.id + '.json'));
+      }
+    }
     const report = contract.validateProjectPackage(tmp, bundle.projectId);
     // The staged paths are ephemeral; never leak them back to the renderer.
     const strip = (finding) => ({ code: finding.code, message: finding.message });
@@ -275,6 +287,10 @@ function register(ctx) {
       catch (err) {
         ctx.bus.post('toast', { text: 'Draft deleted, but its mockup files were not cleaned up: ' + err.message });
       }
+      // The served-dir registration (A4) dies with the draft too — nothing
+      // keeps serving a dir whose owner is gone.
+      if (ctx.serve && typeof ctx.serve.revokeDir === 'function')
+        ctx.serve.revokeDir(serveToken(message.id));
       ctx.bus.post('projectsDraftResult', { ok: true, action: 'deleted' });
       publishDraftList();
     } catch (err) { draftFailure('delete', err); }
@@ -476,7 +492,8 @@ function register(ctx) {
       if (!draft.preview) throw new Error('Generate a canonical preview first.');
       ctx.bus.post('projectsValidationStatus', {
         draftId: draft.id,
-        report: validateBundleReport(draft.preview),
+        report: validateBundleReport(draft.preview,
+          mockup.collectApprovedMockups(ctx.stateDir, draft)),
       });
     } catch (err) {
       ctx.bus.post('projectsValidationStatus', {
@@ -660,15 +677,41 @@ function register(ctx) {
   // UI (A4 owns the real preview surface). Derivation prefers the APPROVED
   // blueprint (the preview bundle) and falls back to a deterministic build
   // from the current answers, so the list renders even before first generate.
+  // The A4 serving seam: register EXACTLY this draft's mockups dir with the
+  // apex:// served-file gate (ctx.serve → main/artifacts.js registerServedDir)
+  // and hand each generated screen its served URI for the SEE step's sandboxed
+  // iframe. The gate itself only admits direct-child .html files of the
+  // registered dir, so the sidecars and everything else on this machine stay
+  // unreachable. ctx.serve is optional on purpose — headless drills register
+  // without it and simply get no URIs.
+  const serveToken = (draftId) => 'studio-mockups:' + draftId;
+  const registerMockupServe = (draft) => {
+    if (!ctx.serve || typeof ctx.serve.registerDir !== 'function') return false;
+    try {
+      ctx.serve.registerDir(serveToken(draft.id), mockup.draftMockupsDir(ctx.stateDir, draft.id));
+      return true;
+    } catch { return false; }
+  };
+
   const postMockupScreens = (draft) => {
     const source = draft.preview ? draft.preview.blueprint : blueprint.blueprintFromDraft(draft);
     const derived = mockup.deriveScreens(source);
+    const served = registerMockupServe(draft);
+    const generated = mockup.listMockups(ctx.stateDir, draft).map((g) => ({
+      ...g,
+      uri: served
+        ? 'apex://local/' + encodeURIComponent(
+            path.join(mockup.draftMockupsDir(ctx.stateDir, draft.id), g.screen.id + '.html'))
+        : null,
+    }));
     ctx.bus.post('projectsMockupScreens', {
       draftId: draft.id,
       kind: derived.kind,
       proposed: derived.screens,
-      generated: mockup.listMockups(ctx.stateDir, draft),
+      generated,
       hasPreview: Boolean(draft.preview),
+      approval: draft.mockupApproval || null,
+      approvalCurrent: mockup.isApprovalCurrent(draft),
       error: null,
     });
   };
@@ -787,8 +830,18 @@ function register(ctx) {
             // can smuggle a violation into a file.
             try {
               const written = mockup.writeMockup(ctx.stateDir, draft.id, screen, parsed.html, canonicalHash);
+              // A4: regenerating ANY screen invalidates a recorded approval
+              // outright — the eyes signed off on the old pixels. Cleared on
+              // the draft (not just flagged), so a fresh APPROVE is the only
+              // way back; the drift/hash arm of invalidation lives in
+              // mockup.isApprovalCurrent.
+              let refreshed = currentWorkspaceDraft(draft.id);
+              if (refreshed.mockupApproval) {
+                refreshed = drafts.updateDraft(ctx.stateDir, refreshed.id, refreshed.revision, { mockupApproval: null });
+                ctx.bus.post('projectsDraftPatched', { draft: refreshed, cards: CARDS });
+              }
               done({ ok: true, file: written.file });
-              postMockupScreens(currentWorkspaceDraft(draft.id));
+              postMockupScreens(refreshed);
             } catch (err) {
               done({ error: err.message });
             }
@@ -818,6 +871,41 @@ function register(ctx) {
     clearTimeout(seat.backstop);
     try { seat.controller.close(); } catch { /* already gone */ }
     ctx.bus.post('projectsMockupStatus', { phase: 'stopped' });
+  });
+
+  // ---- APPROVE MOCKUPS (slice A4) ------------------------------------------
+  // Records the sign-off on the DRAFT (drafts.js's validated mockupApproval
+  // field): the up-to-date generated screens + the canonical hash they were
+  // built from. Stale screens never enter an approval — approving them would
+  // record sight of pixels the blueprint has already left behind. Invalidation
+  // is elsewhere by design: a canonical move makes isApprovalCurrent false
+  // (re-approve), a screen regen clears the field (projectsMockupRun).
+  ctx.bus.on('projectsMockupApprove', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      if (!draft.preview)
+        throw new Error('Generate the canonical preview first — approval covers mockups of the approved blueprint.');
+      const upToDate = mockup.listMockups(ctx.stateDir, draft).filter((g) => !g.stale);
+      if (!upToDate.length)
+        throw new Error('There is no up-to-date mockup to approve yet — generate (or regenerate) the screens first.');
+      const approval = {
+        screens: upToDate.map((g) => g.screen.id).sort(),
+        canonicalHash: draft.preview.generatedCanonicalHash,
+        approvedAt: new Date().toISOString(),
+      };
+      const updated = drafts.updateDraft(ctx.stateDir, draft.id,
+        message && message.expectedRevision, { mockupApproval: approval });
+      ctx.bus.post('projectsMockupApproveResult', { ok: true, draftId: updated.id, approval });
+      // Same no-navigation refresh contract as a co-designer patch: the draft
+      // (and its new revision) lands without yanking the user off the step.
+      ctx.bus.post('projectsDraftPatched', { draft: updated, cards: CARDS });
+      postMockupScreens(updated);
+    } catch (err) {
+      ctx.bus.post('projectsMockupApproveResult', {
+        ok: false, draftId: message && message.id,
+        conflict: err.code === 'DRAFT_CONFLICT', error: err.message,
+      });
+    }
   });
 
   // ---- the co-designer panel (slice 7, § AI integration Level 2) ----------
@@ -977,7 +1065,12 @@ function register(ctx) {
       if (message.expectedRevision !== draft.revision)
         throw new Error('The draft changed; reopen it before creating the project.');
       const workspace = selectedWorkspace(ctx.stateDir);
-      const created = packageCreator.createProjectPackage(workspace, draft.preview);
+      // A4: the approved, still-current mockups ride into the package (staged
+      // inside creator.js's same atomic temp dir, before the rename — never a
+      // post-rename write). No/stale approval = an empty list = no mockups/.
+      const created = packageCreator.createProjectPackage(workspace, draft.preview, {
+        mockups: mockup.collectApprovedMockups(ctx.stateDir, draft),
+      });
       ctx.bus.post('projectsCreateResult', {
         ok: true,
         projectId: created.projectId,

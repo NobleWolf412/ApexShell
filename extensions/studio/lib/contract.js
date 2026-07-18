@@ -103,6 +103,7 @@ function projectPaths(workspaceRoot, projectId) {
     notesDir: resolveInside(projectDir, 'notes'),
     designDir: resolveInside(projectDir, 'design'),
     tokens: resolveInside(projectDir, 'design', 'tokens.json'),
+    mockupsDir: resolveInside(projectDir, 'mockups'),
   };
 }
 
@@ -438,6 +439,20 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
     warnings.push(finding('missing-tokens',
       'This project has no design/tokens.json yet — run Create again (regenerating the package) to add the compiled design tokens.',
       paths.tokens));
+  }
+
+  // mockups/ — the approved SEE-step mockups (slice A4). Absence is a WARNING
+  // only on a schema-2 package (the SEE step exists for it; approving and
+  // running Create again restores the folder) and stays SILENT on schema 1,
+  // which predates mockups entirely. Never a block: a blueprint is complete
+  // without pictures. Present, the folder must stay inside the workspace.
+  if (fs.existsSync(paths.mockupsDir)) {
+    if (!realPathInside(workspaceRoot, paths.mockupsDir))
+      errors.push(finding('workspace-escape', 'mockups/ resolves outside the configured workspace.', paths.mockupsDir));
+  } else if (blueprint && blueprint.schema_version === SCHEMA_VERSION) {
+    warnings.push(finding('missing-mockups',
+      'No approved mockups are recorded yet — generate them on the SEE step, approve them, and they ride into the package at Create.',
+      paths.mockupsDir));
   }
 
   // The digest other tools read is optional here, but if present it must stay

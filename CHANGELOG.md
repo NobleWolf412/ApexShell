@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave A slice A4 — the SEE step**
+  (`extensions/studio/renderer.js`, `extensions/studio/main.js`,
+  `extensions/studio/lib/{drafts,mockup,creator,contract}.js`,
+  `extensions/studio/style.css`; core: `main/artifacts.js` + one ctx line in
+  `main/main.js`; drills in `test/studio-mockup-drill.js`, fixture
+  `test/studio-fixtures/valid/mockups/`): the PROJECTS stepper gains SEE
+  between Canonical and Create — A3's minimal Canonical-step mockup list is
+  absorbed here whole. The step renders the selected screen in an `<iframe
+  sandbox="allow-scripts">` (NO `allow-same-origin`: scripts run but the
+  document gets an opaque origin — no Apex storage/cookies/DOM, no bus;
+  with A3's no-external-URL contract and the apex:// response CSP the page
+  is fully inert), with screen-switcher chips, device-width presets
+  (mobile 390 / tablet 768 / desktop 1180), the A3 STALE badge, and
+  REGENERATE riding A3's prepare→run machinery unchanged. Serving is the
+  wave's ONE core touch: `main/artifacts.js` gains an additive
+  `registerServedDir(token, dir)`/`revokeServedDir(token)` seam beside the
+  C2 exact-file set (direct-child `.html` only — sidecars, subdirs,
+  traversal, symlinks, and every unregistered path still refuse;
+  realpath-checked; the no-network response CSP still applies), exposed to
+  extensions as `ctx.serve` (one line in `main/main.js`); the studio
+  registers exactly one draft's mockups dir per token and revokes it on
+  draft delete. APPROVE MOCKUPS records `{screens, canonicalHash,
+  approvedAt}` on the draft (`drafts.js`-validated `mockupApproval` field,
+  the preview discipline): a canonical move makes the approval stale
+  (re-approve), regenerating any screen clears it outright, and validation
+  surfaces a missing/stale approval as a plain-language WARNING
+  (`missing-mockups`) on schema-2 drafts and packages — silent on schema 1,
+  never a block. At Create, the approved still-current screens' html +
+  provenance sidecars copy into `<project>/mockups/` INSIDE creator.js's
+  same atomic staging dir (before the rename — never a post-rename write);
+  unapproved/stale mockups stay behind in draft state. Smoke affordances
+  (extension-side, hash-ridden through the existing verbatim
+  `APEX_SMOKE_DOCK`): `#builder=<id>` fronts a studio sub-view,
+  `#pjstep=see` opens the SEE step draft-free. 13 new drill gates: the
+  served-dir gate's scope/traversal/revoke/symlink refusals against the
+  real `main/artifacts.js`, exact-dir registration + revoke-on-delete,
+  approval record/staleness/regen-invalidation, malformed-approval shapes,
+  and the Create copy both ways (approved rides, unapproved stays +
+  warning). Update & restart.
+
 - **STUDIO v2, Wave A slice A3 — the mockup pass**
   (`extensions/studio/lib/mockup.js` new; `extensions/studio/main.js`,
   `extensions/studio/renderer.js`, `test/studio-mockup-drill.js` new): the

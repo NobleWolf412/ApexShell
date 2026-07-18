@@ -59,7 +59,13 @@ function buildContextDigest(bundle) {
 // would-overwrite) rather than re-deriving them: create mode validates BEFORE
 // any lock/stage exists, so a collision or a traversal attempt in the id
 // leaves zero stray files.
-function createProjectPackage(workspaceRoot, bundle) {
+function createProjectPackage(workspaceRoot, bundle, options = {}) {
+  // The approved SEE-step mockups (slice A4), as mockup.collectApprovedMockups
+  // shapes them: [{ id, htmlFile, provenanceFile }]. The caller (main.js's
+  // projectsCreate) collects them so this module stays draft-store-agnostic;
+  // an absent/empty list simply writes no mockups/ folder — unapproved or
+  // stale mockups stay behind in draft state by construction.
+  const mockups = Array.isArray(options && options.mockups) ? options.mockups : [];
   if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot))
     throw new Error('Projects workspace must be an absolute path.');
   const root = path.resolve(workspaceRoot);
@@ -104,6 +110,18 @@ function createProjectPackage(workspaceRoot, bundle) {
     const compiled = design.compileTokens(bundle.blueprint.look);
     fs.mkdirSync(path.join(stage, 'design'));
     writeNew(path.join(stage, 'design', 'tokens.json'), design.serializeTokens(compiled.tokens));
+    // mockups/ (slice A4) — the approved screens' html plus their provenance
+    // sidecars (the sidecar carries the generating canonical hash: the proof
+    // of WHAT the mockups were built from). Copied INSIDE the same staging
+    // dir, before the rename below — the package layout grew, the atomic
+    // discipline did not: there is never a write after the rename.
+    if (mockups.length) {
+      fs.mkdirSync(path.join(stage, 'mockups'));
+      for (const m of mockups) {
+        fs.copyFileSync(m.htmlFile, path.join(stage, 'mockups', m.id + '.html'), fs.constants.COPYFILE_EXCL);
+        fs.copyFileSync(m.provenanceFile, path.join(stage, 'mockups', m.id + '.json'), fs.constants.COPYFILE_EXCL);
+      }
+    }
     fs.renameSync(stage, paths.projectDir);   // the atomic commit
     committed = true;
     const report = contract.validateProjectPackage(root, bundle.projectId, { mode: 'native' });

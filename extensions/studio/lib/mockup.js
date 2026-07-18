@@ -416,6 +416,39 @@ function listMockups(stateDir, draft) {
   return out;
 }
 
+// ---- mockup approval (slice A4) ---------------------------------------------
+/** The approval drift rule, mirroring isMockupStale: an approval recorded on
+ *  the draft (drafts.js's validated `mockupApproval` field) is CURRENT only
+ *  while its recorded canonical hash still matches the draft's approved
+ *  canonical hash. A blueprint move makes it stale (re-approve); a screen
+ *  regeneration clears the field outright (main.js), so it never reaches this
+ *  check. Pure over the draft — no disk read. */
+function isApprovalCurrent(draft) {
+  const approval = draft && draft.mockupApproval;
+  if (!approval || !draft.preview) return false;
+  return approval.canonicalHash === draft.preview.generatedCanonicalHash;
+}
+
+/** The Create-time copy list (§ Wave F/A package layout): the approved,
+ *  still-current screens' html + provenance sidecar files. Empty unless the
+ *  draft carries a CURRENT approval; within one, a screen whose provenance no
+ *  longer matches the approved hash (or vanished) is skipped, fail-soft like
+ *  listMockups — only approved, non-stale mockups ever enter a package. */
+function collectApprovedMockups(stateDir, draft) {
+  if (!isApprovalCurrent(draft)) return [];
+  const out = [];
+  for (const screenId of draft.mockupApproval.screens) {
+    const record = readProvenance(stateDir, draft.id, screenId);
+    if (!record || record.canonicalHash !== draft.mockupApproval.canonicalHash) continue;
+    out.push({
+      id: screenId,
+      htmlFile: screenFile(stateDir, draft.id, screenId, '.html'),
+      provenanceFile: screenFile(stateDir, draft.id, screenId, '.json'),
+    });
+  }
+  return out;
+}
+
 /** Remove a draft's whole mockup dir — draft deletion's cleanup hook. The
  *  link guard runs first so a swapped-in symlink is refused, never recursed
  *  into. Missing dir is a no-op. */
@@ -453,5 +486,7 @@ module.exports = {
   readProvenance,
   isMockupStale,
   listMockups,
+  isApprovalCurrent,
+  collectApprovedMockups,
   deleteDraftMockups,
 };

@@ -114,7 +114,11 @@ function createWindow() {
   theme.register();
   monitors.register();
   seats.register();
-  extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
+  extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot },
+    // A4: the served-file gate's registration seam (main/artifacts.js) — the
+    // studio's main half registers a draft's mockups dir so the SEE step's
+    // sandboxed iframe can load them through apex://.
+    serve: { registerDir: artifacts.registerServedDir, revokeDir: artifacts.revokeServedDir } });
   tasks.register();   // after extensions — routes validate against live presets
   auditWatch.register();   // live-auditor watch manager (opt-in per seat)
   consult.register();      // Consult → : a disposable second opinion on the current chat

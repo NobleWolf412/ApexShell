@@ -83,7 +83,12 @@ ApexShell/
 │   ├── usage.js           provider usage probes + the per-day local ledger
 │   ├── theme.js / background.js — appearance state (UI-written configs)
 │   └── store.js / artifacts.js — history index + working-view candidates
-│                          (artifacts also gates the apex:// served-file allowlist)
+│                          (artifacts also gates the apex:// served-file allowlist:
+│                          the C2 exact-file set, plus registerServedDir/
+│                          revokeServedDir — a token-keyed dir whose direct-child
+│                          .html files may serve, realpath-checked; the studio's
+│                          SEE step registers a draft's mockups dir through
+│                          ctx.serve. STUDIO v2 Wave A's one core touch)
 ├── renderer/              the window (plain JS, no framework)
 │   ├── index.html         static skeleton: title bar, menu, core dock panes,
 │   │                      AI rail (+ button only), tracker blind, script list
@@ -154,6 +159,12 @@ first. When no extension sets `priority`, order is alphabetical as before.
 - `ctx.pickDirectory({title, defaultPath})` — opens the shell's native folder
   picker after an explicit user action and resolves to an absolute path or
   `null` when cancelled.
+- `ctx.serve` — the apex:// served-file gate's registration seam (STUDIO v2
+  slice A4): `registerDir(token, absoluteDir)` admits that directory's
+  direct-child `.html` files through the protocol (path-normalized,
+  realpath-checked — see main/artifacts.js); `revokeDir(token)` closes it.
+  Register the narrowest dir you own (the studio registers one draft's
+  mockups dir per token), never a broad tree.
 - `ctx.seats` — seat preset API:
   - `registerPreset({name, letter, title, kickoff, cwd})` — a named rail
     button; `kickoff` is the first prompt a fresh seat receives (omit for

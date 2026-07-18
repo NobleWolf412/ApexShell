@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "screen": {
+    "id": "home",
+    "title": "Home",
+    "purpose": "The main screen — the single scannable board."
+  },
+  "canonicalHash": "dce564ec79317da46c60ef0035d35dc11e0cceedb394f453f9f26d2c6834b653",
+  "generatedAt": "2026-07-18T00:00:00.000Z",
+  "bytes": 512
+}

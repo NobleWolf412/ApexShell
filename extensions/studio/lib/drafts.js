@@ -131,6 +131,34 @@ function validatePreview(value) {
     throw new Error('Draft preview gaps are invalid.');
 }
 
+// The SEE step's mockup approval (slice A4), persisted on the draft the same
+// way the preview is: { screens: [ids], canonicalHash, approvedAt }, or null
+// for "not approved". The hash pins WHICH blueprint the eyes signed off on —
+// staleness (hash moved on) is derived at read time, never stored; a screen
+// regeneration clears the field outright (main.js). The id regex mirrors
+// lib/mockup.js's SCREEN_ID_RE verbatim rather than importing it — mockup.js
+// already requires this module, and a validation-only regex is not worth a
+// require cycle.
+const APPROVAL_SCREEN_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+function validateMockupApproval(value) {
+  if (value === null || value === undefined) return;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Draft mockup approval is invalid.');
+  if (!Array.isArray(value.screens) || !value.screens.length || value.screens.length > 24 ||
+      value.screens.some((id) => typeof id !== 'string' || id.length > 48 || !APPROVAL_SCREEN_RE.test(id)) ||
+      new Set(value.screens).size !== value.screens.length)
+    throw new Error('Draft mockup approval screens are invalid.');
+  if (typeof value.canonicalHash !== 'string' || !HASH_RE.test(value.canonicalHash))
+    throw new Error('Draft mockup approval hash is invalid.');
+  if (typeof value.approvedAt !== 'string' || !Number.isFinite(Date.parse(value.approvedAt)))
+    throw new Error('Draft mockup approval timestamp is invalid.');
+  for (const key of Object.keys(value)) {
+    if (!['screens', 'canonicalHash', 'approvedAt'].includes(key))
+      throw new Error('Draft mockup approval contains an unknown field: ' + key);
+  }
+}
+
 function validateDraft(value, expectedId) {
   if (!value || value.schema !== SCHEMA) throw new Error('Draft schema must be 1.');
   if (!ID_RE.test(value.id) || (expectedId && value.id !== expectedId))
@@ -159,6 +187,7 @@ function validateDraft(value, expectedId) {
     if (!KEYS.includes(key)) throw new Error('Draft contains an unknown answer: ' + key);
   }
   validatePreview(value.preview === undefined ? null : value.preview);
+  validateMockupApproval(value.mockupApproval === undefined ? null : value.mockupApproval);
   return value;
 }
 
@@ -204,6 +233,7 @@ function createDraft(stateDir, workspace, starter) {
     currentCard: 0,
     answers: Object.fromEntries(KEYS.map((key) => [key, ''])),
     preview: null,
+    mockupApproval: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -249,6 +279,12 @@ function updateDraft(stateDir, id, expectedRevision, changes) {
     next.preview = changes.preview === null || changes.preview === undefined
       ? null
       : JSON.parse(JSON.stringify(changes.preview));
+  }
+  if (changes && Object.prototype.hasOwnProperty.call(changes, 'mockupApproval')) {
+    validateMockupApproval(changes.mockupApproval);
+    next.mockupApproval = changes.mockupApproval === null || changes.mockupApproval === undefined
+      ? null
+      : JSON.parse(JSON.stringify(changes.mockupApproval));
   }
   next.revision += 1;
   next.updatedAt = new Date().toISOString();
@@ -298,6 +334,7 @@ module.exports = {
   draftPath,
   validateDraft,
   validatePreview,
+  validateMockupApproval,
   readDraft,
   createDraft,
   updateDraft,

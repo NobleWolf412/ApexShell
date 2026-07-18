@@ -20,7 +20,49 @@ const current = new Map();   // seatId -> { path, watcher, t }
 // page can no longer request apex://local/<any-absolute-path> (e.g. ~/.ssh keys)
 // and exfiltrate it. Populated whenever show() renders a real file.
 const served = new Set();
-function isServed(p) { try { return served.has(path.resolve(p)); } catch { return false; } }
+
+// STUDIO v2 Wave A (A4) — the SEE step's serving seam, ADDITIVE beside the C2
+// set above (which is untouched: exact files surfaced as artifacts still serve
+// exactly as before, and unregistered paths still refuse). A registered token
+// names ONE directory (the studio registers a draft's own mockups dir) whose
+// DIRECT-child .html files may serve through apex://. The walls, in order:
+// only .html (a provenance .json sidecar in the same dir never serves), only
+// a direct child (path.resolve collapses any ../ first, so a traversal either
+// lands back inside — fine — or lands outside and refuses; subdirectories
+// refuse), and realpath-resolved (a symlink parked in the dir, or the dir
+// itself swapped for a link, must not read a target elsewhere). Served pages
+// still get the protocol handler's no-network per-response CSP — this gate
+// widens WHICH files serve, never what a served page may do.
+const servedDirs = new Map();   // token -> resolved absolute dir
+
+function registerServedDir(token, dir) {
+  if (typeof token !== 'string' || !token.trim())
+    throw new Error('served-dir registration needs a token');
+  if (typeof dir !== 'string' || !path.isAbsolute(dir))
+    throw new Error('served-dir registration needs an absolute directory');
+  servedDirs.set(token, path.resolve(dir));
+}
+
+function revokeServedDir(token) { servedDirs.delete(token); }
+
+function isServedDirFile(resolved) {
+  if (!resolved.toLowerCase().endsWith('.html')) return false;
+  const parent = path.dirname(resolved);
+  for (const dir of servedDirs.values()) {
+    if (parent !== dir) continue;
+    const st = fs.lstatSync(resolved);   // throws on a missing file → caller's catch → refuse
+    if (st.isSymbolicLink() || !st.isFile()) return false;
+    return path.dirname(fs.realpathSync.native(resolved)) === fs.realpathSync.native(dir);
+  }
+  return false;
+}
+
+function isServed(p) {
+  try {
+    const resolved = path.resolve(p);
+    return served.has(resolved) || isServedDirFile(resolved);
+  } catch { return false; }
+}
 
 function show(id, p) {
   const ext = (p.split('.').pop() || '').toLowerCase();
@@ -97,4 +139,4 @@ function seatClosed(id) {
 
 function dispose() { for (const id of [...current.keys()]) seatClosed(id); }
 
-module.exports = { candidate, seatClosed, dispose, isServed };
+module.exports = { candidate, seatClosed, dispose, isServed, registerServedDir, revokeServedDir };

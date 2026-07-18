@@ -118,6 +118,16 @@
     mount: (el) => mountProjects(el, hasBus),
   });
 
+  // smoke eyes (A4): '#builder=<id>' fronts one sub-view on load, the same way
+  // '#dock=' opens a pane — APEX_SMOKE_DOCK='studio&builder=projects&pjstep=see'
+  // rides the extra params through main's verbatim hash. userPicked makes the
+  // choice stick when later builders (PERSONAS, order 10) register and relayout.
+  // Guarded: the headless studio-drill has no `location`.
+  if (typeof location !== 'undefined') {
+    const wantBuilder = new URLSearchParams((location.hash || '').slice(1)).get('builder');
+    if (wantBuilder && builders.has(wantBuilder)) { userPicked = true; activate(wantBuilder); }
+  }
+
   // The STUDIO header model picker (slice 5): one persisted choice shared
   // across builders. Nothing reads it yet — slices 6/7 will pass it through
   // as launch.model/launch.effort to a disposable. Headless studio-drill has
@@ -230,15 +240,19 @@ function mountProjects(el, hasBus) {
     // Keyed to a single card at a time; switching cards drops any stale
     // prepared/result state rather than carrying it to the wrong question.
     suggest: { card: null, prepared: null, busy: false, phase: null, result: null },
-    // ---- slice A3: the mockup pass (minimal list on the Canonical step; the
-    // real preview surface is A4). `forDraft` doubles as the request guard so
-    // the list fetch never loops with its own re-render. added/removed are
-    // the user's local edits over the deterministic proposal (rename = remove
-    // + add); prepared/busy mirror the suggest block's two-step gate.
+    // ---- slices A3+A4: the mockup pass + the SEE step. A3's minimal list on
+    // the Canonical step is ABSORBED into the SEE step (A4) — one surface owns
+    // screens, generation, preview, and approval. `forDraft` doubles as the
+    // request guard so the list fetch never loops with its own re-render.
+    // added/removed are the user's local edits over the deterministic proposal
+    // (rename = remove + add); prepared/busy mirror the suggest block's
+    // two-step gate; deviceWidth drives the preview frame's width preset.
     mockups: {
       forDraft: null, kind: null, proposed: [], generated: [], hasPreview: false,
       error: null, removed: [], added: [], selected: null,
       prepared: null, busy: false, phase: null, resultError: null,
+      approval: null, approvalCurrent: false, deviceWidth: 'desktop',
+      approveMsg: null,
     },
     // ---- slice 7: the co-designer panel (one long-lived controller per open) ----
     codesigner: {
@@ -278,12 +292,19 @@ function mountProjects(el, hasBus) {
       ...state.cards.map((c, i) => ({ id: c.key, label: (i + 1) + ' · ' + c.title, sub: null, card: true })),
       { id: 'review', label: 'Review', sub: 'answers + gaps' },
       { id: 'canonical', label: 'Canonical', sub: 'PROJECT.md + validate' },
+      { id: 'see', label: 'See', sub: 'mockups + approve' },
       { id: 'create', label: 'Create', sub: 'write the package' },
       { id: 'liftoff', label: 'Lift-off', sub: 'register · delegate · chat' },
     ];
   }
 
   const hasPreview = () => Boolean(state.draft && state.draft.preview);
+  // The client mirror of lib/mockup.isApprovalCurrent: an approval counts only
+  // while its hash still matches the approved canonical (regen clears the
+  // field main-side, so that arm needs no mirror).
+  const approvalCurrent = () => Boolean(state.draft && state.draft.mockupApproval &&
+    state.draft.preview &&
+    state.draft.mockupApproval.canonicalHash === state.draft.preview.generatedCanonicalHash);
 
   const stepDone = (id) => {
     if (id === 'ws') return Boolean(state.ws && state.ws.configured);
@@ -291,6 +312,7 @@ function mountProjects(el, hasBus) {
     if (id === 'import') return false;   // never shows a checkmark; it's a one-shot side entry
     if (id === 'review') return hasPreview();
     if (id === 'canonical') return hasPreview() && !state.draft.preview.canonicalDrift;
+    if (id === 'see') return approvalCurrent();
     if (id === 'create') return Boolean(state.createdProject);
     if (id === 'liftoff') return false;
     return Boolean(state.draft && (state.draft.answers[id] || '').trim());
@@ -301,6 +323,7 @@ function mountProjects(el, hasBus) {
     if (id === 'import') return Boolean(state.ws && state.ws.configured); // same gate as Start
     if (id === 'review') return Boolean(state.draft);       // review needs a started draft
     if (id === 'canonical') return hasPreview();             // canonical needs a preview
+    if (id === 'see') return hasPreview();                    // mockups render FROM the approved blueprint
     if (id === 'create') return hasPreview();                 // Create needs an approved canonical
     if (id === 'liftoff') return Boolean(state.createdProject); // offered right after Create succeeds
     return Boolean(state.draft);   // cards need a started draft
@@ -385,6 +408,7 @@ function mountProjects(el, hasBus) {
     if (state.step === 'import') return renderImport();
     if (state.step === 'review') return renderReview();
     if (state.step === 'canonical') return renderCanonicalView();
+    if (state.step === 'see') return renderSee();
     if (state.step === 'create') return renderCreate();
     if (state.step === 'liftoff') return renderLiftoff();
     if (isCardStep(state.step)) return renderCard(findCard(state.step));
@@ -983,12 +1007,13 @@ function mountProjects(el, hasBus) {
     if (toCanonical) toCanonical.addEventListener('click', () => goStep('canonical'));
   }
 
-  // ---- slice A3: the mockup pass block on the Canonical step --------------
-  // Deliberately minimal (A4 owns the real PREVIEW surface): the derived
-  // screen list — renameable via remove+add — with generated/STALE status,
-  // and the same two-step prepare→run gate the suggest block uses. Nothing
-  // regenerates silently: STALE is a badge, and every generation is an
-  // explicit, approved, priced action.
+  // ---- slice A4: the SEE step (absorbs A3's Canonical-step list whole) -----
+  // One surface owns the mockup lifecycle: the derived screen list (renameable
+  // via remove+add), the two-step prepare→run generation gate (A3's machinery,
+  // untouched), the rendered preview, device widths, the STALE badge with its
+  // REGENERATE action, and APPROVE MOCKUPS. Nothing regenerates silently, and
+  // nothing proceeds to Create with pictures the eyes haven't signed off —
+  // though approval is a validation WARNING, never a block.
   const mockupKindNote = (kind) =>
     kind === 'cli' ? 'CLI platform — terminal storyboard frames.'
       : kind === 'api' ? 'API platform — one endpoint-map page.'
@@ -1000,50 +1025,138 @@ function mountProjects(el, hasBus) {
     return kept.concat(mk.added);
   }
 
-  function renderMockupBlock() {
+  // Merged screen list: the user-edited proposal, plus generated screens the
+  // user has since removed — files still exist; never orphan them silently.
+  function seeScreens() {
     const mk = state.mockups;
-    if (mk.error) {
-      return '<div class="pjCard"><label class="pjLabel">MOCKUPS</label>' +
-        '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.error) + '</div></div>';
-    }
-    const generatedById = new Map(mk.generated.map((g) => [g.screen.id, g]));
     const screens = mockupScreensEffective();
-    // Generated screens the user has since removed from the proposal still
-    // exist as files — keep them visible rather than orphaning them silently.
     for (const g of mk.generated)
       if (!screens.some((s) => s.id === g.screen.id)) screens.push(g.screen);
-    const rows = screens.map((s) => {
+    return screens;
+  }
+
+  // Device-width presets for the preview frame (frame width, not a rescale —
+  // the mockup's own CSS answers the width like a real viewport would).
+  const DEVICE_WIDTHS = { mobile: 390, tablet: 768, desktop: 1180 };
+
+  function renderSee() {
+    const draft = state.draft;
+    // Smoke-safe empty state (see the pjstep=see affordance at mount): the
+    // step must render without a draft rather than redirect-chain to Start.
+    if (!draft || !draft.preview) {
+      main.innerHTML =
+        '<h2 class="pjTitle">See it before you build it</h2>' +
+        '<p class="pjLead">Clickable mockups of the screens your blueprint implies, rendered right here — ' +
+          'generate the canonical on the Review step first; mockups are generated FROM the approved blueprint.</p>' +
+        '<div class="pjCard"><div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjSeeBackOut">← ' + (draft ? 'REVIEW' : 'START') + '</button>' +
+        '</div></div>';
+      main.querySelector('.pjSeeBackOut').addEventListener('click', () => goStep(draft ? 'review' : 'start'));
+      return;
+    }
+
+    // Fetch the screen list once per draft — forDraft (set before posting)
+    // stops the arriving payload's re-render from re-requesting in a loop.
+    if (state.mockups.forDraft !== draft.id) {
+      state.mockups = {
+        forDraft: draft.id, kind: null, proposed: [], generated: [], hasPreview: false,
+        error: null, removed: [], added: [], selected: null,
+        prepared: null, busy: false, phase: null, resultError: null,
+        approval: null, approvalCurrent: false, deviceWidth: state.mockups.deviceWidth || 'desktop',
+        approveMsg: null,
+      };
+      ApexBus.post('projectsMockupList', { id: draft.id });
+    }
+    const mk = state.mockups;
+    if (mk.error) {
+      main.innerHTML = '<h2 class="pjTitle">See</h2><div class="pjCard">' +
+        '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.error) + '</div></div>';
+      return;
+    }
+
+    const generatedById = new Map(mk.generated.map((g) => [g.screen.id, g]));
+    const screens = seeScreens();
+    if (!mk.selected && screens.length) mk.selected = screens[0].id;
+    const current = mk.selected ? generatedById.get(mk.selected) : null;
+
+    // Screen switcher chips — one per screen, stale/ungenerated marked.
+    const switcher = screens.map((s) => {
       const g = generatedById.get(s.id);
-      const status = g
-        ? (g.stale ? '<span class="pjChip" data-tone="warn">STALE</span>'
-                   : '<span class="pjChip" data-tone="good">generated</span>')
-        : '<span class="pjChip">not generated</span>';
       const on = mk.selected === s.id ? ' primary' : '';
-      return '<div class="pjBtnRow">' +
-        '<button type="button" class="pjBtn pjMockPick' + on + '" data-screen-id="' + escapeHtml(s.id) + '">' +
-          escapeHtml(s.title || s.id) + '</button> ' + status +
-        '<button type="button" class="pjBtn pjMockRemove" data-screen-id="' + escapeHtml(s.id) + '" title="Remove from the list (files are untouched)">✕</button>' +
-      '</div>';
+      const mark = g ? (g.stale ? ' ⚠' : '') : ' ·';
+      return '<button type="button" class="pjBtn pjMockPick' + on + '" data-screen-id="' + escapeHtml(s.id) + '" ' +
+        'title="' + (g ? (g.stale ? 'Generated, but the blueprint moved on — STALE' : 'Generated') : 'Not generated yet') + '">' +
+        escapeHtml(s.title || s.id) + mark + '</button>' +
+        '<button type="button" class="pjBtn pjMockRemove" data-screen-id="' + escapeHtml(s.id) + '" title="Remove from the list (files are untouched)">✕</button>';
     }).join('');
+
+    const widths = ['mobile', 'tablet', 'desktop'].map((w) =>
+      '<button type="button" class="pjBtn pjSeeWidth' + (mk.deviceWidth === w ? ' primary' : '') + '" data-width="' + w + '">' +
+        w.toUpperCase() + ' ' + DEVICE_WIDTHS[w] + '</button>').join('');
+
+    // The preview frame. sandbox="allow-scripts" WITHOUT allow-same-origin,
+    // deliberately: the mockup's inline scripts run (clickable is the point),
+    // but the document gets an OPAQUE origin — it cannot read Apex's storage,
+    // cookies, or DOM, and it cannot reach preload/the bus (top-frame only,
+    // unreachable from a sandboxed cross-origin child). Combined with A3's
+    // no-external-URL contract and the apex:// response CSP (no network at
+    // all), the page is fully inert. src is the apex:// URI the served-file
+    // gate admitted; the provenance stamp busts the iframe cache on regen.
+    let frame;
+    if (current && current.uri) {
+      frame = '<div class="pjSeeFrame" style="width:' + DEVICE_WIDTHS[mk.deviceWidth] + 'px">' +
+        (current.stale
+          ? '<div class="pjSeeStale" data-tone="warn">STALE — the blueprint changed after this mockup was generated. ' +
+            'Regenerate it below, or it stays as-is; nothing regenerates without you.</div>'
+          : '') +
+        '<iframe class="pjSeeIframe" sandbox="allow-scripts" src="' +
+          escapeHtml(current.uri + '#' + (current.generatedAt || '')) + '"></iframe>' +
+      '</div>';
+    } else {
+      frame = '<div class="pjSeeFrame pjSeeEmpty" style="width:' + DEVICE_WIDTHS[mk.deviceWidth] + 'px">' +
+        '<div class="pjWsSub">' + (mk.selected
+          ? 'This screen has no mockup yet — generate it below (one approved disposable turn).'
+          : 'No screens yet — add one below.') + '</div></div>';
+    }
+
+    // Approval status, in the validation report's plain voice.
+    const upToDate = mk.generated.filter((g) => !g.stale);
+    let approvalNote, approvalTone;
+    if (approvalCurrent()) {
+      approvalNote = 'Approved — ' + state.draft.mockupApproval.screens.length +
+        ' screen(s) recorded against the current blueprint. They ride into the package at Create.';
+      approvalTone = 'good';
+    } else if (state.draft.mockupApproval) {
+      approvalNote = 'The blueprint moved on after approval — look again and re-approve.';
+      approvalTone = 'warn';
+    } else {
+      approvalNote = 'Not approved yet. Approval records what your eyes signed off (screens + blueprint hash); ' +
+        'validation warns until it exists, and only approved mockups enter the package.';
+      approvalTone = 'quiet';
+    }
+
     const canRun = Boolean(mk.prepared) && !mk.busy;
-    return (
-      '<div class="pjCard pjMockups">' +
-        '<label class="pjLabel">MOCKUPS (SEE IT BEFORE YOU BUILD IT)</label>' +
-        '<div class="pjWsSub">' + escapeHtml(mockupKindNote(mk.kind)) +
-          ' The list is a deterministic proposal from the blueprint — rename (remove + add), remove, or add screens before generating. ' +
-          'A blueprint change marks generated screens STALE; nothing regenerates without you.</div>' +
-        (mk.hasPreview ? '' :
-          '<div class="pjWsSub" data-tone="warn">Mockups generate FROM the approved canonical — generate the preview above first.</div>') +
-        rows +
+    main.innerHTML =
+      '<h2 class="pjTitle">See it before you build it</h2>' +
+      '<p class="pjLead">' + escapeHtml(mockupKindNote(mk.kind)) +
+        ' Switch screens, try device widths, regenerate what reads wrong, then approve. ' +
+        'A blueprint change marks screens STALE; nothing regenerates without you.</p>' +
+      '<div class="pjCard">' +
+        '<div class="pjChipRow pjSeeSwitcher">' + switcher + '</div>' +
         '<div class="pjBtnRow">' +
           '<input type="text" class="pjMockAddName" maxlength="48" placeholder="new-screen-name (kebab-case)" />' +
           '<button type="button" class="pjBtn pjMockAdd">ADD SCREEN</button>' +
         '</div>' +
+        '<div class="pjBtnRow pjSeeWidths">' + widths + '</div>' +
+        frame +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel">' + (current ? 'REGENERATE THIS SCREEN' : 'GENERATE THIS SCREEN') + '</label>' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn pjMockPrepare" ' +
-            (mk.busy || !mk.selected || !mk.hasPreview ? 'disabled' : '') + ' ' +
-            'title="Runs one hidden disposable session to generate this screen\'s mockup — a real Claude turn, opt-in.">' +
-            (mk.prepared ? 'RE-CHECK USAGE' : 'GENERATE SELECTED (USES A SESSION)') +
+            (mk.busy || !mk.selected ? 'disabled' : '') + ' ' +
+            'title="Runs one hidden disposable session to generate this screen\'s mockup — a real Claude turn, opt-in. Regenerating clears any recorded approval.">' +
+            (mk.prepared ? 'RE-CHECK USAGE' : (current ? 'REGENERATE' : 'GENERATE') + ' SELECTED (USES A SESSION)') +
           '</button>' +
           (mk.prepared
             ? '<button type="button" class="pjBtn primary pjMockRun" ' + (canRun ? '' : 'disabled') + '>RUN MOCKUP PASS</button>'
@@ -1055,12 +1168,40 @@ function mountProjects(el, hasBus) {
           : '') +
         (mk.busy ? '<div class="pjWsSub pjAiUsage">Generating ' + escapeHtml(mk.selected || '') + '…</div>' : '') +
         (mk.resultError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.resultError) + '</div>' : '') +
-      '</div>'
-    );
+      '</div>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel">APPROVE MOCKUPS</label>' +
+        '<div class="pjWsSub" data-tone="' + approvalTone + '">' + escapeHtml(approvalNote) + '</div>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn primary pjSeeApprove" ' +
+            (upToDate.length && !approvalCurrent() && !mk.busy ? '' : 'disabled') + '>' +
+            'APPROVE MOCKUPS (' + upToDate.length + ' UP-TO-DATE)</button>' +
+        '</div>' +
+        (mk.approveMsg ? '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.approveMsg) + '</div>' : '') +
+      '</div>' +
+      '<div class="pjCard"><div class="pjBtnRow">' +
+        '<button type="button" class="pjBtn pjSeeBack">← BACK TO CANONICAL</button>' +
+        '<button type="button" class="pjBtn primary pjSeeContinue">CONTINUE TO CREATE →</button>' +
+      '</div></div>';
+
+    wireSee(draft);
   }
 
-  function wireMockupBlock(draft) {
+  function wireSee(draft) {
     const mk = state.mockups;
+    for (const btn of main.querySelectorAll('.pjSeeWidth')) {
+      btn.addEventListener('click', () => { mk.deviceWidth = btn.dataset.width; render(); });
+    }
+    const approveBtn = main.querySelector('.pjSeeApprove');
+    if (approveBtn) approveBtn.addEventListener('click', () => {
+      if (approveBtn.disabled) return;
+      mk.approveMsg = null;
+      ApexBus.post('projectsMockupApprove', { id: draft.id, expectedRevision: draft.revision });
+    });
+    const back = main.querySelector('.pjSeeBack');
+    if (back) back.addEventListener('click', () => goStep('canonical'));
+    const cont = main.querySelector('.pjSeeContinue');
+    if (cont) cont.addEventListener('click', () => goStep('create'));
     for (const btn of main.querySelectorAll('.pjMockPick')) {
       btn.addEventListener('click', () => {
         mk.selected = btn.dataset.screenId;
@@ -1125,18 +1266,6 @@ function mountProjects(el, hasBus) {
     const bundle = draft.preview;
     const drift = Boolean(bundle.canonicalDrift);
     const gaps = bundle.gaps || [];
-
-    // Fetch the mockup screen list once per draft — the arriving payload
-    // re-renders this step, and forDraft (set before posting) stops that
-    // re-render from re-requesting in a loop.
-    if (state.mockups.forDraft !== draft.id) {
-      state.mockups = {
-        forDraft: draft.id, kind: null, proposed: [], generated: [], hasPreview: false,
-        error: null, removed: [], added: [], selected: null,
-        prepared: null, busy: false, phase: null, resultError: null,
-      };
-      ApexBus.post('projectsMockupList', { id: draft.id });
-    }
 
     const sectionOptions = SECTIONS.map((s) =>
       '<option value="' + s.key + '">' + escapeHtml(s.heading) +
@@ -1208,11 +1337,13 @@ function mountProjects(el, hasBus) {
         '</div>' +
         validationBlock +
       '</div>' +
-      renderMockupBlock() +
       '<div class="pjCard">' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn pjCanonReviewBack">← BACK TO REVIEW</button>' +
           '<button type="button" class="pjBtn pjRegenAll">REGENERATE ALL FROM ANSWERS</button>' +
+          // A4: the mockup surface moved off this step into SEE — this is the
+          // golden-path door to it.
+          '<button type="button" class="pjBtn primary pjToSee">SEE MOCKUPS →</button>' +
         '</div>' +
       '</div>';
 
@@ -1271,7 +1402,7 @@ function mountProjects(el, hasBus) {
         projectId: bundle.projectId, confirmedOverwrite: true,
       });
     });
-    wireMockupBlock(draft);
+    main.querySelector('.pjToSee').addEventListener('click', () => goStep('see'));
   }
 
   // ---- Create Project (slice 8): the explicit action that writes the atomic
@@ -1577,29 +1708,31 @@ function mountProjects(el, hasBus) {
     mk.proposed = m.proposed || [];
     mk.generated = m.generated || [];
     mk.hasPreview = Boolean(m.hasPreview);
+    mk.approval = m.approval || null;
+    mk.approvalCurrent = Boolean(m.approvalCurrent);
     mk.error = m.error || null;
     if (mk.selected && !mockupScreensEffective().some((s) => s.id === mk.selected) &&
         !mk.generated.some((g) => g.screen.id === mk.selected))
       mk.selected = null;
     if (!mk.selected && mk.proposed.length) mk.selected = mk.proposed[0].id;
-    if (state.step === 'canonical') render();
+    if (state.step === 'see') render();
   });
 
   ApexBus.on('projectsMockupPrepared', (m) => {
     if (state.draft && m.draftId !== state.draft.id) return;
     Object.assign(state.mockups, { prepared: m, busy: false, phase: 'prepared', resultError: null });
-    if (state.step === 'canonical') render();
+    if (state.step === 'see') render();
   });
 
   ApexBus.on('projectsMockupStatus', (m) => {
     if (m.phase === 'error') {
       Object.assign(state.mockups, { prepared: null, busy: false, phase: 'error', resultError: m.error });
-      if (state.step === 'canonical') render();
+      if (state.step === 'see') render();
       return;
     }
     if (m.phase === 'stopped') {
       Object.assign(state.mockups, { prepared: null, busy: false, phase: 'stopped' });
-      if (state.step === 'canonical') render();
+      if (state.step === 'see') render();
     }
     // 'running' is already reflected client-side the instant RUN is clicked.
   });
@@ -1613,7 +1746,17 @@ function mountProjects(el, hasBus) {
     });
     // A successful write is followed by a fresh projectsMockupScreens post
     // from main, which repaints the list with the new generated entry.
-    if (state.step === 'canonical') render();
+    if (state.step === 'see') render();
+  });
+
+  // ---- slice A4: APPROVE MOCKUPS -------------------------------------------
+  // Success needs no handler work beyond the message slot: main follows with
+  // projectsDraftPatched (the fresh draft + revision) and a fresh
+  // projectsMockupScreens, which repaint the step.
+  ApexBus.on('projectsMockupApproveResult', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    state.mockups.approveMsg = m.ok ? null : ('Not approved — ' + m.error);
+    if (!m.ok && state.step === 'see') render();
   });
 
   // ---- slice 7: the co-designer panel ---------------------------------------
@@ -1635,6 +1778,9 @@ function mountProjects(el, hasBus) {
     state.draft = m.draft;
     if (m.cards) state.cards = m.cards;
     if (isCardStep(state.step)) renderCard(findCard(state.step));
+    // A4: approval recording/clearing arrives through this same no-navigation
+    // refresh; the SEE step repaints to reflect it (and the new revision).
+    else if (state.step === 'see') render();
   });
 
   ApexBus.on('codesignerStatus', (m) => {
@@ -1718,6 +1864,14 @@ function mountProjects(el, hasBus) {
     if (state.step === 'liftoff') render();
   });
 
+  // smoke eyes (A4): the SEE step must be REACHABLE in a smoke run with no
+  // draft on disk. APEX_SMOKE_DOCK='studio&pjstep=see' rides '&pjstep=see'
+  // into the window hash verbatim through main's existing '#dock=' affordance
+  // (no core change), and renderSee's empty state renders draft-free. Only
+  // this builder knows its steps, so the flag is read here, not in the shell.
+  if (typeof location !== 'undefined' &&
+      new URLSearchParams((location.hash || '').slice(1)).get('pjstep') === 'see')
+    state.step = 'see';
   render();
   ApexBus.post('projectsWorkspaceGet', {});
 }
