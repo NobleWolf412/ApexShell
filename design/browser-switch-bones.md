@@ -47,8 +47,11 @@ The grant is **host-owned state**, like `mode`/`model`/`effort`:
   post-reload `reannounce()` — add `chrome: entry.chrome` / `chrome: e.chrome`.
   This is what lets the toggle survive a window reload.
 
-### 3. Enforcement choke point (`main/seats.js`) — the important one
-All the safety lives in **one place**, fail-closed. Two paths set it:
+### 3. Enforcement choke point (`main/seats.js`)
+If you *do* want to gate this (see the consent note below — that's a choice, not
+a requirement), the clean pattern is one fail-closed choke point rather than
+scattered checks. However you decide `isAutoSpawned` (or whether you gate at
+all) is yours; the shape we used:
 
 - **Fresh seat (`seatCreate`)**, right after building `launch`:
   ```js
@@ -62,9 +65,10 @@ All the safety lives in **one place**, fail-closed. Two paths set it:
   launch.chrome = Boolean(wantChrome && !isAutoSpawned);
   ```
 
-`isAutoSpawned` = any seat the operator didn't personally launch: background/
-scheduled/kick seats, an always-on watch seat, seats spawned by other seats.
-The rule: **a literal `true` only, and never for auto-spawned machinery.**
+`isAutoSpawned` (in our build) = any seat the operator didn't personally launch:
+background/scheduled/kick seats, an always-on watch seat, seats spawned by other
+seats. Our own rule was **a literal `true` only, and never for auto-spawned
+machinery** — but that boundary is ours to draw; yours may differ or not exist.
 
 ### 4. UI — a live per-seat toggle (`renderer/chatView.js`)
 Put a small button in the composer's dial row (beside model/effort/perms), not
@@ -77,24 +81,33 @@ in the launch menu — browser control is a mid-session decision:
   the flag flipped. Guard: skip while the seat is mid-turn or has no session
   yet; hide the toggle entirely on an auto-spawned watch seat.
 
-## Consent model (the reason for the choke point)
+## Consent model — our choice, not your doctrine
 
-Portable rules any operator-facing shell should keep:
+**Read this as a suggestion, not a rule.** The four hook points above are the
+mechanism, and they work with whatever policy you want (or none). What follows is
+just how *Apex* chose to gate browser control — it's our household's own doctrine
+(our operator's consent rule), not something the feature requires and not
+something you inherit by using it. Take it, adapt it, ignore it, or write your
+own. Nothing here binds your shell.
+
+For what it's worth, here's the shape we landed on and why we liked it — the one
+piece we'd genuinely suggest keeping is **#1 (default off)**, since browser
+control drives the user's real browser; the rest is taste:
 
 1. **Default OFF.** Every seat starts `--no-chrome`. Enabling is a deliberate,
    per-seat operator action with a warning.
 2. **Auto-spawned machinery never gets it.** Background/scheduled/kick seats
-   spawn the CLI outside the interactive path; keep them fail-closed.
+   spawn the CLI outside the interactive path; we keep them fail-closed.
 3. **Grants die with the run.** The flag lives on the seat process — closing
    the seat or restarting the app drops it. It survives a same-run relaunch
    (the operator restarting to change a dial) but never an app restart or a
    fresh resume-from-history.
-4. **Grants flow down, never originate down.** A seat can pass browser access
-   to a child only if it was launched with it; spawned/restored seats start
-   from zero. No standing/global allowlist entry — `--no-chrome` is the floor.
+4. **Grants flow down, never originate down.** A seat passes browser access to a
+   child only if it was launched with it; spawned/restored seats start from
+   zero.
 5. **Interactive stays supervised.** Normal permission prompts remain; the
-   extension's visible-action indicator + per-site permissions are the browser
-   backstops.
+   extension's own visible-action indicator + per-site permissions are the
+   browser-side backstops regardless of what your shell does.
 
 ## In-app confirm (bonus, same build)
 
