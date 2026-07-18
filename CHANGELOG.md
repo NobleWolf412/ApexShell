@@ -1,5 +1,20 @@
 # Apex Shell Changelog
 
+## Unreleased
+
+- **New extension: Wiki Pipeline** (`extensions/wiki/`) — turn raw material into
+  a durable, interlinked wiki. Intake is free (add entries to a derived queue,
+  pure code); compile is the only token spend — a **tool-less** model seat reads
+  one queued entry plus the current wiki and returns the page(s) to write, and
+  the extension writes them (the model never touches disk). One entry at a time;
+  an empty queue spawns nothing. Optional per-persona **compile voice** (bind any
+  Persona Builder persona; no one else's personas needed). Dock pane: queue
+  status, compile next/all/stop, add-entry, browse/search the wiki. Store is
+  plain Markdown + JSON under the extension's state dir. Path-confined writes;
+  headless drill 7/7. Cost guidance in `design/wiki-pipeline-cost.md`; deliberate
+  v1 gaps (transcript-capture adapter, automatic reduce-first, analysis layer)
+  are documented, not blockers.
+
 ## 0.1.1 — 2026-07-15
 
 - **Fixed: the window's preload bridge was missing from the repository** —

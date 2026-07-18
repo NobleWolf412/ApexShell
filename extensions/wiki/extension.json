@@ -1,0 +1,6 @@
+{
+  "name": "Wiki Pipeline",
+  "main": "main.js",
+  "renderer": "renderer.js",
+  "styles": ["style.css"]
+}
