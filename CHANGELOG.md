@@ -28,6 +28,26 @@
   machine path may enter the package. New `test/studio-lib-drill.js` (with static
   fixtures under `test/studio-fixtures/`) chained into `test:studio`; zero LLM
   spend. No UI, no bus verbs. (App Builder v1, slice 2 of 9.)
+- **App Builder workspace + drafts + interview** (`extensions/studio/`): the
+  PROJECTS sub-tab is now a working guided interview. A projects-workspace picker
+  (`ctx.pickDirectory`) persists the choice to `state/extensions/studio/workspace.json`
+  with the persona discipline — schema-versioned, absolute path, atomic
+  temp-file-plus-rename write. A crash-safe draft store (`lib/drafts.js`, sibling of
+  the persona store: atomic `wx`+rename so an interrupted write only ever orphans a
+  `.tmp`, symlink-refusing, revision-gated, workspace-isolated) keeps the in-progress
+  interview — working name, one-sentence pitch, and the six card answers — under
+  `ctx.stateDir`, never in the portable package; draft deletion is its own explicit
+  action. The six interview cards (`lib/interview.js`, keyed to the blueprint areas)
+  carry a plain question, expected-depth note, a complete example, suggested choices,
+  and a **Help-me-decide** that is a pure client-side heuristic — card thought-starters
+  plus live nudges (thin answer, scope with no non-goal, delivery with no verification);
+  no AI or disposable call anywhere in this slice. The renderer mounts through the same
+  `ApexStudio.registerBuilder({ id: 'projects' })` seam with a stepper + card flow, Back /
+  Save draft / Skip, and a resume-or-delete draft list; all bus wiring is gated so the
+  headless studio-drill still exercises the shell seam untouched. New
+  `test/studio-drafts-drill.js` (create / save / reopen / crash-recover / delete, the
+  workspace picker, the interview bus verbs, and the heuristic) chained into
+  `test:studio`; zero LLM spend. (App Builder v1, slice 3 of 9.)
 
 ## 0.2.0 — 2026-07-17
 
