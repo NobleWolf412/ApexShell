@@ -9,11 +9,17 @@
 
 const http = require('http');
 
+const MAX_BODY = 2 * 1024 * 1024;   // cap the response — a large/streaming body
+                                    // would OOM main inside the poll window (audit M3)
 function getJson(url, timeoutMs = 6000) {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, (res) => {
-      let body = '';
-      res.on('data', (d) => { body += d; });
+      let body = '', len = 0;
+      res.on('data', (d) => {
+        len += d.length;
+        if (len > MAX_BODY) { req.destroy(); resolve({ ok: false }); return; }
+        body += d;
+      });
       res.on('end', () => {
         try { resolve({ ok: true, json: JSON.parse(body) }); }
         catch { resolve({ ok: false }); }
