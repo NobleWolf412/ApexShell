@@ -375,3 +375,51 @@ do not import mockup.js), size cap, and contains required marker strings
 whole, CHANGELOG.md. NEW FILES ONLY plus the package.json test:studio
 line and CHANGELOG — zero edits to existing lib/renderer/main files.
 ```
+
+## Slice B3 — the instrument bar (main tree, extends the B2 core minimally)
+
+```
+Read design/studio-v2.md (§ Wave B) and B2's shipped reality
+(main/appFrame.js + the PREVIEW card in extensions/studio/renderer.js).
+Implement SLICE B3 ONLY: instruments over the app frame. main/appFrame.js
+extends MINIMALLY (core — every line argued): when a view is created,
+attach console-message and did-fail-load/network-failure listeners on the
+view's webContents (use the modern console-message event field shapes;
+level>=error only) and forward capped, structured events over
+bus.postTo(win, 'appFrameEvent', {kind:'console'|'net', text<=300,
+url?<=200}) — rate-bound main-side (max 20/s, drop beyond, one honest
+'…dropped N' summary event per second when dropping). NO debugger API in
+this slice (C2 owns that); listeners only. Renderer: an instrument strip
+on the PREVIEW card — error chips (count badges for console errors and
+failed loads, click to expand a capped list, clear button), device-width
+presets (mobile 390 / tablet 768 / desktop full — sizing the placeholder
+div, which the existing bounds sync already follows), and the RELOAD
+button moves into the strip. Chips reset on navigate/reload. Done: npm
+test whole (extend test/appframe-drill.js: event forwarding shape, caps,
+rate bound + drop summary, reset-on-navigate at the registry seam),
+APEX_SMOKE=1 both variants exit 0, CHANGELOG.md + floorplan touch-up if
+the appFrame.js entry needs it. Update & restart applies — say so.
+```
+
+## Slice F2 — the contract addendum rides the kickoff (parallel worktree)
+
+```
+Read design/studio-v2.md (§ Wave F) and design/contract-spines.md.
+Implement SLICE F2 ONLY: wire lib/spines.js renderContractAddendum into
+the Lift-off flows in extensions/studio/main.js + lib/liftoff.js ONLY (do
+NOT touch renderer.js — the B3 seat owns it this cycle; the existing UI
+needs no change: the addendum rides the brief invisibly). At delegate
+time: read the created package's design/tokens.json (design.js validate),
+components.json + manifest.json if present (spines.js validators, fail-
+soft — a malformed spine is reported in the addendum as
+present-but-unusable, never a crash); render the addendum; append it to
+the taskCreate brief AFTER the PROJECT.md text with a clear separator.
+Same for the Open-a-chat kickoff. The brief cap in main/tasks.js is 20000
+chars — if PROJECT.md + addendum exceeds it, the addendum is truncated
+LAST (PROJECT.md wins) with an honest '[addendum truncated]' marker;
+drill that. Done: npm test whole (extend test/studio-liftoff-drill.js:
+addendum rides the brief verbatim after PROJECT.md, absent spines stated
+honestly, malformed spine = present-but-unusable line, truncation order +
+marker), CHANGELOG.md. Only extensions/studio/main.js, lib/liftoff.js,
+the liftoff drill, package.json if needed, CHANGELOG — nothing else.
+```
