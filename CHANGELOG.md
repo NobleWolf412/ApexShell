@@ -71,6 +71,36 @@
   more than 3 edits, or asking followup `"delegate"`, flags bigger-than-a-
   boom for the proposal card C2+ renders.
 
+- **STUDIO v2, Wave F slice F3 — the design-mode overlay template**
+  (`extensions/studio/templates/design-mode.js` new, `design/design-mode.md`
+  new; drill in `test/studio-designmode-drill.js`, wired into `test:studio`;
+  new files only — zero edits to existing lib/renderer/main code). The
+  dev-only overlay a scaffolded app ships (§ Wave F — design mode), as a
+  template ASSET Apex never executes: one self-contained vanilla-JS file
+  (zero deps, zero imports, zero external URLs — the A3 self-containment law
+  applied to the template itself) the scaffold includes behind the stack's
+  dev flag. Standalone in any browser it reads the three contract spines
+  over same-origin relative fetch, fail-soft per file (a missing or
+  non-schema-1 spine disables just that panel with an honest note; a
+  relative-only base override refuses protocols and `//`); renders a
+  bottom-right launcher + panel inside its OWN shadow root (app CSS cannot
+  break it, its CSS cannot leak; one host element is its whole DOM
+  footprint); element picking is the A5 overlay pattern (fixed
+  pointer-events-none highlight box, hover aim, click select, Escape cancel
+  on capture-phase listeners attached only while picking); a picked element
+  resolves to its component ([data-component] mark first, class-name
+  fallback) and gets variant/effect radio pickers plus token-ROLE bindings
+  resolved against tokens.json; "copy change" writes a precise paste-ready
+  instruction to the clipboard (v1 persistence, honest limits: read-only +
+  clipboard, no hot-apply — real file writes need a dev-server endpoint,
+  out of scope, documented in the header and design/design-mode.md); a
+  component-tree tab walks the DOM for marks/class matches (200-node cap)
+  with the manifest's screen list beside it. The drill validates the
+  template statically: parses as JS, the A3 external-URL vectors
+  re-implemented (written, not imported) with seeded positive controls, a
+  64 KB size cap, and the load-bearing markers (shadow-root attach, Escape
+  handler, fail-soft fetch guards, schema gates, no innerHTML). Template
+  asset only — nothing to reload or restart.
 - **STUDIO v2, Wave B slice B1 — the dev-server runner**
   (`extensions/studio/lib/servers.js` new, `extensions/studio/{main.js,
   renderer.js,style.css}`; drill in `test/studio-servers-drill.js`, wired into
