@@ -59,6 +59,7 @@ function startCodexSeat({ cwd, log, onEvent, onExit, resume, effort, permissionM
     shell: true,            // codex is a .cmd shim on Windows (same as claude)
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',   // POSIX group leader → tree-kill (audit M2)
   });
   log(`spawn: codex app-server (cwd=${cwd}${resume ? ', resume=' + resume : ''})`);
 
@@ -366,8 +367,9 @@ function startCodexSeat({ cwd, log, onEvent, onExit, resume, effort, permissionM
           spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'],
                 { windowsHide: true, stdio: 'ignore' }).unref();
         } catch { /* gone */ }
-      } else {
-        try { child.kill(); } catch { /* gone */ }
+      } else if (child.pid) {
+        try { process.kill(-child.pid, 'SIGKILL'); }   // kill the group (audit M2)
+        catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
       }
     }, 1500);
   };

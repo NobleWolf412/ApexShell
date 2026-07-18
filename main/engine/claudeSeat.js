@@ -167,6 +167,10 @@ function startSeat(opts) {
     shell: launch.shell,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
+    // POSIX: make the child a process-GROUP leader so dispose can kill the whole
+    // tree (Bash-tool / MCP grandchildren) with kill(-pid) — child.kill() alone
+    // orphaned them (audit M2). Windows reaps the tree via taskkill /T instead.
+    detached: process.platform !== 'win32',
   });
 
   let buf = '';
@@ -282,8 +286,10 @@ function startSeat(opts) {
             spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'],
                   { windowsHide: true, stdio: 'ignore' }).unref();
           } catch { /* already gone */ }
-        } else {
-          try { child.kill(); } catch { /* already gone */ }
+        } else if (child.pid) {
+          // kill the process GROUP (negative pid) — reaps the tree (audit M2)
+          try { process.kill(-child.pid, 'SIGKILL'); }
+          catch { try { child.kill('SIGKILL'); } catch { /* already gone */ } }
         }
       }, 1500);
     },
