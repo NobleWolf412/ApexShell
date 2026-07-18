@@ -64,16 +64,19 @@ tighten it if you want the wiki fresher. Either way the token bill is ~the same.
 
 ## The billing lane — the biggest single decision
 
-How you *invoke* the model decides which pool you spend from:
+What meters is **the credentials**, not the mode. It's a common myth that
+"headless = metered"; it isn't:
 
-- **Subscription login (interactive, or headless without an API key)** → flat-rate,
-  drawn from your normal subscription window. **This is the cheap lane — use it.**
-- **An API key (`ANTHROPIC_API_KEY` set) / the Agent-SDK path** → metered credits
-  at full API list rates, no rollover. Easy to leave on by accident and watch a
-  credit pool drain.
+- **Subscription login** (interactive *or* headless `claude -p`, with **no**
+  `ANTHROPIC_API_KEY` set) → **flat-rate**, drawn from your normal subscription
+  window. `claude -p` on a subscription login is *not* metered — verified.
+- **An API key (`ANTHROPIC_API_KEY` set) / the Agent-SDK credit path** → metered
+  credits at full API list rates, no rollover. This — not headless mode — is the
+  expensive lane, and it's easy to leave on by accident.
 
 **Recommendation: run the pipeline under your subscription login and make sure no
-API key is set for it.** This one choice dwarfs every other optimization.
+API key is set for it.** Headless vs. interactive doesn't change the bill; the
+credentials do. This one choice dwarfs every other optimization.
 
 ## How to keep it cheap — without hurting the wiki
 
