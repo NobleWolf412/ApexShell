@@ -193,6 +193,7 @@ function mountProjects(el, hasBus) {
     ws: null,              // last projectsWorkspaceStatus
     cards: [],             // interview card copy, shipped from main
     draft: null,           // current draft (from main)
+    liveAnswers: {},       // per-card UNSAVED textarea content (see setLiveAnswer)
     drafts: [],            // resumable drafts for this workspace
     draftWarnings: [],
     listError: null,
@@ -310,6 +311,27 @@ function mountProjects(el, hasBus) {
   }
 
   const answerBox = () => main.querySelector('.pjAnswer');
+
+  // The card textarea's UNSAVED content, per card key. The card re-renders for
+  // reasons that have nothing to do with the user's typing — a co-designer
+  // patch list arriving/clearing, a patch accepted on another card, a save
+  // rejected by the revision gate — and renderCard rebuilds main.innerHTML,
+  // which used to reset the box to the last-SAVED answer and silently destroy
+  // whatever was typed since (operator data-loss report, 2026-07-18: a
+  // co-designer timeout + close reverted a card to its previous save). The box
+  // is the user's working copy: it may only be replaced by an explicit save
+  // landing or the draft itself changing — never by a passive re-render.
+  // An entry exists only while the box actually diverges from the saved
+  // answer, so `key in liveAnswers` doubles as the dirty flag.
+  function setLiveAnswer(key, value) {
+    const saved = state.draft ? (state.draft.answers[key] || '') : '';
+    if (value === saved) delete state.liveAnswers[key];
+    else state.liveAnswers[key] = value;
+  }
+  function boxValueFor(key) {
+    if (key in state.liveAnswers) return state.liveAnswers[key];
+    return state.draft ? (state.draft.answers[key] || '') : '';
+  }
 
   // ---- navigation + persistence -------------------------------------------
   function goStep(id) {
@@ -669,6 +691,7 @@ function mountProjects(el, hasBus) {
         // still has to save/next for it to become part of the answer; the AI
         // never writes the draft directly.
         box.value = (box.value ? box.value + '\n' : '') + '• ' + text;
+        setLiveAnswer(card.key, box.value);   // programmatic edits fire no 'input'
         chip.style.opacity = '.35';
       });
     }
@@ -804,7 +827,6 @@ function mountProjects(el, hasBus) {
     if (!card) { state.step = 'start'; return renderStart(); }
     const idx = cardIndex(card.key);
     const total = state.cards.length;
-    const value = state.draft ? (state.draft.answers[card.key] || '') : '';
 
     main.innerHTML =
       '<h2 class="pjTitle">' + (idx + 1) + ' / ' + total + ' — ' + escapeHtml(card.title) + '</h2>' +
@@ -832,8 +854,11 @@ function mountProjects(el, hasBus) {
       '</div>';
 
     const box = main.querySelector('.pjAnswer');
-    box.value = value;
+    // The working copy survives passive re-renders (see setLiveAnswer) — the
+    // saved answer is only the starting point when nothing dirty is pending.
+    box.value = boxValueFor(card.key);
     box.disabled = state.busy;
+    box.addEventListener('input', () => setLiveAnswer(card.key, box.value));
     // autosave on blur (a "card change" the spec asks be persisted)
     box.addEventListener('change', () => { if (state.draft && !state.busy) save(card.key); });
 
@@ -841,6 +866,7 @@ function mountProjects(el, hasBus) {
       chip.addEventListener('click', () => {
         const text = (card.suggestions || [])[Number(chip.dataset.i)];
         box.value = (box.value ? box.value + '\n' : '') + '• ' + text;
+        setLiveAnswer(card.key, box.value);   // programmatic edits fire no 'input'
         chip.style.opacity = '.35';
       });
     }
@@ -1254,6 +1280,17 @@ function mountProjects(el, hasBus) {
   });
 
   ApexBus.on('projectsDraftStatus', (m) => {
+    // Reconcile the unsaved working copies against the fresh draft: a
+    // different draft invalidates them all; otherwise drop each entry the
+    // save just landed (box content == saved answer now) and keep the rest —
+    // still-dirty cards must survive a save made from another card.
+    if (!state.draft || !m.draft || m.draft.id !== state.draft.id) {
+      state.liveAnswers = {};
+    } else {
+      for (const key of Object.keys(state.liveAnswers)) {
+        if (state.liveAnswers[key] === (m.draft.answers[key] || '')) delete state.liveAnswers[key];
+      }
+    }
     state.draft = m.draft;
     state.cards = m.cards || state.cards;
     if (m.suggestedProjectId) state.suggestedProjectId = m.suggestedProjectId;
@@ -1372,6 +1409,16 @@ function mountProjects(el, hasBus) {
   // looking at must not yank them there.
   ApexBus.on('projectsDraftPatched', (m) => {
     if (!state.draft || !m.draft || m.draft.id !== state.draft.id) return;
+    // An accepted patch APPENDS to the saved answer main-side. If that card
+    // also has unsaved typing here, carry the same appended tail into the
+    // working copy — otherwise the accept would be invisible in the box and
+    // the next save would silently write it back OUT of the draft.
+    for (const key of Object.keys(state.liveAnswers)) {
+      const before = state.draft.answers[key] || '';
+      const after = m.draft.answers[key] || '';
+      if (after !== before && after.startsWith(before))
+        state.liveAnswers[key] += after.slice(before.length);
+    }
     state.draft = m.draft;
     if (m.cards) state.cards = m.cards;
     if (isCardStep(state.step)) renderCard(findCard(state.step));
