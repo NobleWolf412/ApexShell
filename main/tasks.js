@@ -83,7 +83,11 @@ function save() {
 }
 function publish() {
   save();
-  api.bus.post('taskList', { tasks });
+  // boundSeatIds: every rail chat with a live chatTasks binding (an apex-todo
+  // task IT created, or one it was folded into at route-end) — Consult v1's
+  // soft hierarchy reads this to accent Hand off → on chats that already have
+  // a natural next step on the board (design/consult-v1.md §Button row semantics).
+  api.bus.post('taskList', { tasks, boundSeatIds: [...chatTasks.keys()] });
 }
 function publishRoutes() {
   store.writeJsonAtomic(ROUTES_FILE, { schema: 1, routes });
@@ -1176,7 +1180,7 @@ function register(deps) {
     api.bus.on(type, (msg) => { try { fn(msg || {}); } catch (e) { console.error('[tasks] ' + type + ':', e.message); } });
 
   // pull-based reads (a reloaded renderer asks) + the ready push
-  api.bus.on('taskList', () => api.bus.post('taskList', { tasks }));
+  api.bus.on('taskList', () => api.bus.post('taskList', { tasks, boundSeatIds: [...chatTasks.keys()] }));
   api.bus.on('taskRoutes', () => api.bus.post('taskRoutes', { routes }));
   api.bus.on('taskPickCwd', async () => {
     let picked;
@@ -1191,7 +1195,7 @@ function register(deps) {
       api.bus.post('taskCwdPicked', { path: picked.filePaths[0] });
   });
   api.bus.on('ready', () => {
-    api.bus.post('taskList', { tasks });
+    api.bus.post('taskList', { tasks, boundSeatIds: [...chatTasks.keys()] });
     api.bus.post('taskRoutes', { routes });
   });
 }

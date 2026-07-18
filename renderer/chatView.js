@@ -15,6 +15,7 @@ window.ApexChat = (function () {
   let history = {};               // persona -> [{sessionId,title,ts}]
   let presetNames = [];           // registered personas — the delegate menu's options
   let handoffMap = {};            // persona -> natural next persona (collaboration contracts)
+  let boundTaskSeats = new Set(); // seat ids with a live board-task binding (Hand off → accent)
 
   // ---------- DOM scaffold ----------
   const stage = document.querySelector('.stage');
@@ -30,6 +31,14 @@ window.ApexChat = (function () {
   railMenu.id = 'railMenu';
   railMenu.hidden = true;
   document.body.appendChild(railMenu);
+
+  // Consult v1 picker (design/consult-v1.md §The flow, step 1): persona (or
+  // bare model) + fresh-eyes toggle + a pre-focused question box. No model
+  // dial in slice 1 (lands with the disposable launch override, slice 2).
+  const consultMenu = document.createElement('div');
+  consultMenu.id = 'consultMenu';
+  consultMenu.hidden = true;
+  document.body.appendChild(consultMenu);
 
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -152,6 +161,10 @@ window.ApexChat = (function () {
           '</select>' +
         '</span></span></div>' +
         '<div class="permCard" hidden></div>' +
+        // Consult v1: a second opinion on THIS chat, streamed from a hidden
+        // disposable seat. In-flow like permCard, never a modal — closing it
+        // (or the chat itself) kills the consult seat (design/consult-v1.md).
+        '<div class="consultCard" hidden></div>' +
         // the divider above the input IS the context meter — colors only; the
         // numbers live pinned in the status row above
         '<div class="ctxBar"><div class="fill"></div></div>' +
@@ -167,6 +180,8 @@ window.ApexChat = (function () {
       feed: wrap.querySelector('.feed'),
       strip: wrap.querySelector('.statusStrip'),
       permCard: wrap.querySelector('.permCard'),
+      consultCard: wrap.querySelector('.consultCard'),
+      consult: null,                // { persona, freshEyes, turnsUsed, maxTurns, replyText, els }
       ta: wrap.querySelector('textarea'),
       sendBtn: wrap.querySelector('.csend'),
       sessionId: null, model: null, local: false,
@@ -409,6 +424,24 @@ window.ApexChat = (function () {
     // away from the composer (accidental-click distance is the point)
     const ac = chats.get(active);
     if (ac) {
+      // Consult → : a quick second opinion, sibling to Hand off → but the
+      // opposite move — nothing leaves this chat. Same gate as Hand off
+      // (live, non-terminal, non-local); also refused mid chain-step, using
+      // the same chainBadge signal the tab chip already carries.
+      if (!ac.pty && !ac.local && !ac.dead && !ac.chainBadge) {
+        const cb = document.createElement('button');
+        cb.id = 'consultBtn';
+        cb.textContent = 'Consult →';
+        cb.title = 'Quick second opinion — a persona reads this chat and answers YOU. ' +
+          'Nothing is handed over; this seat keeps the work.';
+        const openConsult = ac.consult && !ac.consult.closed;
+        if (openConsult) cb.classList.add('open');
+        cb.onclick = (e) => {
+          e.stopPropagation();
+          if (openConsult) scrollConsultIntoView(ac); else openConsultMenu(cb, ac);
+        };
+        tabsEl.appendChild(cb);
+      }
       // Delegate → hand this chat's work to another persona: opens the target's
       // seat NOW, seeded with this chat's recent output. Instant — no board
       // task, no waiting on a machine packet. The original chat stays open.
@@ -417,7 +450,7 @@ window.ApexChat = (function () {
         db.id = 'delegateBtn';
         const rec = ac.persona && handoffMap[ac.persona];
         db.textContent = rec ? 'Hand off → ' + rec : 'Hand off →';
-        db.title = (rec
+        db.title = 'Transfer the work — ' + (rec
           ? rec + ' is the natural next persona — its collaboration contract accepts what ' +
             ac.persona + ' produces. Click to confirm or pick someone else. '
           : 'hand this work to another persona — ') +
@@ -427,6 +460,10 @@ window.ApexChat = (function () {
         // something and is idle — the exact moment a handoff makes sense
         if (!ac.busy && ac.everSent && !ac.wrapping && !ac.wrapped && !ac.permQueue.length)
           db.classList.add('ready');
+        // soft hierarchy, no hard gate (design/consult-v1.md §Button row
+        // semantics): an active board todo bound to this chat is the natural
+        // next step, so the button accents — Hand off → itself never disables.
+        if (boundTaskSeats.has(ac.id)) db.classList.add('linked');
         db.onclick = (e) => { e.stopPropagation(); openDelegateMenu(db, ac); };
         tabsEl.appendChild(db);
       }
@@ -469,6 +506,148 @@ window.ApexChat = (function () {
     railMenu.hidden = false;
     railMenu.style.right = (innerWidth - r.right) + 'px';
     railMenu.style.top = (r.bottom + 6) + 'px';
+  }
+
+  // ---------- Consult v1 (design/consult-v1.md) ----------
+  function hideConsultMenu() { consultMenu.hidden = true; }
+  document.addEventListener('pointerdown', (e) => {
+    if (!consultMenu.hidden && !consultMenu.contains(e.target) && e.target.id !== 'consultBtn')
+      hideConsultMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !consultMenu.hidden) hideConsultMenu();
+  });
+
+  // The picker: persona (or bare model) + fresh-eyes + a pre-focused question
+  // box. The click IS the approval (§The flow, step 1) — no second confirm.
+  function openConsultMenu(anchor, c) {
+    consultMenu.textContent = '';
+    const head = document.createElement('div');
+    head.className = 'rmHead';
+    head.textContent = 'CONSULT →';
+    consultMenu.appendChild(head);
+
+    const sel = document.createElement('select');
+    sel.className = 'cmPersona';
+    sel.appendChild(new Option('Just a model', ''));
+    for (const name of presetNames) sel.appendChild(new Option(name, name));
+    consultMenu.appendChild(sel);
+
+    const freshRow = document.createElement('label');
+    freshRow.className = 'cmFresh';
+    freshRow.title = 'judgment without priors — for a poke-holes or review consult; a bare-model ' +
+      'consult has no memory either way, so this only matters when a persona is picked above.';
+    const freshCb = document.createElement('input');
+    freshCb.type = 'checkbox';
+    freshRow.append(freshCb, document.createTextNode(' fresh eyes (skip my memory)'));
+    consultMenu.appendChild(freshRow);
+
+    const qa = document.createElement('textarea');
+    qa.className = 'cmQuestion';
+    qa.rows = 3;
+    qa.placeholder = 'Ask your question…';
+    consultMenu.appendChild(qa);
+
+    const actions = document.createElement('div');
+    actions.className = 'cmActions';
+    const send = document.createElement('button');
+    send.textContent = 'Consult';
+    const fire = () => {
+      const question = qa.value.trim();
+      if (!question) { qa.focus(); return; }
+      ApexBus.post('consultStart', { id: c.id, persona: sel.value || null,
+        freshEyes: freshCb.checked, question });
+      hideConsultMenu();
+    };
+    send.onclick = fire;
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.onclick = hideConsultMenu;
+    actions.append(send, cancel);
+    consultMenu.appendChild(actions);
+    qa.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); fire(); }
+    });
+
+    const r = anchor.getBoundingClientRect();
+    consultMenu.hidden = false;
+    consultMenu.style.right = (innerWidth - r.right) + 'px';
+    consultMenu.style.top = (r.bottom + 6) + 'px';
+    qa.focus();
+  }
+
+  // The card: auditor-card styling family, anchored in the chat column (in
+  // flow, never a modal). Built once per consult; consultDelta/Text/Turn
+  // handlers above stream into the live `els` rather than rebuilding it.
+  function openConsultCard(c) {
+    const card = c.consultCard;
+    card.textContent = '';
+    card.hidden = false;
+    const head = document.createElement('div');
+    head.className = 'ccHead';
+    const title = document.createElement('span');
+    title.className = 'ccTitle';
+    title.textContent = 'Consult — ' + (c.consult.persona || 'bare model');
+    const meta = document.createElement('span');
+    meta.className = 'ccMeta';
+    meta.textContent = 'thinking…';
+    const kill = document.createElement('button');
+    kill.type = 'button'; kill.className = 'ccKill'; kill.textContent = '✕';
+    kill.title = 'close this consult — the disposable seat dies, nothing else changes';
+    kill.onclick = () => ApexBus.post('consultClose', { id: c.id });
+    head.append(title, meta, kill);
+
+    const reply = document.createElement('div');
+    reply.className = 'ccReply';
+
+    const notice = document.createElement('div');
+    notice.className = 'ccNotice';
+    notice.hidden = true;
+
+    const foot = document.createElement('div');
+    foot.className = 'ccFoot';
+    const ta = document.createElement('textarea');
+    ta.rows = 1;
+    ta.placeholder = 'waiting for the first reply…';
+    ta.disabled = true;
+    const sendBtn = document.createElement('button');
+    sendBtn.textContent = 'Ask';
+    sendBtn.disabled = true;
+    const composerBtn = document.createElement('button');
+    composerBtn.className = 'ccToCompose';
+    composerBtn.textContent = 'Send to composer';
+    composerBtn.disabled = true;
+    composerBtn.title = 'fill your composer with the consultant\'s whole reply — never sends it for you';
+    composerBtn.onclick = () => {
+      if (!c.consult || !c.consult.replyText) return;
+      switchTo(c.id);
+      c.ta.value = (c.ta.value ? c.ta.value + '\n' : '') + c.consult.replyText;
+      c.ta.focus();
+      c.ta.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const fire = () => {
+      const text = ta.value.trim();
+      if (!text || ta.disabled) return;
+      ApexBus.post('consultSend', { id: c.id, text });
+      ta.value = ''; ta.style.height = 'auto';
+      ta.disabled = true; sendBtn.disabled = true;
+      ta.placeholder = 'waiting for a reply…';
+    };
+    sendBtn.onclick = fire;
+    ta.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fire(); }
+    });
+    foot.append(ta, sendBtn, composerBtn);
+
+    card.append(head, reply, notice, foot);
+    c.consult.els = { meta, reply, notice, ta, sendBtn, composerBtn };
+  }
+
+  function scrollConsultIntoView(c) {
+    switchTo(c.id);
+    if (c.consultCard) c.consultCard.scrollIntoView({ block: 'nearest' });
   }
 
   // ---------- THE STATUS STRIP (the whole point) ----------
@@ -1039,6 +1218,80 @@ window.ApexChat = (function () {
   ApexBus.on('personaHandoffMap', (m) => { // delegate hint: who receives whose output
     handoffMap = m.map || {};
     renderTabs();
+  });
+  // task-board binding: which seats have an active board todo (Hand off →'s
+  // soft-hierarchy accent, design/consult-v1.md §Button row semantics)
+  ApexBus.on('taskList', (m) => {
+    boundTaskSeats = new Set(m.boundSeatIds || []);
+    renderTabs();
+  });
+  ApexBus.post('taskList', {});
+  // ---------- Consult v1: consult card projection (main/consult.js) ----------
+  ApexBus.on('consultState', (m) => {
+    const c = chats.get(m.id);
+    if (!c) return;
+    if (m.open) {
+      c.consult = { persona: m.persona || null, turnsUsed: m.turnsUsed || 0,
+                    maxTurns: m.maxTurns || 5, replyText: '', els: null };
+      openConsultCard(c);
+    } else {
+      c.consult = null;
+      c.consultCard.hidden = true;
+      c.consultCard.textContent = '';
+    }
+    renderTabs();
+  });
+  ApexBus.on('consultDelta', (m) => {
+    const c = chats.get(m.id);
+    if (!c || !c.consult || !c.consult.els) return;
+    c.consult.replyText += m.text || '';
+    c.consult.els.reply.innerHTML = md(c.consult.replyText);
+  });
+  ApexBus.on('consultText', (m) => {
+    const c = chats.get(m.id);
+    if (!c || !c.consult || !c.consult.els) return;
+    c.consult.replyText = m.text || '';           // authoritative block replace
+    c.consult.els.reply.innerHTML = md(c.consult.replyText);
+  });
+  ApexBus.on('consultTurn', (m) => {
+    const c = chats.get(m.id);
+    if (!c || !c.consult) return;
+    c.consult.replyText = m.text || '';
+    c.consult.turnsUsed = m.turnsUsed;
+    c.consult.maxTurns = m.maxTurns;
+    if (c.consult.els) {
+      c.consult.els.reply.innerHTML = md(c.consult.replyText);
+      c.consult.els.composerBtn.disabled = !c.consult.replyText;
+      c.consult.els.meta.textContent = 'turn ' + c.consult.turnsUsed + '/' + c.consult.maxTurns;
+      c.consult.els.ta.disabled = false;
+      c.consult.els.sendBtn.disabled = false;
+      c.consult.els.ta.placeholder = 'Ask a follow-up…';
+      if (c.consult.turnsUsed >= c.consult.maxTurns) {
+        c.consult.els.notice.hidden = false;
+        c.consult.els.notice.textContent = 'Consult turn limit reached — close and start a fresh ' +
+          'consult, or Hand off → if this became real work.';
+        c.consult.els.ta.disabled = true;
+        c.consult.els.sendBtn.disabled = true;
+      }
+    }
+  });
+  ApexBus.on('consultWarn', (m) => ApexToast('consult: ' + m.message));
+  ApexBus.on('consultError', (m) => {
+    const c = chats.get(m.id);
+    if (c && c.consult) {
+      // main already closed its side (silently, no consultState) — mark this
+      // card closed too so a later Consult → click starts fresh instead of
+      // just refocusing a dead card.
+      c.consult.closed = true;
+      if (c.consult.els) {
+        c.consult.els.notice.hidden = false;
+        c.consult.els.notice.textContent = 'Consult failed: ' + m.error + ' — closed; click Consult → to retry.';
+        c.consult.els.ta.disabled = true;
+        c.consult.els.sendBtn.disabled = true;
+      }
+    } else {
+      ApexToast('consult failed: ' + m.error);
+    }
   });
   ApexBus.on('seatTitle', (m) => retitle(m.id, m.title));
   ApexBus.on('seatList', (m) => {

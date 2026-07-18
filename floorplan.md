@@ -44,6 +44,9 @@ ApexShell/
 │   │                      delegation chains (routes, handoff gates, bounce)
 │   ├── audit.js           the LIVE AUDITOR: opt-in per-seat shadow review —
 │   │                      watches a seat, runs a haiku disposable per turn
+│   ├── consult.js         CONSULT v1: request → digest → kickoff → lifecycle
+│   │                      for a hidden, tool-less disposable that gives the
+│   │                      operator a second opinion on the current chat
 │   ├── skills.js          Claude Code skills surface: scan/create SKILL.md
 │   │                      (personal + per-repo), promote persona recipes
 │   ├── engine/            THE ENGINE (Electron-free, harness-gated)
@@ -56,6 +59,10 @@ ApexShell/
 │   │   │                  allowlist validation of untrusted seat output)
 │   │   ├── audit.js       apex-audit finding contract (parse + validate the
 │   │   │                  shadow auditor's untrusted output)
+│   │   ├── consult.js     Consult contract: digest window, project-slug rule,
+│   │   │                  tiered-memory read, kickoff composition (persona vs
+│   │   │                  bare model, fresh-eyes), turn cap — pure, no fs-side
+│   │   │                  effects beyond reading the persona's own memory files
 │   │   └── transcripts.js transcript backfill parser (resume support)
 │   ├── monitors/          tracker data plane
 │   │   ├── index.js       config load + source lifecycle (panes.json →
@@ -82,7 +89,8 @@ ApexShell/
 │   ├── shell.js           blinds/tabs geometry, dock registration, menu,
 │   │                      zoom, close gates, keyboard shortcuts + ? overlay,
 │   │                      clickable tracker chips (jump to a pane)
-│   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel
+│   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel,
+│   │                      the Consult → picker + in-chat consult card
 │   ├── taskBoard.js       the TODO dock pane (workflow-layer projection)
 │   ├── auditPane.js       the AUDIT dock pane (live-auditor projection)
 │   ├── skillPane.js       the SKILLS dock pane (author/list Claude skills)
@@ -287,12 +295,54 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   (drops into the seat's composer via `ApexChat.fillComposer`) and dismiss; a
   👁 chip marks a watched tab.
 
+## Consult v1 — a second opinion on the current chat
+
+`main/consult.js` (lifecycle) + `main/engine/consult.js` (pure digest/kickoff/
+turn-cap contract) + `renderer/chatView.js` (the Consult → picker + card).
+Full spec: `design/consult-v1.md`.
+
+- **Consult →** sits beside **Hand off →** in every live, non-chain seat's tab
+  row and means the OPPOSITE thing: a hidden, tool-less disposable seat reads a
+  bounded digest of the chat (the live auditor's own window — same 6-turn/8KB
+  bounds, `main/engine/consult.js`) and answers the OPERATOR in a card, never
+  the chat. Nothing the consultant says reaches the seat's transcript, the
+  workflow layer, or memory — the user is the only merge point (send-to-
+  composer fills, never sends).
+- **Picker → kickoff**: pick a persona (or "just a model") + a fresh-eyes
+  toggle + a question. A persona consult inlines tier 1 (`foundation.md` +
+  its own canonical, full text, the same identity a seated persona reads)
+  always, and tier 2 (its OWN `memory/projects/<slug>/state.md` +
+  `MEMORY.md`, project slug resolved from the CHAT's cwd) unless fresh-eyes
+  is on. Missing tier-2 files inline nothing and say nothing (fresh project);
+  an oversized file truncates with a notice; note files are NEVER inlined
+  (tool-less — paging one in is impossible). A bare-model consult carries no
+  identity tier at all, just the digest and the question.
+  No model/effort dial in slice 1 — lands with the disposable launch override
+  (App Builder slice 5) already in the engine.
+- **Turns**: kickoff + up to 4 follow-ups (5 replies total) riding the SAME
+  disposable controller (`controller.send`, not a fresh spawn); each follow-up
+  prefixes a fresh digest delta. The 6th is refused with a notice pointing at
+  a fresh consult or Hand off →. A 120s per-turn backstop (the relationship
+  pass's pattern) and any dead/timeout/error close the consult and report
+  plainly — the chat itself is untouched by every failure mode. One consult
+  per seat; a second `consultStart` warns instead of clobbering. A consult
+  never survives its chat (seat-gone closes it silently).
+- **Button-row semantics**: both buttons stay clickable always (no hard
+  gate) — Hand off → gains an accent/dot when the active chat has a live
+  board-task binding (`main/tasks.js`'s `chatTasks`, surfaced to the renderer
+  as `boundSeatIds` on every `taskList` post) — the natural next step is
+  suggested, never forced.
+- Guardrails: the consultant's reply is untrusted text, rendered exactly like
+  chat prose (escaped + linkified, `chatView.js`'s `md()`) — never parsed for
+  verbs, never auto-inserted. Main never inspects reply content either; it is
+  forwarded verbatim over the bus.
+
 ## Verification duties (inherited by anyone who edits)
 
 - ANY main/renderer logic change → `npm test` — the full hermetic drill suite
   (zero LLM spend) must pass whole. It runs three targets (audit M7): `test:core`
-  (launch-args, taskboard, audit, skills, linkify — the Law-3-pure subset that
-  needs NO `extensions/`, so it proves the core in isolation), `test:studio`
+  (launch-args, taskboard, audit, consult, skills, linkify — the Law-3-pure subset
+  that needs NO `extensions/`, so it proves the core in isolation), `test:studio`
   (the STUDIO shell + `registerBuilder` seam), and `test:persona` (the personas
   EXTENSION's own drills). Keep new core drills in `test:core`; extension drills
   belong to their extension's target.
