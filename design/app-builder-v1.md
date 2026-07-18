@@ -1,7 +1,16 @@
 # App Builder v1 (STUDIO) — Build Specification
 
-Status: proposed. Companion mockup: `design/mockups/studio-mockup.html`
-(clickable flow prototype — the feel, not the wiring).
+Status: implemented (slices 1-9 all shipped: STUDIO shell, contract library,
+workspace/drafts/interview, canonical review + drift, the disposable launch
+override, per-card AI suggest, the co-designer panel, Create + Lift-off,
+import + validator polish — see CHANGELOG.md and floorplan.md § Seats /
+§ The workflow layer for the engine and core-module touches). One known gap
+against this spec: `projectsRemove` (§ Write safety, archive-not-delete) is
+implemented and drilled (`test/studio-liftoff-drill.js`) but has no PROJECTS
+UI affordance yet — a follow-up, not a divergence in behavior. The build
+prompts (`design/app-builder-v1-prompts.md`) and the UX mockup
+(`design/mockups/studio-mockup.html`) are removed now that the implementation
+they guided has shipped — see git history (slice 10, the Sweep).
 
 ## Outcome
 
