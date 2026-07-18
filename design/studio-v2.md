@@ -175,16 +175,66 @@ and a live gate with a real seat on a fixture app.
   blueprint) → next milestone → … → the Sweep. Every stage in one pane, on
   one model picker, under one authority model.
 
+## Wave F — the product contract (design-grade output, editable anywhere)
+
+The operator's deepest requirement is about the OUTPUT, not the studio:
+*"the actual product the builder outputs needs to be unbelievably amazing…
+launch it in a studio type app even if it lives separately from its Apex
+home… choosing options for certain buttons, types, effects, cards, panels —
+all modifiable."* The wrong answer is a universal editor that understands
+arbitrary code (that's a research problem). The right answer is a
+**contract**: every app the builder scaffolds is BORN editable.
+
+- **The scaffold contract.** A blueprint compiles to an app built on three
+  machine-readable spines, all living in the project repo:
+  1. `design/tokens.json` — colors, type scale, spacing, radii, shadows,
+     motion. The Look card (Wave A) compiles INTO this file; nothing in the
+     app hard-codes a color or font.
+  2. A typed **component library** — buttons, cards, panels, inputs, each
+     with named variants and effect options, consuming tokens only.
+  3. A **UI manifest** — which screens exist, which components each uses,
+     with what variants/props. Regenerable from source; drift-checked.
+  Coder personas receive the contract in their kickoff (Lift-off already
+  carries PROJECT.md; it grows the contract addendum), so quality and
+  consistency are properties of construction, not of prompting luck.
+- **Design mode — the app's own studio.** The scaffold includes a dev-only
+  overlay (vendored into the template, ~zero-dep, tree-shaken from
+  production builds): run the app anywhere — no Apex required — flip on
+  design mode, click any component, and get VISUAL pickers: variant, size,
+  effect, radius, palette role, spacing. Changes hot-apply and persist to
+  `tokens.json`/the manifest as ordinary file writes → an ordinary git
+  diff. This is "boom changed" made *deterministic*: token and variant
+  edits need no LLM, no seat, no quota — they're just data.
+- **Apex-connected mode.** When the same app runs inside STUDIO's preview
+  (Wave B) — or Apex detects its dev server — the overlay gains the AI
+  half: the co-designer argues about the design system as a whole, and the
+  Surgeon (Wave C) handles what pickers can't (new components, layout
+  surgery, behavior). One mental model: **pickers for taste, seats for
+  structure.** Standalone gives you the first; coming home to Apex adds
+  the second.
+- **Behind the scenes, honestly.** Design mode's second tab shows what the
+  operator asked to *understand*: the live component tree with each node's
+  manifest entry, which tokens it consumes, and (Apex-connected) a
+  one-click "explain this screen" seat pass. The X-ray (Wave D) covers the
+  repo level; this covers the pixel level.
+- **What ships.** Production builds carry none of it — design mode is a dev
+  dependency, stripped at build. The contract files ship with the repo
+  (they ARE the design system's source of truth).
+
 ## Build order
 
-Waves land in order (A→E); each wave is 3-5 slices, one fresh seat per
-slice, gates per slice (`npm test` whole, smoke, `test:live` where the
-engine or a WebContentsView seam moves), sweep as the tail slice of each
-wave — the v1 protocol verbatim. Wave A is pure extension code and ships
-value alone (mockups make every blueprint tangible even if B-E never land).
-Wave B is the one careful core touch (main-owned WebContentsView + bounds
-sync — argued, minimal, drilled). C rides B. D is parallel-safe with C.
-E is mostly projection over existing machinery.
+Waves land in order (A→E, F alongside C-E); each wave is 3-5 slices, one
+fresh seat per slice, gates per slice (`npm test` whole, smoke, `test:live`
+where the engine or a WebContentsView seam moves), sweep as the tail slice
+of each wave — the v1 protocol verbatim. Wave A is pure extension code and
+ships value alone (mockups make every blueprint tangible even if B-E never
+land). Wave B is the one careful core touch (main-owned WebContentsView +
+bounds sync — argued, minimal, drilled). C rides B. D is parallel-safe with
+C. E is mostly projection over existing machinery. F's contract definition
+(tokens/components/manifest shapes + the scaffold template) can start as
+early as A — it is what makes the mockup pass and the coder kickoff speak
+the same design language — while its overlay lands after C proves the
+picker/DOM plumbing.
 
 New npm dependencies expected: **zero**. Electron ships WebContentsView;
 mermaid rendering can be vendored as a single static asset only if argued
@@ -197,6 +247,11 @@ sandbox as mockups.
   *drives* delegation; personas still build).
 - Cloud anything: hosting, deploy targets, provider-bound scaffolds. The
   package stays portable and local-first.
-- A component marketplace or template library (v3 territory, if ever).
+- A component marketplace or template library (v3 territory, if ever — the
+  Wave F scaffold template is ONE opinionated house style, not a catalog).
 - WYSIWYG structural editing of the mockup HTML (annotate-and-regenerate
   only; hand-editing the mockup breaks provenance for no payoff).
+- A universal editor for arbitrary existing codebases: design mode is a
+  property of apps built ON the contract. Imported/foreign projects get
+  boom-change (Wave C) and the X-ray (Wave D), which work anywhere; the
+  pickers require the spines.
