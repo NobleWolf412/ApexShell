@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave D slice D2 — the ARCHITECTURE step (the X-ray, visible)**
+  (`extensions/studio/{main.js,renderer.js,style.css}` +
+  `extensions/studio/lib/{xray.js,drafts.js,creator.js}`; drills:
+  `test/studio-xray-drill.js` grows parseValidated/collectDiagram + the
+  pass's bus machinery, `test/studio-drafts-drill.js` the validated field,
+  `test/studio-liftoff-drill.js` the package copy). A new X-RAY step sits
+  between SEE and Create (step id `xray` — `architecture` is an interview
+  card key): the D1 fallback renders immediately, free, badged "derived from
+  your architecture card"; an opt-in AI pass — the A3
+  prepare/approve/TTL/single-flight/backstop machinery verbatim, one
+  disposable turn on the STUDIO model pick via `launch:{model,effort}`,
+  prompt = D1's `buildDiagramPrompt` — upgrades it, badged AI-DRAWN with
+  provenance and the stale rule (a canonical move → STALE badge +
+  regenerate, never a silent redraw). Rendering is the argued decision: NO
+  mermaid library, no new deps — `lib/xray.js` grows `parseValidated()`
+  (validates first, refuses whatever the validator refuses, then reads only
+  the allowlist grammar into `{direction, nodes, edges, subgraphs}` with
+  anchored node-token consumption so arrow-shaped label text can't split an
+  edge) and the renderer lays tiers out as plain HTML boxes + SVG arrows
+  (longest-path layering, bounded relaxation), honestly captioned "diagram
+  view — layout is approximate". The validated source + provenance persist
+  on the DRAFT (`drafts.js`'s `diagram` field, held to xray's own validator
+  — no mirror needed, no require cycle) and Create stages
+  `architecture.mmd` + `architecture.provenance.json` inside the same
+  atomic temp dir (the A4 mockups pattern; `xray.collectDiagram` sends the
+  current AI source, or the derived fallback when none/stale — provenance
+  names who drew what rode). Update & restart applies.
+
 - **STUDIO v2, Wave B slice B3 — the instrument bar** (`main/appFrame.js` +
   `main/main.js` — the B2 core extended minimally;
   `extensions/studio/{renderer.js,style.css}`; `test/appframe-drill.js` grows

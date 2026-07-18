@@ -14,6 +14,11 @@ const fs = require('fs');
 const path = require('path');
 const { KEYS } = require('./interview');
 const { BLUEPRINT_AREAS, SCHEMA_VERSION, findRuntimeKeys, hashCanonical, isSafeProjectId } = require('./contract');
+// The X-ray field (slice D2) is held to xray.js's OWN allowlist validator —
+// no mirror: xray.js never requires this module (unlike mockup.js, whose
+// caps ARE mirrored below for exactly that cycle reason), so the drilled
+// grammar itself guards the persisted diagram rather than a drifting copy.
+const { validateMermaidSource, DIAGRAM_PROVENANCE_SCHEMA, MAX_DIAGRAM_BYTES } = require('./xray');
 
 const SCHEMA = 1;
 // v4 UUID — the draft id is also its filename, so the shape is pinned tight.
@@ -207,6 +212,47 @@ function validateMockupNotes(value) {
   }
 }
 
+// The ARCHITECTURE step's diagram (slice D2), persisted on the draft the way
+// the preview is: { mermaid, provenance } or null for "not drawn yet". The
+// mermaid text passes lib/xray.js's allowlist grammar on every read and
+// write (see the import note above — the real validator, not a mirror), and
+// the provenance is xray.buildProvenance's shape cross-checked against the
+// text (a tampered file cannot claim bytes it does not have — the
+// validatePreview drift-bit discipline). Staleness (canonicalHash vs the
+// preview's) is derived at read time, never stored; a canonical move flips
+// a STALE badge in the studio, it never clears or rewrites this field.
+function validateDiagram(value) {
+  if (value === null || value === undefined) return;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Draft diagram is invalid.');
+  if (typeof value.mermaid !== 'string' || !value.mermaid.trim() ||
+      Buffer.byteLength(value.mermaid, 'utf8') > MAX_DIAGRAM_BYTES)
+    throw new Error('Draft diagram source is invalid.');
+  const problems = validateMermaidSource(value.mermaid);
+  if (problems.length)
+    throw new Error('Draft diagram fails the studio allowlist: ' + problems[0]);
+  const record = value.provenance;
+  if (!record || typeof record !== 'object' || Array.isArray(record) ||
+      record.schema !== DIAGRAM_PROVENANCE_SCHEMA)
+    throw new Error('Draft diagram provenance is invalid.');
+  if (record.source !== 'llm' && record.source !== 'derived')
+    throw new Error('Draft diagram provenance source is invalid.');
+  if (typeof record.canonicalHash !== 'string' || !HASH_RE.test(record.canonicalHash))
+    throw new Error('Draft diagram provenance hash is invalid.');
+  if (typeof record.generatedAt !== 'string' || !Number.isFinite(Date.parse(record.generatedAt)))
+    throw new Error('Draft diagram provenance timestamp is invalid.');
+  if (record.bytes !== Buffer.byteLength(value.mermaid, 'utf8'))
+    throw new Error('Draft diagram provenance byte count is invalid.');
+  for (const key of Object.keys(record)) {
+    if (!['schema', 'source', 'canonicalHash', 'generatedAt', 'bytes'].includes(key))
+      throw new Error('Draft diagram provenance contains an unknown field: ' + key);
+  }
+  for (const key of Object.keys(value)) {
+    if (!['mermaid', 'provenance'].includes(key))
+      throw new Error('Draft diagram contains an unknown field: ' + key);
+  }
+}
+
 function validateDraft(value, expectedId) {
   if (!value || value.schema !== SCHEMA) throw new Error('Draft schema must be 1.');
   if (!ID_RE.test(value.id) || (expectedId && value.id !== expectedId))
@@ -237,6 +283,7 @@ function validateDraft(value, expectedId) {
   validatePreview(value.preview === undefined ? null : value.preview);
   validateMockupApproval(value.mockupApproval === undefined ? null : value.mockupApproval);
   validateMockupNotes(value.mockupNotes === undefined ? null : value.mockupNotes);
+  validateDiagram(value.diagram === undefined ? null : value.diagram);
   return value;
 }
 
@@ -284,6 +331,7 @@ function createDraft(stateDir, workspace, starter) {
     preview: null,
     mockupApproval: null,
     mockupNotes: null,
+    diagram: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -342,6 +390,12 @@ function updateDraft(stateDir, id, expectedRevision, changes) {
       ? null
       : JSON.parse(JSON.stringify(changes.mockupNotes));
   }
+  if (changes && Object.prototype.hasOwnProperty.call(changes, 'diagram')) {
+    validateDiagram(changes.diagram);
+    next.diagram = changes.diagram === null || changes.diagram === undefined
+      ? null
+      : JSON.parse(JSON.stringify(changes.diagram));
+  }
   next.revision += 1;
   next.updatedAt = new Date().toISOString();
   validateDraft(next, id);
@@ -392,6 +446,7 @@ module.exports = {
   validatePreview,
   validateMockupApproval,
   validateMockupNotes,
+  validateDiagram,
   readDraft,
   createDraft,
   updateDraft,

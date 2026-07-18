@@ -344,6 +344,144 @@ function deriveFallbackDiagram(blueprint) {
   return { source: lines.join('\n') + '\n', components: found.map((rule) => rule.id) };
 }
 
+// ---- the validated-source parser (slice D2) ---------------------------------
+// Feeds the ARCHITECTURE step's own renderer: the studio draws diagrams as
+// plain HTML boxes + SVG arrows (§ Wave D — no external mermaid library, no
+// new deps), so the validated source must first become a plain structure.
+// parseValidated re-runs the validator and REFUSES whatever it refuses — one
+// accepted language in this module, never a strict validator shadowed by a
+// looser parser — then reads only the allowlist grammar, mechanically:
+// node tokens are consumed ANCHORED (id, then longest-bracket-first shape),
+// so an arrow-shaped substring inside a label can never split an edge.
+const NODE_SHAPES = [
+  ['[[', ']]', 'subroutine'],
+  ['[(', ')]', 'cylinder'],
+  ['((', '))', 'circle'],
+  ['{{', '}}', 'hexagon'],
+  ['[', ']', 'rect'],
+  ['(', ')', 'round'],
+  ['{', '}', 'diamond'],
+];
+const ARROW_STYLES = { '-->': 'solid', '---': 'open', '-.->': 'dotted', '==>': 'thick' };
+// Anchored token readers. The lookahead after a node token forces the greedy
+// ID (which may legally contain '-') to back off an abutting arrow: `a-->b`
+// reads as node `a`, arrow `-->`, node `b`, matching the validator's own
+// backtracking reading of the edge pattern.
+const NODE_TOKEN_RE = new RegExp(`^(${ID})(${SHAPE})?(?=\\s|$|-->|---|-\\.->|==>)`);
+const ARROW_TOKEN_RE = new RegExp(`^\\s*(${ARROW})(?:\\s*\\|(${INNER})\\|)?\\s*`);
+const SUBGRAPH_ID_RE = new RegExp(`^(${ID})\\[(${INNER})\\]$`);
+
+function stripQuotes(text) {
+  const t = String(text).trim();
+  return t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
+}
+
+/** Parse a source that passes validateMermaidSource into the layout input:
+ *  { direction, nodes: [{ id, label, shape }], edges: [{ from, to, label,
+ *  style }], subgraphs: [{ id, label, nodes }] }. Throws on anything the
+ *  validator refuses; deterministic — same source, same structure. Styling
+ *  lines (classDef/class/style) and `direction` draw no boxes or arrows and
+ *  are skipped; subgraph membership is every node defined or referenced
+ *  inside the open subgraph(s), the mermaid reading. */
+function parseValidated(source) {
+  const problems = validateMermaidSource(source);
+  if (problems.length)
+    throw new Error('parseValidated refuses what the validator refuses: ' + problems[0]);
+  const nodes = new Map();
+  const edges = [];
+  const subgraphs = [];
+  const open = [];   // the subgraph stack — membership for defined/referenced nodes
+  let direction = 'TD';
+
+  const touch = (token) => {
+    const id = new RegExp(`^${ID}`).exec(token)[0];
+    const rest = token.slice(id.length).trim();
+    let label = null;
+    let shape = 'plain';
+    if (rest) {
+      for (const [openB, closeB, name] of NODE_SHAPES) {
+        if (rest.startsWith(openB) && rest.endsWith(closeB)) {
+          label = stripQuotes(rest.slice(openB.length, rest.length - closeB.length));
+          shape = name;
+          break;
+        }
+      }
+    }
+    const known = nodes.get(id);
+    if (!known) nodes.set(id, { id, label: label === null ? id : label, shape });
+    else if (label !== null && known.shape === 'plain') {
+      known.label = label;
+      known.shape = shape;
+    }
+    for (const sg of open) if (!sg.nodes.includes(id)) sg.nodes.push(id);
+    return id;
+  };
+
+  for (const raw of source.split('\n')) {
+    const line = raw.trim().replace(/;$/, '');
+    if (!line) continue;
+    if (HEADER_RE.test(line)) { direction = line.split(/\s+/)[1]; continue; }
+    // subgraph/end before the node pattern — `end` would otherwise read as a
+    // node named end, exactly the shadow the validator's own structural pass
+    // (depth tracking before the .some()) refuses to cast.
+    if (SUBGRAPH_RE.test(line)) {
+      const body = line.replace(/^subgraph\s+/, '');
+      const idMatch = SUBGRAPH_ID_RE.exec(body);
+      const sg = idMatch
+        ? { id: idMatch[1], label: stripQuotes(idMatch[2]), nodes: [] }
+        : { id: null, label: stripQuotes(body), nodes: [] };
+      subgraphs.push(sg);
+      open.push(sg);
+      continue;
+    }
+    if (END_RE.test(line)) { open.pop(); continue; }
+    if (LINE_PATTERNS.some(([kind, re]) =>
+      (kind === 'direction' || kind === 'classDef' || kind === 'class' || kind === 'style') && re.test(line)))
+      continue;
+    if (new RegExp(`^${NODE}$`).test(line)) { touch(line); continue; }
+    // An edge line: NODE (ARROW [|label|] NODE)+, consumed anchored.
+    let rest = line;
+    const first = NODE_TOKEN_RE.exec(rest);
+    if (!first) continue;   // unreachable on validated input; bail safe
+    let from = touch(first[0]);
+    rest = rest.slice(first[0].length);
+    while (rest.trim()) {
+      const a = ARROW_TOKEN_RE.exec(rest);
+      if (!a) break;
+      rest = rest.slice(a[0].length);
+      const n = NODE_TOKEN_RE.exec(rest);
+      if (!n) break;
+      const to = touch(n[0]);
+      edges.push({ from, to, label: a[2] ? stripQuotes(a[2]) : null, style: ARROW_STYLES[a[1]] });
+      rest = rest.slice(n[0].length);
+      from = to;
+    }
+  }
+  return { direction, nodes: [...nodes.values()], edges, subgraphs };
+}
+
+// ---- the Create-time copy (slice D2) ----------------------------------------
+/** The package's diagram, the collectApprovedMockups idiom on one artifact:
+ *  the draft's stored AI-drawn diagram when it is still CURRENT against the
+ *  approved canonical hash; otherwise the free fallback, derived fresh from
+ *  the approved blueprint and anchored to that same hash as source 'derived'.
+ *  A stale AI diagram never enters a package — the STALE badge in the studio
+ *  is the review prompt, and the provenance names WHO drew what actually
+ *  rode. Returns { mermaid, provenance } or null without an approved preview
+ *  (no package exists to copy into anyway). Pure over the draft. */
+function collectDiagram(draft) {
+  const preview = draft && draft.preview;
+  const hash = preview && preview.generatedCanonicalHash;
+  if (typeof hash !== 'string' || !HASH_RE.test(hash)) return null;
+  const stored = draft.diagram;
+  if (stored && stored.provenance &&
+      stored.provenance.schema === DIAGRAM_PROVENANCE_SCHEMA &&
+      stored.provenance.canonicalHash === hash)
+    return { mermaid: stored.mermaid, provenance: stored.provenance };
+  const { source } = deriveFallbackDiagram(preview.blueprint);
+  return { mermaid: source, provenance: buildProvenance(hash, 'derived', source) };
+}
+
 // The cap/shape constants export wholesale as the module's public contract
 // (the suggest.js precedent): the drill pins the grammar through
 // validateMermaidSource rather than the regexes, so a grammar change must
@@ -356,8 +494,10 @@ module.exports = {
   DIAGRAM_PROVENANCE_SCHEMA,
   buildDiagramPrompt,
   validateMermaidSource,
+  parseValidated,
   parseLlmReply,
   buildProvenance,
   isDiagramStale,
   deriveFallbackDiagram,
+  collectDiagram,
 };

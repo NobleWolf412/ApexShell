@@ -66,6 +66,13 @@ function createProjectPackage(workspaceRoot, bundle, options = {}) {
   // an absent/empty list simply writes no mockups/ folder — unapproved or
   // stale mockups stay behind in draft state by construction.
   const mockups = Array.isArray(options && options.mockups) ? options.mockups : [];
+  // The X-ray diagram (slice D2), as xray.collectDiagram shapes it:
+  // { mermaid, provenance } — the current AI-drawn source or the derived
+  // fallback, provenance naming who drew it. The caller collects it (this
+  // module stays draft-store-agnostic, the mockups precedent above); absent
+  // = no diagram files at all.
+  const diagram = options && options.diagram && typeof options.diagram === 'object'
+    ? options.diagram : null;
   if (typeof workspaceRoot !== 'string' || !path.isAbsolute(workspaceRoot))
     throw new Error('Projects workspace must be an absolute path.');
   const root = path.resolve(workspaceRoot);
@@ -121,6 +128,19 @@ function createProjectPackage(workspaceRoot, bundle, options = {}) {
         fs.copyFileSync(m.htmlFile, path.join(stage, 'mockups', m.id + '.html'), fs.constants.COPYFILE_EXCL);
         fs.copyFileSync(m.provenanceFile, path.join(stage, 'mockups', m.id + '.json'), fs.constants.COPYFILE_EXCL);
       }
+    }
+    // architecture.mmd + its provenance sidecar (slice D2) — the ARCHITECTURE
+    // step's diagram source, mermaid the package's tooling can read, with the
+    // provenance proving WHO drew it (llm/derived) and from WHICH canonical.
+    // Staged INSIDE the same temp dir, before the rename — the package layout
+    // grew again, the atomic discipline did not. The sidecar is named
+    // architecture.provenance.json, not architecture.json: a root-level
+    // *.json beside blueprint.json must say what it is.
+    if (diagram) {
+      writeNew(path.join(stage, 'architecture.mmd'),
+        diagram.mermaid + (diagram.mermaid.endsWith('\n') ? '' : '\n'));
+      writeNew(path.join(stage, 'architecture.provenance.json'),
+        JSON.stringify(diagram.provenance, null, 2) + '\n');
     }
     fs.renameSync(stage, paths.projectDir);   // the atomic commit
     committed = true;

@@ -21,6 +21,7 @@ const blueprint = require('./lib/blueprint');
 const modelPicker = require('./lib/modelPicker');
 const suggest = require('./lib/suggest');
 const mockup = require('./lib/mockup');
+const xray = require('./lib/xray');
 const codesigner = require('./lib/codesigner');
 const packageCreator = require('./lib/creator');
 const design = require('./lib/design');
@@ -986,6 +987,188 @@ function register(ctx) {
     }
   });
 
+  // ---- the ARCHITECTURE step's diagram pass (slice D2, § Wave D) -----------
+  // Verb-for-verb the A3 mockup pass's state machine: prepare (usage snapshot
+  // + TTL) → run (approved:true, one disposable turn, launch passthrough) →
+  // result; backstop timer; one pass in flight. What differs is the payload
+  // (one diagram, no screen), the contract (lib/xray.js's one-mermaid-fence
+  // allowlist grammar), and the landing zone: a validated reply becomes a
+  // DRAFT FIELD (drafts.js's validated `diagram` — the source is ≤ 32 KB, so
+  // it fits the draft where mockup HTML never could), with provenance
+  // anchored to the approved canonical hash. The D1 fallback needs none of
+  // this — it derives free on every state post, always renderable.
+  const DIAGRAM_PREPARE_TTL_MS = 5 * 60 * 1000;   // == MOCKUP_PREPARE_TTL_MS
+  const DIAGRAM_BACKSTOP_MS = 5 * 60 * 1000;      // == MOCKUP_BACKSTOP_MS
+  let preparedDiagram = null;   // { draftId, revision, preparedAt }
+  let activeDiagramSeat = null; // { controller, backstop } — one pass at a time
+
+  // The step's whole truth in one post: the stored AI diagram (parsed here by
+  // lib/xray.parseValidated — the renderer only lays out boxes and draws
+  // arrows, it never re-reads mermaid) plus the free fallback. The fallback
+  // derives from the APPROVED blueprint when one exists, else the current
+  // answers (the postMockupScreens precedent), so the step renders even
+  // before first approval. Fail-soft on the stored half: an unparseable
+  // field (a hand-edited state file) costs the AI view, never the step.
+  const postDiagramState = (draft) => {
+    const source = draft.preview ? draft.preview.blueprint : blueprint.blueprintFromDraft(draft);
+    const fallbackOut = xray.deriveFallbackDiagram(source);
+    const currentHash = draft.preview ? draft.preview.generatedCanonicalHash : null;
+    let diagram = null;
+    if (draft.diagram) {
+      try {
+        diagram = {
+          mermaid: draft.diagram.mermaid,
+          parsed: xray.parseValidated(draft.diagram.mermaid),
+          provenance: draft.diagram.provenance,
+          stale: xray.isDiagramStale(draft.diagram.provenance, currentHash),
+        };
+      } catch { diagram = null; }
+    }
+    ctx.bus.post('projectsDiagramState', {
+      draftId: draft.id,
+      hasPreview: Boolean(draft.preview),
+      diagram,
+      fallback: { mermaid: fallbackOut.source, parsed: xray.parseValidated(fallbackOut.source) },
+      error: null,
+    });
+  };
+
+  ctx.bus.on('projectsDiagramGet', (message) => {
+    try {
+      postDiagramState(currentWorkspaceDraft(message && message.id));
+    } catch (err) {
+      ctx.bus.post('projectsDiagramState', {
+        draftId: message && message.id, hasPreview: false,
+        diagram: null, fallback: null, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsDiagramPrepare', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      if (!draft.preview)
+        throw new Error('Generate the canonical preview first — the AI diagram is drawn FROM the approved blueprint.');
+      const usage = ctx.usage && typeof ctx.usage.claudeSnapshot === 'function'
+        ? ctx.usage.claudeSnapshot() : null;
+      const usageFresh = Boolean(usage && usage.asOf && !usage.stale &&
+        Date.now() - usage.asOf <= 5 * 60 * 1000);
+      preparedDiagram = {
+        draftId: draft.id,
+        revision: draft.revision,
+        preparedAt: Date.now(),
+      };
+      ctx.bus.post('projectsDiagramPrepared', {
+        draftId: draft.id,
+        revision: draft.revision,
+        usage: usage ? {
+          session: usage.session || null,
+          weekly: usage.weekly || null,
+          asOf: usage.asOf || null,
+          stale: !usageFresh,
+        } : null,
+        requiresApproval: true,
+      });
+    } catch (err) {
+      preparedDiagram = null;
+      ctx.bus.post('projectsDiagramStatus', { phase: 'error', error: err.message });
+    }
+  });
+
+  ctx.bus.on('projectsDiagramRun', (message) => {
+    try {
+      if (!message || message.approved !== true)
+        throw new Error('The diagram pass runs a hidden Claude session — it needs explicit approval.');
+      if (!preparedDiagram || message.id !== preparedDiagram.draftId ||
+          message.expectedRevision !== preparedDiagram.revision)
+        throw new Error('Prepare the diagram pass again from the current draft.');
+      if (Date.now() - preparedDiagram.preparedAt > DIAGRAM_PREPARE_TTL_MS)
+        throw new Error('The usage check expired; prepare the diagram pass again.');
+      if (activeDiagramSeat) throw new Error('A diagram pass is already running.');
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+
+      const draft = currentWorkspaceDraft(preparedDiagram.draftId);
+      if (draft.revision !== preparedDiagram.revision)
+        throw new Error('The draft changed; prepare the diagram pass again.');
+      if (!draft.preview)
+        throw new Error('Generate the canonical preview first — the AI diagram is drawn FROM the approved blueprint.');
+      const bundle = draft.preview;
+      // The provenance anchor: the approved canonical hash this diagram is
+      // drawn FROM. A later blueprint change flips the STALE badge — a
+      // regenerate button, never a silent redraw.
+      const canonicalHash = bundle.generatedCanonicalHash;
+      const prompt = xray.buildDiagramPrompt(bundle.blueprint);
+
+      // Slice 5's launch override, same passthrough as the mockup pass:
+      // omitted entirely when the STUDIO picker holds no pick.
+      const pick = modelPicker.readModelPick(ctx.stateDir);
+      const launch = (pick.model || pick.effort)
+        ? { model: pick.model || undefined, effort: pick.effort || undefined }
+        : null;
+
+      let finalText = '';
+      const done = (payload) => {
+        if (!activeDiagramSeat) return;
+        const seat = activeDiagramSeat;
+        activeDiagramSeat = null;
+        clearTimeout(seat.backstop);
+        try { seat.controller.close(); } catch { /* already gone */ }
+        ctx.bus.post('projectsDiagramResult', {
+          draftId: draft.id, ok: false, error: null,
+          ...payload,
+        });
+      };
+      const controller = ctx.seats.startDisposable({
+        kickoff: prompt,
+        ...(launch ? { launch } : {}),
+        onEvent: (event) => {
+          if (!activeDiagramSeat) return;
+          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
+          else if (event.type === 'result') {
+            const parsed = xray.parseLlmReply(finalText);
+            if (parsed.error) { done({ error: parsed.error }); return; }
+            // Only a fully validated source ever lands, and drafts.js's own
+            // validateDiagram re-runs the grammar on the write — no ordering
+            // bug can smuggle a violation into the store.
+            try {
+              const provenance = xray.buildProvenance(canonicalHash, 'llm', parsed.source);
+              let refreshed = currentWorkspaceDraft(draft.id);
+              refreshed = drafts.updateDraft(ctx.stateDir, refreshed.id, refreshed.revision,
+                { diagram: { mermaid: parsed.source, provenance } });
+              ctx.bus.post('projectsDraftPatched', { draft: refreshed, cards: CARDS });
+              done({ ok: true });
+              postDiagramState(refreshed);
+            } catch (err) {
+              done({ error: err.message });
+            }
+          } else if (event.type === 'dead') {
+            done({ error: 'the diagram seat exited before answering' });
+          }
+        },
+      });
+      activeDiagramSeat = {
+        controller,
+        backstop: setTimeout(() => done({ error: 'the diagram pass timed out' }), DIAGRAM_BACKSTOP_MS),
+      };
+      preparedDiagram = null;
+      ctx.bus.post('projectsDiagramStatus', { phase: 'running' });
+    } catch (err) {
+      ctx.bus.post('projectsDiagramResult', {
+        draftId: message && message.id, ok: false, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsDiagramStop', () => {
+    if (!activeDiagramSeat) return;
+    const seat = activeDiagramSeat;
+    activeDiagramSeat = null;
+    clearTimeout(seat.backstop);
+    try { seat.controller.close(); } catch { /* already gone */ }
+    ctx.bus.post('projectsDiagramStatus', { phase: 'stopped' });
+  });
+
   // ---- the co-designer panel (slice 7, § AI integration Level 2) ----------
   // ONE long-lived disposable controller per open panel session — NOT a fresh
   // one per turn. `codesignerOpen` starts it (its kickoff already sends turn
@@ -1146,8 +1329,12 @@ function register(ctx) {
       // A4: the approved, still-current mockups ride into the package (staged
       // inside creator.js's same atomic temp dir, before the rename — never a
       // post-rename write). No/stale approval = an empty list = no mockups/.
+      // D2: the X-ray diagram rides too — the current AI-drawn source, or the
+      // free derived fallback (provenance names which; a stale AI diagram
+      // never enters a package). Same atomic stage, same never-post-rename.
       const created = packageCreator.createProjectPackage(workspace, draft.preview, {
         mockups: mockup.collectApprovedMockups(ctx.stateDir, draft),
+        diagram: xray.collectDiagram(draft),
       });
       ctx.bus.post('projectsCreateResult', {
         ok: true,
@@ -1448,6 +1635,7 @@ module.exports = {
 module.exports.modelPicker = modelPicker;
 module.exports.suggest = suggest;
 module.exports.mockup = mockup;
+module.exports.xray = xray;
 module.exports.codesigner = codesigner;
 module.exports.packageCreator = packageCreator;
 module.exports.liftoff = liftoff;

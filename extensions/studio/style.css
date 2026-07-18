@@ -359,3 +359,45 @@ body.studioMode .studioView[data-builder="projects"] .pjRoot { padding-left: 0; 
 .studioView[data-builder="projects"] .pjSeeNoteInput { flex: 1; min-width: 0;
   padding: 8px 10px; border: 1px solid var(--edge); border-radius: 8px;
   background: var(--bg); color: var(--text); font-size: 12px; }
+
+/* the X-ray step (slice D2): the ARCHITECTURE diagram as plain HTML boxes +
+   SVG arrows — tiers stack as rows; the layout is approximate and the step
+   says so. Shapes approximate honestly: circle→pill, round→rounder corners,
+   diamond/hexagon→dashed border, cylinder→heavy base. */
+.studioView[data-builder="projects"] .pjXrayCanvas { position: relative; margin-top: 10px;
+  padding: 18px 12px; border: 1px solid var(--edge); border-radius: 10px;
+  background: var(--bg); overflow-x: auto; }
+.studioView[data-builder="projects"] .pjXrayWires { position: absolute; left: 0; top: 0;
+  pointer-events: none; color: var(--dim); }
+.studioView[data-builder="projects"] .pjXrayRow { display: flex; flex-wrap: wrap;
+  justify-content: center; gap: 18px; margin: 0 0 38px; }
+.studioView[data-builder="projects"] .pjXrayRow:last-child { margin-bottom: 0; }
+.studioView[data-builder="projects"] .pjXrayNode { position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 14px; border: 1px solid var(--edge); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg)); font-size: 12px; }
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="circle"] { border-radius: 999px; }
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="round"] { border-radius: 16px; }
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="diamond"],
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="hexagon"] { border-style: dashed; }
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="cylinder"] { border-bottom-width: 3px; }
+.studioView[data-builder="projects"] .pjXrayNode[data-shape="subroutine"] { border-left-width: 3px;
+  border-right-width: 3px; }
+.studioView[data-builder="projects"] .pjXrayLabel { color: var(--text); white-space: nowrap; }
+.studioView[data-builder="projects"] .pjXraySub { color: var(--dim); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; }
+.studioView[data-builder="projects"] .pjXrayEdgeLabel { font-size: 9.5px; fill: var(--dim); }
+.studioView[data-builder="projects"] .pjXrayBadgeRow { display: flex; align-items: center;
+  gap: 8px; flex-wrap: wrap; }
+.studioView[data-builder="projects"] .pjXrayBadge { font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--edge); color: var(--dim); }
+.studioView[data-builder="projects"] .pjXrayBadge[data-tone="ai"] { color: var(--accent);
+  border-color: var(--accent); }
+.studioView[data-builder="projects"] .pjXrayBadge[data-tone="warn"] { color: var(--warning);
+  border-color: var(--warning); }
+.studioView[data-builder="projects"] .pjXraySrc { margin-top: 10px; }
+.studioView[data-builder="projects"] .pjXraySrc summary { cursor: pointer; }
+.studioView[data-builder="projects"] .pjXraySrc pre { margin: 6px 0 0; padding: 10px;
+  border: 1px solid var(--edge); border-radius: 8px; font-size: 11px;
+  font-family: var(--mono, monospace); overflow: auto; max-height: 220px; color: var(--dim); }

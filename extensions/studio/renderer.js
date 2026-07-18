@@ -299,6 +299,15 @@ function mountProjects(el, hasBus) {
       // picker never runs outside the SEE step" holds by construction.
       annotate: false, pendingPick: null, noteMsg: null,
     },
+    // ---- slice D2: the X-ray (ARCHITECTURE) step. `forDraft` is the fetch
+    // guard (the mockups discipline); `data` is main's projectsDiagramState
+    // payload — the stored AI diagram parsed main-side by
+    // lib/xray.parseValidated (this half only lays out boxes and draws
+    // arrows; it never re-reads mermaid) plus the free D1 fallback.
+    // prepared/busy mirror the mockup block's two-step gate. Provenance/
+    // staleness truth is read off state.draft directly (diagramCurrent()),
+    // never mirrored here — the A6 one-source-of-truth rule.
+    xray: { forDraft: null, data: null, prepared: null, busy: false, resultError: null },
     // ---- slice 7: the co-designer panel (one long-lived controller per open) ----
     codesigner: {
       open: false,
@@ -338,6 +347,10 @@ function mountProjects(el, hasBus) {
       { id: 'review', label: 'Review', sub: 'answers + gaps' },
       { id: 'canonical', label: 'Canonical', sub: 'PROJECT.md + validate' },
       { id: 'see', label: 'See', sub: 'mockups + approve' },
+      // D2: the step id is 'xray', never 'architecture' — that name is an
+      // interview CARD key, and a step id colliding with a card key would
+      // route goStep/renderStep to the card.
+      { id: 'xray', label: 'X-ray', sub: 'architecture diagram' },
       { id: 'create', label: 'Create', sub: 'write the package' },
       { id: 'liftoff', label: 'Lift-off', sub: 'register · delegate · chat' },
     ];
@@ -350,6 +363,12 @@ function mountProjects(el, hasBus) {
   const approvalCurrent = () => Boolean(state.draft && state.draft.mockupApproval &&
     state.draft.preview &&
     state.draft.mockupApproval.canonicalHash === state.draft.preview.generatedCanonicalHash);
+  // The client mirror of lib/xray.isDiagramStale's current-arm (one-way, like
+  // approvalCurrent above): the stored AI diagram counts only while its
+  // generating hash still matches the approved canonical.
+  const diagramCurrent = () => Boolean(state.draft && state.draft.diagram &&
+    state.draft.diagram.provenance && state.draft.preview &&
+    state.draft.diagram.provenance.canonicalHash === state.draft.preview.generatedCanonicalHash);
 
   // ---- slice A5: the annotate bridge --------------------------------------
   // The client mirror of lib/mockup.validatePickMessage — the renderer cannot
@@ -399,6 +418,7 @@ function mountProjects(el, hasBus) {
     if (id === 'review') return hasPreview();
     if (id === 'canonical') return hasPreview() && !state.draft.preview.canonicalDrift;
     if (id === 'see') return approvalCurrent();
+    if (id === 'xray') return diagramCurrent();   // AI-drawn and still current; the fallback is a floor, not a checkmark
     if (id === 'create') return Boolean(state.createdProject);
     if (id === 'liftoff') return false;
     return Boolean(state.draft && (state.draft.answers[id] || '').trim());
@@ -410,6 +430,7 @@ function mountProjects(el, hasBus) {
     if (id === 'review') return Boolean(state.draft);       // review needs a started draft
     if (id === 'canonical') return hasPreview();             // canonical needs a preview
     if (id === 'see') return hasPreview();                    // mockups render FROM the approved blueprint
+    if (id === 'xray') return hasPreview();                   // the diagram is drawn FROM the approved blueprint
     if (id === 'create') return hasPreview();                 // Create needs an approved canonical
     if (id === 'liftoff') return Boolean(state.createdProject); // offered right after Create succeeds
     return Boolean(state.draft);   // cards need a started draft
@@ -504,6 +525,7 @@ function mountProjects(el, hasBus) {
     if (state.step === 'review') return renderReview();
     if (state.step === 'canonical') return renderCanonicalView();
     if (state.step === 'see') return renderSee();
+    if (state.step === 'xray') return renderXray();
     if (state.step === 'create') return renderCreate();
     if (state.step === 'liftoff') return renderLiftoff();
     if (isCardStep(state.step)) return renderCard(findCard(state.step));
@@ -1329,7 +1351,7 @@ function mountProjects(el, hasBus) {
       '</div>' +
       '<div class="pjCard"><div class="pjBtnRow">' +
         '<button type="button" class="pjBtn pjSeeBack">← BACK TO CANONICAL</button>' +
-        '<button type="button" class="pjBtn primary pjSeeContinue">CONTINUE TO CREATE →</button>' +
+        '<button type="button" class="pjBtn primary pjSeeContinue">CONTINUE TO X-RAY →</button>' +
       '</div></div>';
 
     wireSee(draft);
@@ -1459,7 +1481,7 @@ function mountProjects(el, hasBus) {
     const back = main.querySelector('.pjSeeBack');
     if (back) back.addEventListener('click', () => goStep('canonical'));
     const cont = main.querySelector('.pjSeeContinue');
-    if (cont) cont.addEventListener('click', () => goStep('create'));
+    if (cont) cont.addEventListener('click', () => goStep('xray'));
     for (const btn of main.querySelectorAll('.pjMockPick')) {
       btn.addEventListener('click', () => {
         mk.selected = btn.dataset.screenId;
@@ -1514,6 +1536,225 @@ function mountProjects(el, hasBus) {
     });
     const stopBtn = main.querySelector('.pjMockStop');
     if (stopBtn) stopBtn.addEventListener('click', () => ApexBus.post('projectsMockupStop', {}));
+  }
+
+  // ---- slice D2: the X-ray (ARCHITECTURE) step -----------------------------
+  // The diagram renders as plain HTML boxes + SVG arrows — NO mermaid
+  // library, no new deps (the argued Wave D decision): the validated
+  // allowlist source is parsed by lib/xray.parseValidated main-side, and a
+  // renderer that only draws what the validator vouched for cannot be
+  // surprised by what it refused. Layout is a simple layered pass — each
+  // node's tier is its longest edge-path depth from a root, tiers stack as
+  // rows — bounded relaxation, so an exotic cyclic AI diagram degrades to an
+  // approximate but honest picture, and the UI says so in as many words.
+  function diagramTiers(parsed) {
+    const tier = new Map(parsed.nodes.map((n) => [n.id, 0]));
+    const cap = parsed.nodes.length;
+    for (let pass = 0; pass <= cap; pass++) {
+      let moved = false;
+      for (const e of parsed.edges) {
+        if (!tier.has(e.from) || !tier.has(e.to) || e.from === e.to) continue;
+        const next = tier.get(e.from) + 1;
+        if (next > tier.get(e.to) && next <= cap) { tier.set(e.to, next); moved = true; }
+      }
+      if (!moved) break;
+    }
+    const rows = [];
+    for (const n of parsed.nodes) {
+      const t = tier.get(n.id);
+      (rows[t] = rows[t] || []).push(n);
+    }
+    return rows.filter((r) => r && r.length);
+  }
+
+  function xrayCanvasHtml(parsed) {
+    const sgOf = (id) => {
+      for (const sg of parsed.subgraphs) if (sg.nodes.includes(id)) return sg.label;
+      return null;
+    };
+    const rows = diagramTiers(parsed).map((row) =>
+      '<div class="pjXrayRow">' + row.map((n) => {
+        const sub = sgOf(n.id);
+        return '<div class="pjXrayNode" data-node-id="' + escapeHtml(n.id) + '" data-shape="' + escapeHtml(n.shape) + '">' +
+          '<span class="pjXrayLabel">' + escapeHtml(n.label) + '</span>' +
+          (sub ? '<span class="pjXraySub">' + escapeHtml(sub) + '</span>' : '') +
+        '</div>';
+      }).join('') + '</div>').join('');
+    return '<div class="pjXrayCanvas"><svg class="pjXrayWires"></svg>' + rows + '</div>';
+  }
+
+  // The SVG arrow pass: boxes are already laid out by normal flow, so the
+  // wires just connect measured offsets (offsetParent is the canvas — the
+  // positioned ancestor). Drawn once per render; approximate by design.
+  function drawXrayWires(parsed) {
+    const canvas = main.querySelector('.pjXrayCanvas');
+    const svg = main.querySelector('.pjXrayWires');
+    if (!canvas || !svg || !canvas.offsetWidth) return;
+    const w = canvas.scrollWidth, h = canvas.scrollHeight;
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.style.width = w + 'px';
+    svg.style.height = h + 'px';
+    const box = {};
+    for (const el of canvas.querySelectorAll('.pjXrayNode')) {
+      box[el.dataset.nodeId] = {
+        x: el.offsetLeft + el.offsetWidth / 2,
+        top: el.offsetTop,
+        bottom: el.offsetTop + el.offsetHeight,
+      };
+    }
+    const NS = 'http://www.w3.org/2000/svg';
+    svg.innerHTML = '<defs><marker id="pjXrayHead" markerWidth="7" markerHeight="7" ' +
+      'refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="currentColor"/></marker></defs>';
+    for (const e of parsed.edges) {
+      const a = box[e.from], b = box[e.to];
+      if (!a || !b || e.from === e.to) continue;
+      const downward = b.top >= a.bottom;
+      const y1 = downward ? a.bottom : a.top;
+      const y2 = downward ? b.top : b.bottom;
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', a.x); line.setAttribute('y1', y1);
+      line.setAttribute('x2', b.x); line.setAttribute('y2', y2);
+      line.setAttribute('stroke', 'currentColor');
+      line.setAttribute('stroke-width', e.style === 'thick' ? '2.5' : '1.2');
+      if (e.style === 'dotted') line.setAttribute('stroke-dasharray', '4 3');
+      if (e.style !== 'open') line.setAttribute('marker-end', 'url(#pjXrayHead)');
+      svg.appendChild(line);
+      if (e.label) {
+        const text = document.createElementNS(NS, 'text');
+        text.setAttribute('x', (a.x + b.x) / 2 + 4);
+        text.setAttribute('y', (y1 + y2) / 2 - 3);
+        text.setAttribute('class', 'pjXrayEdgeLabel');
+        text.textContent = e.label;
+        svg.appendChild(text);
+      }
+    }
+  }
+
+  function renderXray() {
+    const draft = state.draft;
+    // Smoke-safe empty state (the renderSee discipline): the step renders
+    // without a draft rather than redirect-chaining to Start.
+    if (!draft || !draft.preview) {
+      main.innerHTML =
+        '<h2 class="pjTitle">X-ray — the architecture, visible</h2>' +
+        '<p class="pjLead">The blueprint\'s components, data, and integrations as one diagram — ' +
+          'generate the canonical on the Review step first; the diagram is drawn FROM the approved blueprint.</p>' +
+        '<div class="pjCard"><div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjXrayBackOut">← ' + (draft ? 'REVIEW' : 'START') + '</button>' +
+        '</div></div>';
+      main.querySelector('.pjXrayBackOut').addEventListener('click', () => goStep(draft ? 'review' : 'start'));
+      return;
+    }
+
+    if (state.xray.forDraft !== draft.id) {
+      state.xray = { forDraft: draft.id, data: null, prepared: null, busy: false, resultError: null };
+      ApexBus.post('projectsDiagramGet', { id: draft.id });
+    }
+    const xr = state.xray;
+    if (xr.data && xr.data.error) {
+      main.innerHTML = '<h2 class="pjTitle">X-ray</h2><div class="pjCard">' +
+        '<div class="pjErr" data-tone="warn">' + escapeHtml(xr.data.error) + '</div></div>';
+      return;
+    }
+
+    const d = xr.data;
+    // The stored AI diagram leads when it exists (stale INCLUDED — a stale
+    // diagram shows with its badge and a regenerate path, it is never
+    // silently swapped for the fallback); the free fallback otherwise.
+    const showing = d ? (d.diagram || d.fallback) : null;
+    const isAi = Boolean(d && d.diagram);
+    const stale = Boolean(isAi && d.diagram.stale);
+
+    let badges = '';
+    if (isAi) {
+      const p = d.diagram.provenance || {};
+      badges =
+        '<div class="pjXrayBadgeRow">' +
+          '<span class="pjXrayBadge" data-tone="ai">AI-DRAWN</span>' +
+          (stale ? '<span class="pjXrayBadge" data-tone="warn">STALE</span>' : '') +
+          '<span class="pjWsSub">drawn ' + escapeHtml(p.generatedAt ? new Date(p.generatedAt).toLocaleString() : '(unknown)') +
+            ' · ' + escapeHtml(String(p.bytes || 0)) + ' bytes · from canonical ' +
+            escapeHtml(String(p.canonicalHash || '').slice(0, 12)) + '…</span>' +
+        '</div>' +
+        (stale
+          ? '<div class="pjErr" data-tone="warn">STALE — the blueprint moved on after this diagram was drawn. ' +
+            'Regenerate it below, or it stays as-is; nothing redraws without you.</div>'
+          : '');
+    } else {
+      badges =
+        '<div class="pjXrayBadgeRow">' +
+          '<span class="pjXrayBadge">DERIVED</span>' +
+          '<span class="pjWsSub">derived from your architecture card — free, always available; the AI pass below upgrades it.</span>' +
+        '</div>';
+    }
+
+    const canRun = Boolean(xr.prepared) && !xr.busy;
+    main.innerHTML =
+      '<h2 class="pjTitle">X-ray — the architecture, visible</h2>' +
+      '<p class="pjLead">The blueprint\'s components, data stores, and integrations as one diagram. ' +
+        'A blueprint change marks an AI-drawn diagram STALE; nothing redraws without you.</p>' +
+      '<div class="pjCard">' +
+        badges +
+        (d ? xrayCanvasHtml(showing.parsed) : '<div class="pjWsSub">Deriving the diagram…</div>') +
+        '<div class="pjWsSub">diagram view — layout is approximate</div>' +
+        (d
+          ? '<details class="pjXraySrc"><summary class="pjWsSub">VIEW MERMAID SOURCE</summary>' +
+            '<pre>' + escapeHtml(showing.mermaid) + '</pre></details>'
+          : '') +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel">' + (isAi ? 'REDRAW WITH AI' : 'DRAW WITH AI') + '</label>' +
+        '<div class="pjWsSub">One hidden disposable turn draws the diagram from the approved blueprint — ' +
+          'opt-in, on the STUDIO model pick. The derived sketch above costs nothing and stays available.</div>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjXrayPrepare" ' + (xr.busy ? 'disabled' : '') + ' ' +
+            'title="Runs one hidden disposable session to draw the architecture diagram — a real Claude turn, opt-in.">' +
+            (xr.prepared ? 'RE-CHECK USAGE' : (isAi ? 'REDRAW' : 'DRAW') + ' WITH AI (USES A SESSION)') +
+          '</button>' +
+          (xr.prepared
+            ? '<button type="button" class="pjBtn primary pjXrayRun" ' + (canRun ? '' : 'disabled') + '>RUN DIAGRAM PASS</button>'
+            : '') +
+          (xr.busy ? '<button type="button" class="pjBtn pjXrayStop">STOP</button>' : '') +
+        '</div>' +
+        (xr.prepared
+          ? '<div class="pjWsSub pjAiUsage">' + escapeHtml(usageNote(xr.prepared.usage)) + '</div>'
+          : '') +
+        (xr.busy ? '<div class="pjWsSub pjAiUsage">Drawing the diagram…</div>' : '') +
+        (xr.resultError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(xr.resultError) + '</div>' : '') +
+      '</div>' +
+      '<div class="pjCard"><div class="pjBtnRow">' +
+        '<button type="button" class="pjBtn pjXrayBack">← BACK TO SEE</button>' +
+        '<button type="button" class="pjBtn primary pjXrayContinue">CONTINUE TO CREATE →</button>' +
+      '</div></div>';
+
+    wireXray(draft, d ? showing : null);
+  }
+
+  function wireXray(draft, showing) {
+    if (showing) drawXrayWires(showing.parsed);
+    const xr = state.xray;
+    const prepareBtn = main.querySelector('.pjXrayPrepare');
+    if (prepareBtn) prepareBtn.addEventListener('click', () => {
+      if (prepareBtn.disabled) return;
+      xr.prepared = null;
+      xr.resultError = null;
+      ApexBus.post('projectsDiagramPrepare', { id: draft.id });
+    });
+    const runBtn = main.querySelector('.pjXrayRun');
+    if (runBtn) runBtn.addEventListener('click', () => {
+      if (runBtn.disabled || !xr.prepared) return;
+      xr.busy = true;
+      ApexBus.post('projectsDiagramRun', {
+        id: xr.prepared.draftId, expectedRevision: xr.prepared.revision, approved: true,
+      });
+      render();
+    });
+    const stopBtn = main.querySelector('.pjXrayStop');
+    if (stopBtn) stopBtn.addEventListener('click', () => ApexBus.post('projectsDiagramStop', {}));
+    const back = main.querySelector('.pjXrayBack');
+    if (back) back.addEventListener('click', () => goStep('see'));
+    const cont = main.querySelector('.pjXrayContinue');
+    if (cont) cont.addEventListener('click', () => goStep('create'));
   }
 
   // ---- Canonical Draft: preview, per-section regen, manual edit, drift ----
@@ -2269,6 +2510,44 @@ function mountProjects(el, hasBus) {
     if (!m.ok && state.step === 'see') render();
   });
 
+  // ---- slice D2: the X-ray diagram pass -------------------------------------
+  ApexBus.on('projectsDiagramState', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    state.xray.forDraft = m.draftId;
+    state.xray.data = m;
+    if (state.step === 'xray') render();
+  });
+
+  ApexBus.on('projectsDiagramPrepared', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    Object.assign(state.xray, { prepared: m, busy: false, resultError: null });
+    if (state.step === 'xray') render();
+  });
+
+  ApexBus.on('projectsDiagramStatus', (m) => {
+    if (m.phase === 'error') {
+      Object.assign(state.xray, { prepared: null, busy: false, resultError: m.error });
+      if (state.step === 'xray') render();
+      return;
+    }
+    if (m.phase === 'stopped') {
+      Object.assign(state.xray, { prepared: null, busy: false });
+      if (state.step === 'xray') render();
+    }
+    // 'running' is already reflected client-side the instant RUN is clicked.
+  });
+
+  ApexBus.on('projectsDiagramResult', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    Object.assign(state.xray, {
+      prepared: null, busy: false,
+      resultError: m.ok ? null : m.error,
+    });
+    // A successful pass is followed by projectsDraftPatched (the field) and a
+    // fresh projectsDiagramState from main, which repaints the AI-drawn view.
+    if (state.step === 'xray') render();
+  });
+
   // ---- slice 7: the co-designer panel ---------------------------------------
   // A dedicated draft refresh that does NOT drive step navigation (unlike
   // projectsDraftStatus) — accepting a patch on a card the user isn't even
@@ -2291,6 +2570,8 @@ function mountProjects(el, hasBus) {
     // A4: approval recording/clearing arrives through this same no-navigation
     // refresh; the SEE step repaints to reflect it (and the new revision).
     else if (state.step === 'see') render();
+    // D2: the diagram field lands the same way — the X-ray step repaints.
+    else if (state.step === 'xray') render();
   });
 
   ApexBus.on('codesignerStatus', (m) => {

@@ -345,6 +345,52 @@ check('a six-answer draft from before schema 2 reads back with look defaulted, n
   assert.equal(updated.answers.look, 'Dark, one accent.');
 });
 
+// ---- the X-ray diagram field (slice D2) -------------------------------------
+
+check('diagram — the X-ray field is validated by the real grammar and revision-gated', () => {
+  const xray = require('../extensions/studio/lib/xray');
+  const { stateDir, workspace } = freshState('diagram');
+  const created = drafts.createDraft(stateDir, workspace, { name: 'App', pitch: 'A tool.' });
+  const source = 'flowchart TD\n  ui["Web UI"] --> api["API"]\n';
+  const provenance = xray.buildProvenance('a'.repeat(64), 'llm', source);
+  // a valid { mermaid, provenance } round-trips through the store
+  const saved = drafts.updateDraft(stateDir, created.id, created.revision,
+    { diagram: { mermaid: source, provenance } });
+  const reread = drafts.readDraft(stateDir, created.id);
+  assert.equal(reread.diagram.mermaid, source);
+  assert.deepEqual(reread.diagram.provenance, provenance);
+  // null clears it
+  const cleared = drafts.updateDraft(stateDir, created.id, saved.revision, { diagram: null });
+  assert.equal(cleared.diagram, null);
+  // the field is held to lib/xray.js's OWN validator — the drilled grammar,
+  // not a mirror: a forbidden keyword or off-grammar line refuses the write
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: 'flowchart TD\n  click a callback "x"', provenance } }),
+    /studio allowlist/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: 'not mermaid at all', provenance } }),
+    /studio allowlist/);
+  // tampered provenance fails closed: wrong byte count, bad hash, bad source,
+  // unknown fields at either level
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: source, provenance: { ...provenance, bytes: 1 } } }),
+    /byte count/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: source, provenance: { ...provenance, canonicalHash: 'nope' } } }),
+    /hash/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: source, provenance: { ...provenance, source: 'human' } } }),
+    /source/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: source, provenance: { ...provenance, extra: true } } }),
+    /unknown field/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: { mermaid: source, provenance, extra: true } }),
+    /unknown field/);
+  assert.throws(() => drafts.updateDraft(stateDir, created.id, cleared.revision,
+    { diagram: [source] }), /invalid/);
+});
+
 // ---- state-dir containment (matches the loader's guarantee) -----------------
 
 check('studio state directory stays one segment under its root', () => {

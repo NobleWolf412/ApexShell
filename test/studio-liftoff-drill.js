@@ -24,6 +24,7 @@ const os = require('os');
 const path = require('path');
 
 const creator = require('../extensions/studio/lib/creator');
+const xray = require('../extensions/studio/lib/xray');
 const liftoff = require('../extensions/studio/lib/liftoff');
 const spines = require('../extensions/studio/lib/spines');
 const contract = require('../extensions/studio/lib/contract');
@@ -221,6 +222,69 @@ gate('projectsCreate refuses without explicit confirmation', () => {
   const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult');
   assert.equal(result.payload.ok, false);
   assert.ok(!fs.existsSync(path.join(h.workspace, 'snipersight')));
+});
+
+gate('D2: Create stages architecture.mmd + provenance — the derived fallback when no AI diagram exists', () => {
+  const h = freshHarness('create-diagram-derived');
+  const created = createdProject(h);
+  const mmd = fs.readFileSync(path.join(created.projectDir, 'architecture.mmd'), 'utf8');
+  assert.deepEqual(xray.validateMermaidSource(mmd), [], 'the packaged source passes the studio allowlist');
+  const provenance = JSON.parse(fs.readFileSync(
+    path.join(created.projectDir, 'architecture.provenance.json'), 'utf8'));
+  assert.equal(provenance.source, 'derived', 'no AI pass ran — provenance says who drew it');
+  const packaged = JSON.parse(fs.readFileSync(path.join(created.projectDir, 'blueprint.json'), 'utf8'));
+  assert.equal(provenance.canonicalHash, packaged.canonical_hash,
+    'anchored to the very canonical the package carries');
+  // the fallback source is already newline-terminated, so the staged file is
+  // byte-identical to what the provenance was built from
+  assert.equal(provenance.bytes, Buffer.byteLength(mmd, 'utf8'), 'bytes match the staged source');
+});
+
+gate('D2: a CURRENT AI-drawn diagram rides into the package verbatim; a STALE one falls back derived', () => {
+  // current: stored llm diagram anchored to the approved hash → copied whole
+  let h = freshHarness('create-diagram-ai');
+  h.bus.handlers.get('projectsPreviewGenerate')({
+    id: h.draftId, expectedRevision: h.revision, projectId: 'snipersight',
+  });
+  let draft = drafts.readDraft(h.stateDir, h.draftId);
+  const aiSource = 'flowchart TD\n  ui["Web UI"] --> api["API"]\n  api --> db[("Postgres")]';
+  draft = drafts.updateDraft(h.stateDir, draft.id, draft.revision, {
+    diagram: {
+      mermaid: aiSource,
+      provenance: xray.buildProvenance(draft.preview.generatedCanonicalHash, 'llm', aiSource),
+    },
+  });
+  h.bus.handlers.get('projectsCreate')({ id: draft.id, expectedRevision: draft.revision, confirmed: true });
+  let result = h.bus.posts.find((p) => p.type === 'projectsCreateResult').payload;
+  assert.equal(result.ok, true, result.error);
+  assert.equal(fs.readFileSync(path.join(result.projectDir, 'architecture.mmd'), 'utf8'),
+    aiSource + '\n', 'the AI source rides verbatim (newline-terminated)');
+  assert.equal(JSON.parse(fs.readFileSync(
+    path.join(result.projectDir, 'architecture.provenance.json'), 'utf8')).source, 'llm');
+
+  // stale: provenance anchored to a hash the blueprint left behind → the
+  // derived fallback rides instead, and its provenance says so
+  h = freshHarness('create-diagram-stale');
+  h.bus.handlers.get('projectsPreviewGenerate')({
+    id: h.draftId, expectedRevision: h.revision, projectId: 'snipersight',
+  });
+  draft = drafts.readDraft(h.stateDir, h.draftId);
+  draft = drafts.updateDraft(h.stateDir, draft.id, draft.revision, {
+    diagram: {
+      mermaid: aiSource,
+      provenance: xray.buildProvenance('b'.repeat(64), 'llm', aiSource),
+    },
+  });
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsCreate')({ id: draft.id, expectedRevision: draft.revision, confirmed: true });
+  result = h.bus.posts.find((p) => p.type === 'projectsCreateResult').payload;
+  assert.equal(result.ok, true, result.error);
+  const provenance = JSON.parse(fs.readFileSync(
+    path.join(result.projectDir, 'architecture.provenance.json'), 'utf8'));
+  assert.equal(provenance.source, 'derived', 'a stale AI diagram never enters a package');
+  assert.equal(provenance.canonicalHash, draft.preview.generatedCanonicalHash);
+  assert.notEqual(fs.readFileSync(path.join(result.projectDir, 'architecture.mmd'), 'utf8'),
+    aiSource + '\n');
 });
 
 gate('projectsRemove archives the created project (separate from draft deletion)', () => {
