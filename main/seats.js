@@ -104,6 +104,11 @@ const extensionApi = {
   setWrapPrompt(text) { if (typeof text === 'string' && text) wrapOverride = text; },
   startDisposable(options) {
     if (!host) throw new Error('Seat engine is unavailable.');
+    // A straight passthrough: `options.launch = { model, effort }` (App Builder
+    // slice 5) rides along untouched — the engine's createDisposable is the
+    // single validation gate (a bad tier throws there), so every caller of
+    // this seam, extension or core module, is covered without duplicating
+    // the Claude-tier allowlist here.
     return host.createDisposable(options || {});
   },
 };

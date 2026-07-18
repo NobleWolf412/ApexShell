@@ -18,6 +18,7 @@ const { CARDS } = require('./lib/interview');
 const contract = require('./lib/contract');
 const render = require('./lib/render');
 const blueprint = require('./lib/blueprint');
+const modelPicker = require('./lib/modelPicker');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -354,6 +355,29 @@ function register(ctx) {
       });
     }
   });
+
+  // The STUDIO header model picker (slice 5): one persisted choice, shared
+  // across builders. No AI call reads it yet — slices 6/7 pass it through as
+  // launch.model/launch.effort to a disposable, where the same Claude-lane
+  // gate (main/engine/seatHost.js) is the authority; this is a UI convenience,
+  // not a second validator.
+  const publishModelPick = () => {
+    const pick = modelPicker.readModelPick(ctx.stateDir);
+    ctx.bus.post('studioModelPick', pick);
+  };
+  ctx.bus.on('studioModelGet', () => publishModelPick());
+  ctx.bus.on('studioModelSet', (message) => {
+    try {
+      modelPicker.writeModelPick(ctx.stateDir, {
+        model: message && message.model,
+        effort: message && message.effort,
+      });
+      publishModelPick();
+    } catch (err) {
+      ctx.bus.post('toast', { text: 'Model pick was not saved: ' + err.message });
+      publishModelPick();
+    }
+  });
 }
 
 module.exports = {
@@ -364,3 +388,5 @@ module.exports = {
   selectedWorkspace,
   validateBundleReport,
 };
+
+module.exports.modelPicker = modelPicker;

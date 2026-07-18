@@ -29,13 +29,34 @@
   pane.dataset.order = '20';
   pane.innerHTML =
     '<div class="paneBody studioBody">' +
-      '<div class="studioTabs" role="tablist"></div>' +
+      '<div class="studioHeader">' +
+        '<div class="studioTabs" role="tablist"></div>' +
+        '<div class="studioModelPicker" title="One model choice drives both AI levels once a builder offers them (haiku for quick suggest passes, sonnet+ for a longer co-designer conversation). No effect yet — nothing in STUDIO calls a disposable.">' +
+          '<select class="studioModelSelect" aria-label="STUDIO model">' +
+            '<option value="">Model: default</option>' +
+            '<option value="haiku">haiku</option>' +
+            '<option value="sonnet">sonnet</option>' +
+            '<option value="opus">opus</option>' +
+            '<option value="fable">fable</option>' +
+          '</select>' +
+          '<select class="studioEffortSelect" aria-label="STUDIO effort">' +
+            '<option value="">Effort: default</option>' +
+            '<option value="low">low</option>' +
+            '<option value="medium">medium</option>' +
+            '<option value="high">high</option>' +
+            '<option value="xhigh">xhigh</option>' +
+            '<option value="max">max</option>' +
+          '</select>' +
+        '</div>' +
+      '</div>' +
       '<div class="studioViews"></div>' +
     '</div>' +
     '<div class="dockTab" data-tab="studio" title="Studio — build personas and project blueprints in one place">STUDIO</div>';
 
   const tabsEl = pane.querySelector('.studioTabs');
   const viewsEl = pane.querySelector('.studioViews');
+  const modelSelectEl = pane.querySelector('.studioModelSelect');
+  const effortSelectEl = pane.querySelector('.studioEffortSelect');
   const builders = new Map();   // id -> { id, label, order, tab, view }
   let activeId = null;
   let userPicked = false;       // until the user picks, the lowest-order view leads
@@ -96,6 +117,25 @@
     order: 20,
     mount: (el) => mountProjects(el, hasBus),
   });
+
+  // The STUDIO header model picker (slice 5): one persisted choice shared
+  // across builders. Nothing reads it yet — slices 6/7 will pass it through
+  // as launch.model/launch.effort to a disposable. Headless studio-drill has
+  // no ApexBus, so wiring stays gated behind hasBus like the rest of the shell.
+  if (hasBus) {
+    modelSelectEl.addEventListener('change', () => {
+      ApexBus.post('studioModelSet', { model: modelSelectEl.value || null, effort: effortSelectEl.value || null });
+    });
+    effortSelectEl.addEventListener('change', () => {
+      ApexBus.post('studioModelSet', { model: modelSelectEl.value || null, effort: effortSelectEl.value || null });
+    });
+    ApexBus.on('studioModelPick', (m) => {
+      if (!m) return;
+      modelSelectEl.value = m.model || '';
+      effortSelectEl.value = m.effort || '';
+    });
+    ApexBus.post('studioModelGet', {});
+  }
 
   ApexShell.registerDockPane(pane, { order: 20 });
 })();

@@ -190,6 +190,22 @@ Launch dial resolution: seat `current` → seat `default` → `_default` →
 hard `manual`. `_workspace` sets the bare default cwd; preset `cwd` and
 `setDefaultCwd` override.
 
+**Disposable launch override** (App Builder slice 5): `createDisposable`
+(`seatHost.js`) and the `ctx.seats.startDisposable` extension seam accept an
+optional `launch: { model, effort }` — `model` validates against the
+Claude-lane tiers ONLY (`fable | opus | sonnet | haiku`; a disposable always
+spawns via `claudeSeat`, so anything else is a caller bug, rejected with a
+clean thrown `Error` before any scratch dir or child process exists). The
+existing flat `model`/`effort` params (`main/audit.js`'s haiku pass) still
+work untouched — `launch`, when present, simply wins over them — and omitting
+`launch` entirely (the shape `personaTestPrepare`/`personaRelSuggestLlm` use)
+is byte-identical to before this slice. `main/seats.js`'s `startDisposable` is
+a pure passthrough; the engine is the single validation gate, so
+`test/engine-harness.js` (which drives `createDisposable` directly, no
+Electron in the loop) is what proves the three cases: a valid tier steering a
+real spawn, a non-Claude lane rejected before anything spawns, and the
+omitted-launch shape spawning exactly as it always has.
+
 **Per-persona toolset wall** (`launchFor` in `seats.js`): a persona's
 seatconfig entry may carry top-level `tools` (the CLI's built-in allowlist,
 e.g. `Read,Glob,Grep,WebSearch,WebFetch,Write,Bash,TodoWrite`) and

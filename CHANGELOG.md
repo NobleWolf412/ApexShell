@@ -75,6 +75,28 @@
   gap rendering, the validation projection, draft-store snapshot persistence, and
   the preview bus verbs) chained into `test:studio`; zero LLM spend. (App Builder
   v1, slice 4 of 9.)
+- **Disposable launch override — the engine slice** (`main/engine/seatHost.js`,
+  `main/seats.js`): `createDisposable` and the `ctx.seats.startDisposable`
+  extension seam accept an optional `launch: { model, effort }`. `model`
+  validates against the Claude-lane tiers ONLY (`fable | opus | sonnet |
+  haiku`) — a disposable always spawns via `claudeSeat`, so codex/qwen/agy are
+  rejected with a clean thrown `Error` before any scratch dir or child process
+  exists (no crash, no fallback spawn). The pre-existing flat `model`/`effort`
+  params (`main/audit.js`'s haiku pass) still work unchanged — `launch`, when
+  given, simply wins over them — and omitting `launch` entirely (the shape
+  `personaTestPrepare`/`personaRelSuggestLlm` already use) is byte-identical to
+  before this slice; `main/seats.js`'s `startDisposable` stays a pure
+  passthrough, so the engine is the single validation gate. The engine stays
+  Electron-free (zero new imports in `seatHost.js`). Added the **STUDIO header
+  model picker** (`extensions/studio/lib/modelPicker.js`): one choice,
+  persisted atomically in `state/extensions/studio/model.json`, shared across
+  builders — nothing calls a disposable with it yet (slices 6/7 will). New
+  `test/engine-harness.js` cases (valid tier honored — a real spawn; non-Claude
+  lane rejected — pure, no live spend; omitted launch = legacy — a real spawn
+  matching today's exact call shape) plus `test/studio-model-picker-drill.js`
+  (hermetic, zero LLM spend) chained into `test:studio`. `npm run test:live`
+  gates the engine cases. Update & restart applies. (App Builder v1, slice 5
+  of 9 — the engine touch.)
 
 ## 0.2.0 — 2026-07-17
 
