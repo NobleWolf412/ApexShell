@@ -131,15 +131,48 @@ gate('clean import: well-formed source maps cleanly, no ambiguity', () => {
   assert.equal(byHeading['Delivery'], 'delivery');
 });
 
-gate('clean import: blueprint builds with the only structural gap being risks', () => {
+gate('clean import: a v1-shaped source maps its six areas and reports look as the gap', () => {
   const dir = path.join(scratch, 'clean-lib-2');
   writeCleanSource(dir);
   const audit = importer.auditImportFolder(dir);
   const mapping = Object.fromEntries(audit.sections.map((s) => [String(s.index), s.suggestedKey]));
-  assert.deepEqual(importer.mappingGaps(mapping), []); // every one of the six areas is targeted
+  // A pre-schema-2 doc has no design section: `look` is the one unmapped area
+  // — a reported gap, never a block and never invented (§ Wave A).
+  assert.deepEqual(importer.mappingGaps(mapping), ['look']);
   const answers = importer.answersFromMapping(audit, mapping);
   for (const key of ['idea', 'users', 'scope', 'platform', 'architecture', 'delivery'])
     assert(answers[key] && answers[key].trim().length > 0, key + ' has mapped content');
+  assert.equal(answers.look, '', 'look was never mapped, so it is empty, not guessed');
+});
+
+gate('schema-2 source: a Design Language heading suggests look and closes the gap', () => {
+  const dir = path.join(scratch, 'clean-lib-look');
+  writeCleanSource(dir);
+  fs.appendFileSync(path.join(dir, 'PROJECT.md'), [
+    '## Design Language',
+    '',
+    'Light surfaces, one calm blue accent, roomy sans type, airy density. Tone: calm and unhurried.',
+    '',
+  ].join('\n'));
+  const audit = importer.auditImportFolder(dir);
+  const byHeading = Object.fromEntries(audit.sections.map((s) => [s.heading, s.suggestedKey]));
+  assert.equal(byHeading['Design Language'], 'look');
+  const mapping = Object.fromEntries(audit.sections.map((s) => [String(s.index), s.suggestedKey]));
+  assert.deepEqual(importer.mappingGaps(mapping), []); // all seven areas targeted
+  const answers = importer.answersFromMapping(audit, mapping);
+  assert(answers.look.includes('calm blue accent'), 'look carries its mapped content');
+});
+
+gate('a source declaring schema_version 1 audits cleanly with the upgrade note', () => {
+  const dir = path.join(scratch, 'declared-v1');
+  writeCleanSource(dir);
+  const md = fs.readFileSync(path.join(dir, 'PROJECT.md'), 'utf8')
+    .replace('---\nname:', '---\nschema_version: 1\nname:');
+  fs.writeFileSync(path.join(dir, 'PROJECT.md'), md);
+  const audit = importer.auditImportFolder(dir);
+  assert.deepEqual(audit.errors, [], JSON.stringify(audit.errors));
+  assert(audit.warnings.some((w) => w.code === 'schema-version' && /older schema 1/.test(w.message)),
+    JSON.stringify(audit.warnings));
 });
 
 gate('missing areas: unmapped areas stay empty, nothing invented', () => {
@@ -148,7 +181,7 @@ gate('missing areas: unmapped areas stay empty, nothing invented', () => {
   const audit = importer.auditImportFolder(dir);
   const mapping = Object.fromEntries(audit.sections.map((s) => [String(s.index), s.suggestedKey]).filter(([, k]) => k));
   const gaps = importer.mappingGaps(mapping);
-  assert.deepEqual(gaps.sort(), ['delivery', 'scope']);
+  assert.deepEqual(gaps.sort(), ['delivery', 'look', 'scope']);
   const answers = importer.answersFromMapping(audit, mapping);
   assert.equal(answers.scope, '', 'scope was never mapped, so it is empty, not guessed');
   assert.equal(answers.delivery, '', 'delivery was never mapped, so it is empty, not guessed');
@@ -226,7 +259,7 @@ gate('projectsImportChoose audits and seeds a mapping from suggestions', async (
   assert.equal(posts.at(-1).type, 'projectsImportAudit');
   assert.equal(audit.sections.length, 6);
   assert.equal(Object.keys(audit.mapping).length, 6);
-  assert.deepEqual(audit.gaps, []);
+  assert.deepEqual(audit.gaps, ['look']); // the v1-shaped source has no design section
 });
 
 gate('projectsImportBuild creates a draft whose answers came from the approved mapping only', async () => {
@@ -239,8 +272,9 @@ gate('projectsImportBuild creates a draft whose answers came from the approved m
   handlers.get('projectsImportBuild')({ sourceFolder: dir });
   assert.equal(posts[0].type, 'projectsImportResult');
   assert.equal(posts[0].payload.ok, true, posts[0].payload.error);
-  // The only structural gap is risks — it has no interview card in v1.
-  assert.deepEqual(posts[0].payload.gaps, ['risks']);
+  // Two canonical gaps: look (a v1-shaped source has no design section — the
+  // import-with-look-gap story) and risks (no interview card feeds it).
+  assert.deepEqual(posts[0].payload.gaps, ['look', 'risks']);
   const draftId = posts[0].payload.draftId;
   const draft = drafts.readDraft(stateDir, draftId);
   assert(draft.answers.idea.includes('lightweight kanban'));
@@ -251,11 +285,11 @@ gate('projectsImportBuild creates a draft whose answers came from the approved m
 gate('targeted revision: re-mapping ONE area updates the same draft, not a new one', async () => {
   const { handlers, posts, setPicked, stateDir } = freshBus('targeted');
   const dir = path.join(scratch, 'bus-targeted');
-  writeIncompleteSource(dir); // scope + delivery start unmapped
+  writeIncompleteSource(dir); // scope + delivery start unmapped (look always is: v1-shaped source)
   setPicked(dir);
   await handlers.get('projectsImportChoose')();
   const firstAudit = posts.at(-1).payload;
-  assert.deepEqual(firstAudit.gaps.sort(), ['delivery', 'scope']);
+  assert.deepEqual(firstAudit.gaps.sort(), ['delivery', 'look', 'scope']);
 
   posts.length = 0;
   handlers.get('projectsImportBuild')({ sourceFolder: dir, name: 'Half Built', pitch: 'A partial import.' });

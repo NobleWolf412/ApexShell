@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave A slice A1 — the Look card + blueprint schema 2**
+  (`extensions/studio/lib/*`, `extensions/studio/renderer.js`,
+  `extensions/studio/main.js`): the interview gains a seventh area, `look`
+  (palette leanings, type feel, density, tone words, references BY NAME —
+  portable words only, never a path or binary), as a full citizen: its own
+  card with depth note, example, chips, and Help-me-decide nudges (thin
+  answer / no palette words / no tone words); the canonical template gains a
+  "Design Language" section (`app-builder:look` marker) sourced from it; and
+  the blueprint schema bumps to **2**. Compatibility is deliberate: a
+  schema-1 package is "older schema — import to upgrade", not unsupported —
+  native validation blocks with that plain-language message while import
+  mode audits it cleanly and reports `look` as a gap (a missing look area is
+  ALWAYS an incomplete-area warning, never a block; unknown versions like 99
+  stay outright errors). Pre-A1 drafts on disk read back with the new card
+  simply unanswered (an older-schema preview bundle is dropped and
+  regenerated deterministically — answers untouched). The AI suggest pass
+  and co-designer patch allowlist pick the card up automatically because
+  they derive from the interview module; the one hard-coded six-key list
+  (the co-designer contract prompt's `card` enum) now derives too. Drills
+  extended across `test/studio-{lib,drafts,review,import,codesigner}-drill.js`
+  (schema-1 native vs import severity, look-gap import, schema-2 round-trip,
+  look heuristics, draft migration) with a new `test/studio-fixtures/valid-v1`
+  schema-1 fixture; the `valid` fixture is now schema 2 and
+  `unsupported-schema` declares 99 (2 stopped being unsupported).
+
 - **Consult v1, slice 1** (`main/consult.js`, `main/engine/consult.js`,
   `renderer/chatView.js`): a **Consult →** button beside Hand off → in every
   live, non-chain seat's tab row. One click: pick a persona (or "just a

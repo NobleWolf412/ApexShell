@@ -1,5 +1,5 @@
 // App Builder — crash-safe runtime draft store. A draft is the in-progress
-// interview (working name + one-sentence pitch + the six card answers); it is
+// interview (working name + one-sentence pitch + the card answers); it is
 // NOT a portable project package and never leaves the extension's ignored state
 // directory (§ Guided interview, § Write safety). Pattern-matched from
 // extensions/personas/lib/drafts.js: the atomic-write / symlink-refusal /
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { KEYS } = require('./interview');
-const { BLUEPRINT_AREAS, findRuntimeKeys, hashCanonical, isSafeProjectId } = require('./contract');
+const { BLUEPRINT_AREAS, SCHEMA_VERSION, findRuntimeKeys, hashCanonical, isSafeProjectId } = require('./contract');
 
 const SCHEMA = 1;
 // v4 UUID — the draft id is also its filename, so the shape is pinned tight.
@@ -118,7 +118,7 @@ function validatePreview(value) {
   if (value.canonicalDrift !== drift) throw new Error('Draft preview drift state is invalid.');
   const blueprint = value.blueprint;
   if (!blueprint || typeof blueprint !== 'object' || Array.isArray(blueprint) ||
-      blueprint.schema_version !== 1 || blueprint.canonical_hash !== value.generatedCanonicalHash)
+      blueprint.schema_version !== SCHEMA_VERSION || blueprint.canonical_hash !== value.generatedCanonicalHash)
     throw new Error('Draft preview blueprint is invalid.');
   for (const area of BLUEPRINT_AREAS) {
     if (!blueprint[area] || typeof blueprint[area] !== 'object' || Array.isArray(blueprint[area]))
@@ -170,6 +170,20 @@ function readDraft(stateDir, id) {
     throw new Error('Draft file must be a regular file, not a link.');
   if (stat.size > MAX_DRAFT_BYTES) throw new Error('Draft file exceeds the 256 KB limit.');
   const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  // Forward migration for drafts written before an interview card existed
+  // (schema 2 added `look`). The user's answers are untouched; the new card
+  // simply starts unanswered. The persisted preview is different: it is
+  // DERIVED data (one deterministic buildBundle away), so an older-schema
+  // bundle is dropped rather than half-upgraded — regenerating is free and the
+  // alternative (a preview whose blueprint silently lacks an area) is exactly
+  // the invented-state this store's validation exists to refuse.
+  if (parsed && parsed.answers && typeof parsed.answers === 'object' && !Array.isArray(parsed.answers)) {
+    for (const key of KEYS)
+      if (parsed.answers[key] === undefined) parsed.answers[key] = '';
+  }
+  if (parsed && parsed.preview && parsed.preview.blueprint &&
+      parsed.preview.blueprint.schema_version !== SCHEMA_VERSION)
+    parsed.preview = null;
   return validateDraft(parsed, id);
 }
 

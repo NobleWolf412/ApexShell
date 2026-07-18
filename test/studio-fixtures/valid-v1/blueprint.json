@@ -1,6 +1,6 @@
 {
-  "schema_version": 2,
-  "canonical_hash": "dce564ec79317da46c60ef0035d35dc11e0cceedb394f453f9f26d2c6834b653",
+  "schema_version": 1,
+  "canonical_hash": "01d055a470e902f7898bb143dd7b414eacc199a935086d7c2458f996b0b22a7f",
   "idea": {
     "pitch": "A lightweight kanban for solo makers who abandon heavyweight trackers; it turns a vague weekend idea into a single scannable board so momentum never dies between sessions.",
     "why_now": "Trackers keep losing solo makers to overhead."
@@ -37,11 +37,5 @@
     ],
     "verification": "npm test green; a card survives reload.",
     "risks": "Offline write ordering."
-  },
-  "look": {
-    "palette": "Light, paper-white surfaces with one calm blue accent.",
-    "type_feel": "Friendly and readable; a roomy sans throughout.",
-    "density": "Airy: cards breathe, generous gutters.",
-    "tone": "Calm, encouraging, unhurried."
   }
 }

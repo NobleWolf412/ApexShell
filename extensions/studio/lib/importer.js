@@ -1,5 +1,5 @@
 // App Builder — import/audit mode (slice 9). Read-only legacy-project audit and
-// user-approved mapping onto the six blueprint areas. Mirrors
+// user-approved mapping onto the blueprint areas. Mirrors
 // extensions/personas/lib/importer.js's discipline exactly: change nothing in
 // the source, validate structure, propose a mapping the user reviews before
 // anything is built, and never invent an answer for a section nobody mapped.
@@ -9,7 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { parseFrontmatter } = require('./contract');
+const { IMPORTABLE_SCHEMA_VERSIONS, SCHEMA_VERSION, parseFrontmatter } = require('./contract');
 const { KEYS } = require('./interview');
 
 // Mirrors personas/lib/importer.js's MAX_CANONICAL_BYTES — a generous ceiling
@@ -37,6 +37,11 @@ function suggestedKey(heading) {
     ['platform', /platform|stack|target|constraint/],
     ['architecture', /architecture|component|integrat|owns?\s+data|data\s+owner/],
     ['delivery', /deliver|milestone|verif|lift.?off|roadmap/],
+    // The look area (schema 2). Checked LAST so a heading like "Platform and
+    // design constraints" keeps its earlier, more structural match; a heading
+    // that is actually about appearance ("Design Language", "Look and feel",
+    // "Visual style") lands here.
+    ['look', /\blook\b|design|palette|typograph|aesthetic|visual|style|theme|tone/],
   ];
   const match = patterns.find(([, pattern]) => pattern.test(text));
   return match ? match[0] : null;
@@ -127,9 +132,17 @@ function auditImportFolder(folder) {
   const canonical = fs.readFileSync(canonicalFile, 'utf8');
   const parsed = parseFrontmatter(canonical);
   const errors = parsed.errors.map((message) => ({ code: 'frontmatter', message }));
-  if (parsed.attributes.schema_version !== undefined && parsed.attributes.schema_version !== 1)
-    errors.push({ code: 'schema-version', message: 'This project doc declares a schema_version the builder does not understand (only 1 is supported).' });
   const warnings = [];
+  // Import IS the upgrade path for an older schema (§ Wave A): a declared
+  // schema 1 audits cleanly with a note, never an error — only a version the
+  // builder has never written (or can't upgrade from) refuses.
+  const declared = parsed.attributes.schema_version;
+  if (declared !== undefined && declared !== SCHEMA_VERSION) {
+    if (IMPORTABLE_SCHEMA_VERSIONS.includes(declared))
+      warnings.push({ code: 'schema-version', message: `This project doc uses the older schema ${declared} — importing upgrades it to schema ${SCHEMA_VERSION}; the new "look" area will show as a gap until you answer it.` });
+    else
+      errors.push({ code: 'schema-version', message: `This project doc declares a schema_version the builder does not understand (${SCHEMA_VERSION} is supported, and ${IMPORTABLE_SCHEMA_VERSIONS.join(', ')} can be imported).` });
+  }
   if (!parsed.attributes.name) warnings.push({ code: 'missing-name', message: 'No portable name found in the frontmatter yet — one will be suggested from the folder.' });
   if (!parsed.attributes.display_name) warnings.push({ code: 'missing-display-name', message: 'No display name found in the frontmatter yet — one will be suggested from the folder.' });
   if (!parsed.attributes.description) warnings.push({ code: 'missing-description', message: 'No one-sentence pitch found in the frontmatter yet — add one during review.' });

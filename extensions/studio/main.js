@@ -266,7 +266,7 @@ function register(ctx) {
 
   // ---- Import / audit mode (slice 9, § Import) -----------------------------
   // Read-only inspection of an existing project folder (or the folder holding
-  // a bare PROJECT.md) -> a user-reviewed mapping onto the six blueprint areas
+  // a bare PROJECT.md) -> a user-reviewed mapping onto the blueprint areas
   // -> a NEW draft whose answers come from the approved mapping ONLY, then the
   // same blueprint.buildBundle every other draft uses to report gaps (never
   // invented content). One active import audit at a time, held in memory —
@@ -323,7 +323,7 @@ function register(ctx) {
       if (!section) throw new Error('That import section no longer exists.');
       const key = message.key === null || message.key === undefined || message.key === '' ? null : message.key;
       if (key !== null && !CARDS.some((c) => c.key === key))
-        throw new Error('That is not one of the six blueprint areas.');
+        throw new Error('That is not one of the blueprint areas.');
       if (key === null) delete activeImport.mapping[String(index)];
       else activeImport.mapping[String(index)] = key;
       postImportAudit();

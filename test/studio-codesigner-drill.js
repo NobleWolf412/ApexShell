@@ -166,6 +166,18 @@ gate('the digest is a structured card-state summary, not the transcript', () => 
   assert.ok(!/user:/i.test(digest), 'the digest itself carries no conversational turns');
 });
 
+gate('the patch allowlist and contract prompt DERIVE from the interview module (look included)', () => {
+  // Slice A1: a new interview card must join the co-designer automatically.
+  assert.ok(codesigner.CARD_KEYS.has('look'), 'CARD_KEYS derives from interview KEYS');
+  assert.ok(codesigner.contractText().includes('look'), 'the prompt names every card, look included');
+  const out = codesigner.parsePatchReply(wrap({
+    patches: [{ card: 'look', proposal: 'Dark, one amber accent; dense but calm.', why: 'grounds the mockups' }],
+  }));
+  assert.equal(out.error, null);
+  assert.equal(out.patches.length, 1);
+  assert.equal(out.patches[0].card, 'look');
+});
+
 gate('the kickoff carries the digest and the patch contract; a later turn carries the digest and the user text only', () => {
   const draft = { name: 'X', pitch: '', answers: Object.fromEntries(CARDS.map((c) => [c.key, ''])) };
   const kickoff = codesigner.buildKickoff(draft, CARDS);

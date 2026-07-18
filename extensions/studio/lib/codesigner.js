@@ -142,7 +142,10 @@ function contractText() {
     'end that reply with exactly one fenced block (omit it entirely when you have',
     'no patch to propose right now):',
     '```apex-studio',
-    '{ "patches": [ { "card": "<idea|users|scope|platform|architecture|delivery>",',
+    // Derived from the interview module's KEYS, never hand-listed: a new card
+    // (e.g. schema 2's `look`) joins the patch allowlist and this prompt
+    // automatically (slice A1 — the one hard-coded six-key list this file had).
+    '{ "patches": [ { "card": "<' + KEYS.join('|') + '>",',
     '                 "proposal": "<replacement/addition text, under ' + PROPOSAL_CAP + ' chars>",',
     '                 "why": "<one short reason, under ' + WHY_CAP + ' chars>" } ] }',
     '```',

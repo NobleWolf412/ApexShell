@@ -1,5 +1,5 @@
 ---
-schema_version: 2
+schema_version: 1
 name: valid-project
 display_name: "Valid Project"
 description: "A minimal, fully valid App Builder blueprint fixture."
@@ -36,12 +36,6 @@ A renderer owns the board DOM; an engine module owns persistence and card orderi
 
 Milestone one lands the renderer board; milestone two lands the engine persistence layer. Lift-off means npm test is green and a card survives a reload.
 <!-- app-builder:delivery:end -->
-
-<!-- app-builder:look:start -->
-## Design Language
-
-Light, paper-white surfaces with one calm blue accent. Type feels friendly and readable — a roomy sans throughout. Airy density: cards breathe, columns keep generous gutters. Tone: calm, encouraging, unhurried.
-<!-- app-builder:look:end -->
 
 <!-- app-builder:risks:start -->
 ## Risks and Open Questions

@@ -13,24 +13,26 @@ const {
   sectionBlock,
   renderCanonical,
 } = require('./render');
-const { BLUEPRINT_AREAS, hashCanonical, isSafeProjectId } = require('./contract');
+const { BLUEPRINT_AREAS, SCHEMA_VERSION, hashCanonical, isSafeProjectId } = require('./contract');
 const { KEYS } = require('./interview');
 
-// Which approved interview answers feed each canonical section. Each of the six
-// interview cards (BLUEPRINT_AREAS) has exactly one destination section; the idea
-// and users cards collapse into "Vision and Users", which leaves the sixth
-// section — `risks` — with no dedicated card in v1. That section is therefore
+// Which approved interview answers feed each canonical section. Each of the
+// seven interview cards (BLUEPRINT_AREAS) has exactly one destination section;
+// the idea and users cards collapse into "Vision and Users", which leaves one
+// section — `risks` — with no dedicated card. That section is therefore
 // authored by hand (a visible gap until then); the generator never SPLITS the
 // delivery answer to fill it, because inventing a boundary between "milestones"
 // and "risks" prose is exactly the invention the spec forbids. This is the only
 // card→section partition that gives each card one home without splitting an
 // answer. (design/app-builder-v1.md § PROJECT.md template — see REPORT §11.)
+// Schema 2 adds look → "Design Language" (design/studio-v2.md § Wave A).
 const SECTION_SOURCES = {
   vision: ['idea', 'users'],
   scope: ['scope'],
   platform: ['platform'],
   architecture: ['architecture'],
   delivery: ['delivery'],
+  look: ['look'],
   risks: [],
 };
 
@@ -47,7 +49,7 @@ const HASH_RE = /^[0-9a-f]{64}$/;
 // stays possible; the v1 interview captures one response field per area).
 function blueprintFromDraft(draft) {
   const answers = (draft && draft.answers) || {};
-  const blueprint = { schema_version: 1, canonical_hash: '' };
+  const blueprint = { schema_version: SCHEMA_VERSION, canonical_hash: '' };
   for (const area of BLUEPRINT_AREAS)
     blueprint[area] = { response: String(answers[area] || '').trim() };
   return blueprint;
@@ -65,7 +67,7 @@ function sectionBody(blueprint, sectionKey) {
     .join('\n\n');
 }
 
-// Map the blueprint onto the six section bodies renderCanonical expects; a gap
+// Map the blueprint onto the section bodies renderCanonical expects; a gap
 // gets the visible incomplete placeholder (never invented content) and is
 // reported so the review can highlight it.
 function sectionMap(blueprint) {

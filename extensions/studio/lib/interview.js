@@ -1,9 +1,10 @@
-// App Builder — the guided interview copy (§ Guided interview). Six cards, one
-// per blueprint area; the keys line up with contract.BLUEPRINT_AREAS so a draft
-// answer maps straight onto the canonical without a translation table. Pure data
-// plus one heuristic (helpForCard) — no Electron, no AI, no runtime state. Shipped
-// to the renderer over the bus the same way personas/lib/interview.js is, so the
-// UI never hard-codes card prose.
+// App Builder — the guided interview copy (§ Guided interview; Look card per
+// design/studio-v2.md § Wave A). Seven cards, one per blueprint area; the keys
+// line up with contract.BLUEPRINT_AREAS so a draft answer maps straight onto the
+// canonical without a translation table. Pure data plus one heuristic
+// (helpForCard) — no Electron, no AI, no runtime state. Shipped to the renderer
+// over the bus the same way personas/lib/interview.js is, so the UI never
+// hard-codes card prose.
 'use strict';
 
 const { THIN_AREA_CHARS } = require('./contract');
@@ -93,6 +94,24 @@ const CARDS = [
     ],
     help: 'Ask "how will I know this is done, not just built?" The answer is your verification. Then name the one decision you are deliberately leaving for the Architect.',
   },
+  {
+    // The Look card (STUDIO v2, Wave A slice A1). Portable WORDS only — palette
+    // leanings, type feel, density, tone, references BY NAME. Never a file path,
+    // image, or binary: the answer rides blueprint.json and later compiles into
+    // design/tokens.json (§ Wave F), so it has to travel as plain language.
+    key: 'look',
+    title: 'Look and feel',
+    question: 'What should it look and feel like?',
+    depth: 'Palette leanings, type feel, density, and a few tone words — portable words only, no image files or paths. This steers every mockup and later compiles into the design tokens, so say it the way you would brief a designer: the leaning and the mood, not hex codes. Name a reference app by name if one already has the feel.',
+    example: 'Example: "Dark, near-black surfaces with one amber accent. Type feels technical: monospace numbers, a compact sans for labels. Dense but calm — tight rows, generous section gaps. Tone: focused, quiet, instrument-panel. Reference: TradingView\'s dark chart chrome."',
+    suggestions: ['Name the palette leaning first', 'Pick three tone words', 'Name a reference app by name'],
+    heuristics: [
+      'Lead with the palette leaning: dark or light, and the one accent that matters.',
+      'Describe type as a feel (technical, editorial, friendly) — not a font file.',
+      'Say how dense it is: an instrument panel and a reading page are different rooms.',
+    ],
+    help: 'Words only, and portable ones: "dark, one amber accent, dense, quiet" is enough to steer every screen. If an app you know already has the right feel, name it — a reference by name travels with the blueprint; a screenshot or a path does not.',
+  },
 ];
 
 const KEYS = CARDS.map((card) => card.key);
@@ -120,6 +139,10 @@ function helpForCard(key, text) {
     nudges.push('Scope names no non-goal. Say at least one thing v1 deliberately will not do.');
   if (key === 'delivery' && !/(test|drill|verif|gate|proof|evidence|demo|accept|milestone)/i.test(answer))
     nudges.push('Delivery names no way to prove lift-off. Say what evidence counts as done.');
+  if (key === 'look' && !/(dark|light|palette|colou?r|neutral|accent|mono(?:chrome)?|warm|cool|contrast|muted|vivid)/i.test(answer))
+    nudges.push('No palette leaning yet — even "dark, one accent color" steers every screen.');
+  if (key === 'look' && !/(tone|feel|calm|playful|serious|minimal|bold|quiet|friendly|professional|utilitarian|focused|clean|sharp|soft|dense|airy)/i.test(answer))
+    nudges.push('No tone words yet — three adjectives (calm, focused, dense) set the mood of every screen.');
   return { hints, nudges };
 }
 

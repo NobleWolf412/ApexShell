@@ -218,7 +218,7 @@ check('draft bus supports create, save, reopen, and confirmed delete', () => {
   bus.handlers.get('projectsDraftCreate')({ name: 'SniperSight', pitch: 'Scores entries.' });
   assert.deepEqual(bus.posts.map((p) => p.type), ['projectsDraftResult', 'projectsDraftStatus']);
   const created = bus.posts[1].payload.draft;
-  assert.equal(bus.posts[1].payload.cards.length, 6);
+  assert.equal(bus.posts[1].payload.cards.length, 7);
   assert.equal(bus.posts[1].payload.suggestedProjectId, 'snipersight');
 
   bus.posts.length = 0;
@@ -271,9 +271,9 @@ check('choosing a workspace persists and publishes ready status', async () => {
 // ---- Help-me-decide heuristic (pure, no AI) --------------------------------
 
 check('helpForCard returns hints and computes live nudges — never calls out', () => {
-  // six cards, keys aligned with the blueprint areas
-  assert.deepEqual(KEYS, ['idea', 'users', 'scope', 'platform', 'architecture', 'delivery']);
-  assert.equal(interview.CARDS.length, 6);
+  // seven cards, keys aligned with the blueprint areas (look joined in v2 A1)
+  assert.deepEqual(KEYS, ['idea', 'users', 'scope', 'platform', 'architecture', 'delivery', 'look']);
+  assert.equal(interview.CARDS.length, 7);
   for (const card of interview.CARDS) {
     assert.ok(card.question.length > 20, card.key + ' question thin');
     assert.ok(card.depth.length > 100, card.key + ' depth thin');
@@ -298,6 +298,51 @@ check('helpForCard returns hints and computes live nudges — never calls out', 
     'Ship it in a few weeks and see how it feels once it is running for a while.').nudges.join(' '), /evidence/i);
   // an unknown card key is a programming error
   assert.throws(() => interview.helpForCard('bogus', 'x'), /Unknown interview card/);
+});
+
+// ---- the Look card's heuristics (v2 slice A1) ------------------------------
+
+check('look card nudges: thin answer, no palette words, no tone words', () => {
+  // A thin answer with neither palette nor tone words trips all three rules.
+  const bare = interview.helpForCard('look', 'Make it nice.');
+  assert.match(bare.nudges.join(' '), /reads thin/i);
+  assert.match(bare.nudges.join(' '), /palette leaning/i);
+  assert.match(bare.nudges.join(' '), /tone words/i);
+  // A full answer — palette leaning, type feel, density, tone — is quiet.
+  const full = interview.helpForCard('look',
+    'Dark, near-black surfaces with one amber accent. Type feels technical: monospace numbers, compact sans labels. Dense but calm; tone is focused, quiet, instrument-panel.');
+  assert.deepEqual(full.nudges, []);
+  // Palette words present but no tone words → only the tone nudge fires. The
+  // filler suffix keeps it over the thin threshold without tone vocabulary.
+  const noTone = interview.helpForCard('look',
+    'Light surfaces with a neutral palette and one green accent color across every screen, applied to each of the primary navigation surfaces and secondary panels alike.');
+  assert(!noTone.nudges.some((n) => /palette leaning/i.test(n)), JSON.stringify(noTone.nudges));
+  assert(noTone.nudges.some((n) => /tone words/i.test(n)), JSON.stringify(noTone.nudges));
+});
+
+// ---- forward migration: drafts written before the look card ----------------
+
+check('a six-answer draft from before schema 2 reads back with look defaulted, not refused', () => {
+  const stateDir = path.join(scratch, 'migrate-state');
+  const workspace = path.join(scratch, 'migrate-workspace');
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(workspace, { recursive: true });
+  const created = drafts.createDraft(stateDir, workspace, { name: 'Old Draft', pitch: 'Written before look existed.' });
+  // Rewrite the stored file as a v1-era draft: six answers, no look key (and
+  // no preview). This is exactly what sits on disk in a pre-A1 state dir.
+  const file = drafts.draftPath(stateDir, created.id);
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete raw.answers.look;
+  fs.writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  const reread = drafts.readDraft(stateDir, created.id);
+  assert.equal(reread.answers.look, '', 'the new card simply starts unanswered');
+  // The migrated draft still lists (it is not skipped as unreadable).
+  const listed = drafts.listDrafts(stateDir, workspace);
+  assert.deepEqual(listed.warnings, []);
+  assert.equal(listed.drafts.length, 1);
+  // An updateDraft round-trip persists the filled-in key.
+  const updated = drafts.updateDraft(stateDir, created.id, reread.revision, { answers: { look: 'Dark, one accent.' } });
+  assert.equal(updated.answers.look, 'Dark, one accent.');
 });
 
 // ---- state-dir containment (matches the loader's guarantee) -----------------

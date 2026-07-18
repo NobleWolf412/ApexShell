@@ -4,17 +4,19 @@
 // headings are renameable without breaking targeted regeneration or coverage).
 'use strict';
 
-const { hashCanonical, isSafeProjectId } = require('./contract');
+const { SCHEMA_VERSION, hashCanonical, isSafeProjectId } = require('./contract');
 
-// The six semantic sections of the canonical template (§ PROJECT.md template).
-// `key` is the stable section identity carried in the marker; `heading` is the
-// default prose heading a user may rename.
+// The seven semantic sections of the canonical template (§ PROJECT.md template;
+// Design Language per design/studio-v2.md § Wave A). `key` is the stable
+// section identity carried in the marker; `heading` is the default prose
+// heading a user may rename.
 const SECTIONS = [
   { key: 'vision', heading: 'Vision and Users' },
   { key: 'scope', heading: 'Scope and MVP Cut' },
   { key: 'platform', heading: 'Platform and Stack' },
   { key: 'architecture', heading: 'Architecture Sketch' },
   { key: 'delivery', heading: 'Milestones and Delivery' },
+  { key: 'look', heading: 'Design Language' },
   { key: 'risks', heading: 'Risks and Open Questions' },
 ];
 const SECTION_KEYS = SECTIONS.map((section) => section.key);
@@ -61,7 +63,7 @@ function renderCanonical(project) {
 
   const lines = [
     '---',
-    'schema_version: 1',
+    'schema_version: ' + SCHEMA_VERSION,
     'name: ' + projectId,
     'display_name: ' + JSON.stringify(displayName),
     'description: ' + JSON.stringify(description),

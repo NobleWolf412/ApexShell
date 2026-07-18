@@ -36,6 +36,7 @@ function fullDraft(over = {}) {
     platform: 'Desktop web first, packaged later; a Node data plane and a small vanilla renderer with no framework lock-in. It must coexist with the ApexShell workspace layout on disk.',
     architecture: 'A renderer owns the board DOM; an engine module owns persistence and card ordering. The risky seam is offline write ordering, treated as a validated packet from day one.',
     delivery: 'Milestone one lands the renderer board; milestone two lands engine persistence. Lift-off means npm test is green and a card survives a reload. Risk parked for the Architect: ordering under concurrent edits.',
+    look: 'Light, paper-white surfaces with one calm blue accent. Type feels friendly and readable — a roomy sans throughout. Airy density: cards breathe, generous gutters. Tone: calm, encouraging, unhurried.',
   };
   return {
     schema: 1,
@@ -143,11 +144,35 @@ gate('section regen — one section regenerates without disturbing others or man
 
 // --- projection + persistence coverage beyond the three ---------------------
 
-gate('buildBundle uses approved answers only, mapped to the six sections', () => {
+gate('look gap — an unanswered Look card renders the placeholder and warns, never blocks', () => {
+  const draft = fullDraft({ answers: { look: '' } });   // Look card left blank
+  const bundle = blueprint.buildBundle(draft, 'snipersight');
+  assert(bundle.gaps.includes('look'), 'look reported as a gap');
+  const lookBlock = bundle.canonical.slice(
+    bundle.canonical.indexOf('<!-- app-builder:look:start -->'),
+    bundle.canonical.indexOf('<!-- app-builder:look:end -->'));
+  assert(lookBlock.includes(blueprint.INCOMPLETE_PLACEHOLDER), 'look shows the incomplete placeholder');
+  assert(!lookBlock.includes('drag-to-reorder'), 'gap did not borrow another area');
+  // Projected validation: the empty look area is an incomplete-area WARNING —
+  // the package is still valid; a missing Look never blocks (§ Wave A).
+  const report = studio.validateBundleReport(bundle);
+  assert.equal(report.valid, true, JSON.stringify(report.errors));
+  assert(report.warnings.some((w) => w.code === 'incomplete-area' && /"look"/.test(w.message)),
+    JSON.stringify(report.warnings));
+});
+
+gate('buildBundle uses approved answers only, mapped to the seven sections', () => {
   const draft = fullDraft();
   const bundle = blueprint.buildBundle(draft, 'snipersight');
   assert.equal(bundle.gaps.length, 1);          // only risks (no card) is a gap
   assert.deepEqual(bundle.gaps, ['risks']);
+  // schema 2: the bundle's blueprint declares 2 and carries the look area.
+  assert.equal(bundle.blueprint.schema_version, 2);
+  const lookBlock = bundle.canonical.slice(
+    bundle.canonical.indexOf('<!-- app-builder:look:start -->'),
+    bundle.canonical.indexOf('<!-- app-builder:look:end -->'));
+  assert(lookBlock.includes('## Design Language'), 'Design Language heading rendered');
+  assert(lookBlock.includes('paper-white surfaces'), 'look answer feeds the section');
   // vision merges idea + users; each section carries its own approved prose.
   const visionBlock = bundle.canonical.slice(
     bundle.canonical.indexOf('<!-- app-builder:vision:start -->'),

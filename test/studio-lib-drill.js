@@ -88,10 +88,62 @@ gate('malformed JSON', () => {
 });
 
 gate('unsupported schema version', () => {
+  // The fixture declares 99 — a version the builder has never written. That
+  // stays an outright error in EVERY mode; only schema 1 gets the gentler
+  // older-schema/import path (its own gates below).
   const { workspace } = stage('unsupported-schema', 'unsupported-schema');
   const result = contract.validateProjectPackage(workspace, 'unsupported-schema');
   assert.equal(result.valid, false);
   assert(result.errors.some((e) => e.code === 'schema-version'), JSON.stringify(result.errors));
+  const imported = contract.validateProjectPackage(workspace, 'unsupported-schema', { mode: 'import' });
+  assert.equal(imported.valid, false, 'an unknown version is not importable either');
+  assert(imported.errors.some((e) => e.code === 'schema-version'));
+});
+
+// --- the v1 -> v2 compatibility story (slice A1) ----------------------------
+
+gate('schema 1 package: native mode blocks and points at import as the upgrade', () => {
+  const { workspace } = stage('valid-v1', 'valid-project');
+  const result = contract.validateProjectPackage(workspace, 'valid-project');
+  assert.equal(result.valid, false);
+  const versionErrors = result.errors.filter((e) => e.code === 'schema-version');
+  assert(versionErrors.length >= 1, JSON.stringify(result.errors));
+  // The message is an upgrade prompt, not an "unsupported garbage" verdict.
+  assert(versionErrors.every((e) => /older schema 1/.test(e.message) && /[Ii]mport/.test(e.message)),
+    JSON.stringify(versionErrors));
+  // The missing look area is an incomplete-area WARNING even here — the block
+  // comes from the version, never from the gap.
+  assert(result.warnings.some((w) => w.code === 'incomplete-area' && /"look"/.test(w.message)),
+    JSON.stringify(result.warnings));
+  assert(!result.errors.some((e) => e.code === 'missing-blueprint-area'), 'look never surfaces as a missing-area error');
+});
+
+gate('schema 1 package: import mode audits cleanly with look reported as a gap', () => {
+  const { workspace } = stage('valid-v1', 'valid-project');
+  const result = contract.validateProjectPackage(workspace, 'valid-project', { mode: 'import' });
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert(result.warnings.some((w) => w.code === 'schema-version' && /older schema 1/.test(w.message)),
+    JSON.stringify(result.warnings));
+  assert(result.warnings.some((w) => w.code === 'incomplete-area' && /"look"/.test(w.message)),
+    JSON.stringify(result.warnings));
+});
+
+gate('schema 2 package: a missing look area warns and never blocks', () => {
+  const { workspace, dir } = stage('valid', 'valid-project');
+  const blueprint = JSON.parse(fs.readFileSync(path.join(dir, 'blueprint.json'), 'utf8'));
+  delete blueprint.look;
+  fs.writeFileSync(path.join(dir, 'blueprint.json'), JSON.stringify(blueprint, null, 2));
+  const result = contract.validateProjectPackage(workspace, 'valid-project');
+  assert.equal(result.valid, true, JSON.stringify(result.errors));
+  assert(result.warnings.some((w) => w.code === 'incomplete-area' && /"look"/.test(w.message)),
+    JSON.stringify(result.warnings));
+  // ...while a missing ORIGINAL area keeps its v1 severity (error).
+  const blueprintTwo = JSON.parse(fs.readFileSync(path.join(dir, 'blueprint.json'), 'utf8'));
+  delete blueprintTwo.scope;
+  fs.writeFileSync(path.join(dir, 'blueprint.json'), JSON.stringify(blueprintTwo, null, 2));
+  const stricter = contract.validateProjectPackage(workspace, 'valid-project');
+  assert.equal(stricter.valid, false);
+  assert(stricter.errors.some((e) => e.code === 'missing-blueprint-area'), JSON.stringify(stricter.errors));
 });
 
 gate('hash drift', () => {
@@ -183,8 +235,11 @@ gate('render primitive round-trips through parse and hash', () => {
   const parsed = contract.parseFrontmatter(canonical);
   assert.deepEqual(parsed.errors, []);
   assert.equal(parsed.attributes.name, 'round-trip');
-  assert.equal(parsed.attributes.schema_version, 1);
+  assert.equal(parsed.attributes.schema_version, contract.SCHEMA_VERSION);
   // Every section identity is present via its marker; headings stay renameable.
+  // SECTION_KEYS includes schema 2's `look` (Design Language), so this loop is
+  // also the schema-2 round-trip check.
+  assert(render.SECTION_KEYS.includes('look'), 'Design Language section exists');
   for (const key of render.SECTION_KEYS)
     assert.match(canonical, new RegExp('app-builder:' + key + ':start'));
   // Hashing is stable for identical input.

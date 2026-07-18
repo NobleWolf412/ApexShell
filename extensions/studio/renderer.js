@@ -141,7 +141,7 @@
 })();
 
 // ---- PROJECTS builder: the guided interview (slice 3) ----------------------
-// Workspace pick → Start (name + pitch) → six cards with Back / Save draft /
+// Workspace pick → Start (name + pitch) → the interview cards with Back / Save draft /
 // Skip / Help-me-decide. Crash-safe drafts live in main; this half is view +
 // bus traffic only. No AI: Help-me-decide reveals card heuristics and computes
 // live nudges client-side (mirrors extensions/studio/lib/interview.helpForCard).
@@ -242,7 +242,7 @@ function mountProjects(el, hasBus) {
     },
   };
 
-  // The six canonical sections — key + default heading — mirrored from
+  // The seven canonical sections — key + default heading — mirrored from
   // lib/render.js SECTIONS (the renderer can't require node libs; this static
   // copy drives the per-section regen picker and the gap labels only).
   const SECTIONS = [
@@ -251,6 +251,7 @@ function mountProjects(el, hasBus) {
     { key: 'platform', heading: 'Platform and Stack' },
     { key: 'architecture', heading: 'Architecture Sketch' },
     { key: 'delivery', heading: 'Milestones and Delivery' },
+    { key: 'look', heading: 'Design Language' },
     { key: 'risks', heading: 'Risks and Open Questions' },
   ];
   const sectionHeading = (key) => (SECTIONS.find((s) => s.key === key) || {}).heading || key;
@@ -307,6 +308,10 @@ function mountProjects(el, hasBus) {
       out.push('Scope names no non-goal. Say at least one thing v1 deliberately will not do.');
     if (key === 'delivery' && !/(test|drill|verif|gate|proof|evidence|demo|accept|milestone)/i.test(answer))
       out.push('Delivery names no way to prove lift-off. Say what evidence counts as done.');
+    if (key === 'look' && !/(dark|light|palette|colou?r|neutral|accent|mono(?:chrome)?|warm|cool|contrast|muted|vivid)/i.test(answer))
+      out.push('No palette leaning yet — even "dark, one accent color" steers every screen.');
+    if (key === 'look' && !/(tone|feel|calm|playful|serious|minimal|bold|quiet|friendly|professional|utilitarian|focused|clean|sharp|soft|dense|airy)/i.test(answer))
+      out.push('No tone words yet — three adjectives (calm, focused, dense) set the mood of every screen.');
     return out;
   }
 
@@ -554,7 +559,7 @@ function mountProjects(el, hasBus) {
     const gapNote = audit.gaps.length
       ? 'Not yet mapped, will report as a gap (never invented): ' +
         audit.gaps.map((k) => (findCard(k) || { title: k }).title).join(', ')
-      : 'Every one of the six areas has at least one section mapped to it.';
+      : 'Every one of the areas has at least one section mapped to it.';
 
     const findings = [
       ...audit.errors.map((f) => ['error', f]),
@@ -564,7 +569,7 @@ function mountProjects(el, hasBus) {
     main.innerHTML =
       '<h2 class="pjTitle">Review the import mapping</h2>' +
       '<p class="pjLead">' + escapeHtml(audit.canonicalFile) + ' — read-only. Assign each section to one of the ' +
-        'six areas, or leave it unmapped. Changing one row is a targeted revision: it never re-reads the source.</p>' +
+        'areas, or leave it unmapped. Changing one row is a targeted revision: it never re-reads the source.</p>' +
       (findings ? '<div class="pjFindings">' + findings + '</div>' : '') +
       '<div class="pjCard">' +
         '<label class="pjLabel" for="pjImportName">WORKING NAME</label>' +
@@ -926,7 +931,7 @@ function mountProjects(el, hasBus) {
 
     const gapNote = gapCount
       ? gapCount + ' area' + (gapCount === 1 ? '' : 's') + ' incomplete. You can generate the canonical now — the gaps stay visibly marked — or go back and fill them.'
-      : 'All six areas answered. Note: "Risks and Open Questions" has no dedicated card, so it renders as a gap until you author it in the canonical.';
+      : 'All areas answered. Note: "Risks and Open Questions" has no dedicated card, so it renders as a gap until you author it in the canonical.';
 
     main.innerHTML =
       '<h2 class="pjTitle">Blueprint review</h2>' +

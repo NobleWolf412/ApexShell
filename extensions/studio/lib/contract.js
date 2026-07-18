@@ -10,12 +10,21 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const SCHEMA_VERSION = 1;
+// Schema 2 (STUDIO v2, Wave A slice A1) adds the `look` area. The builder only
+// AUTHORS schema 2 now; schema 1 is not garbage — it is the same package minus
+// look, so validation splits by mode: native mode errors (with a message that
+// points at import as the upgrade path), import mode audits it cleanly and
+// reports look as a gap. Any other version stays an outright error in both.
+const SCHEMA_VERSION = 2;
+// The one schema the import path can still upgrade from.
+const IMPORTABLE_SCHEMA_VERSIONS = [1];
 const REQUIRED_FRONTMATTER = ['schema_version', 'name', 'display_name', 'description'];
-// The six blueprint areas — the interview cards that feed the canonical. The
+// The seven blueprint areas — the interview cards that feed the canonical. The
 // PROJECT.md section headings are renameable (§ PROJECT.md template); coverage
 // is validated from these areas in the blueprint, never from heading prose.
-const BLUEPRINT_AREAS = ['idea', 'users', 'scope', 'platform', 'architecture', 'delivery'];
+// `look` (schema 2) is the one area whose ABSENCE is an incomplete-area warning
+// rather than an error — see validateProjectPackage's coverage loop.
+const BLUEPRINT_AREAS = ['idea', 'users', 'scope', 'platform', 'architecture', 'delivery', 'look'];
 // Fields that describe a runtime, not a portable blueprint. No provider, model,
 // credential, or machine path is allowed to enter the package (§ Portable
 // project package).
@@ -28,6 +37,28 @@ const THIN_AREA_CHARS = 120;
 
 function finding(code, message, file) {
   return { code, message, ...(file ? { file } : {}) };
+}
+
+// The v1→v2 compatibility story, in one place (both PROJECT.md and
+// blueprint.json route through it). Schema 1 is an OLDER schema, not an
+// unsupported one: native mode still blocks (the builder only authors 2) but
+// the message names the upgrade path; import mode merely warns, because the
+// import audit is exactly that path. Anything else — a future or invented
+// version — is an outright error in every mode.
+function pushSchemaVersionFinding(declared, mode, file, label, errors, warnings) {
+  if (declared === undefined || declared === SCHEMA_VERSION) return;
+  if (IMPORTABLE_SCHEMA_VERSIONS.includes(declared)) {
+    const item = finding('schema-version',
+      mode === 'import'
+        ? `${label} uses the older schema ${declared} — importing upgrades it to schema ${SCHEMA_VERSION}; the new "look" area will show as a gap until you answer it.`
+        : `${label} uses the older schema ${declared}; the builder now writes schema ${SCHEMA_VERSION}. Import this project to upgrade it — nothing in it is lost.`,
+      file);
+    (mode === 'import' ? warnings : errors).push(item);
+  } else {
+    errors.push(finding('schema-version',
+      `${label} declares schema_version ${declared}, but this version of the builder only understands ${SCHEMA_VERSION} (and can import ${IMPORTABLE_SCHEMA_VERSIONS.join(', ')}).`,
+      file));
+  }
 }
 
 function isSafeProjectId(value) {
@@ -266,11 +297,8 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
         (mode === 'import' ? warnings : errors).push(item);
       }
     }
-    if (frontmatter.schema_version !== undefined &&
-        frontmatter.schema_version !== SCHEMA_VERSION)
-      errors.push(finding('schema-version',
-        `PROJECT.md declares schema_version ${frontmatter.schema_version}, but this version of the builder only understands ${SCHEMA_VERSION}.`,
-        paths.canonical));
+    pushSchemaVersionFinding(frontmatter.schema_version, mode, paths.canonical,
+      'PROJECT.md', errors, warnings);
     if (frontmatter.name !== undefined && frontmatter.name !== projectId)
       errors.push(finding('name-mismatch', 'Frontmatter name must match the project folder.', paths.canonical));
   }
@@ -285,10 +313,14 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
   } else {
     blueprint = readJson(paths.blueprint, errors);
     if (blueprint) {
-      if (blueprint.schema_version !== SCHEMA_VERSION)
+      // Unlike the frontmatter, a blueprint with NO declared version at all is
+      // not a maybe — it was never a builder artifact, so it stays an error.
+      if (blueprint.schema_version === undefined)
         errors.push(finding('schema-version',
-          `blueprint.json declares schema_version ${blueprint.schema_version}, but this version of the builder only understands ${SCHEMA_VERSION}.`,
+          `blueprint.json declares no schema_version; this version of the builder only understands ${SCHEMA_VERSION}.`,
           paths.blueprint));
+      else pushSchemaVersionFinding(blueprint.schema_version, mode, paths.blueprint,
+        'blueprint.json', errors, warnings);
       const runtimeKeys = findRuntimeKeys(blueprint);
       if (runtimeKeys.length)
         errors.push(finding('runtime-data',
@@ -296,12 +328,19 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
           paths.blueprint));
 
       // Area coverage — validated from the blueprint mapping, not the headings.
+      // `look` is special-cased by design (§ Wave A): every schema-1 package —
+      // and any hand-trimmed schema-2 one — simply predates the area, so its
+      // absence is the same incomplete-area WARNING an unanswered card gets,
+      // never a block. The six original areas keep their v1 severity.
       for (const area of BLUEPRINT_AREAS) {
         const value = blueprint[area];
         if (value === undefined || value === null ||
-            (typeof value !== 'object' && typeof value !== 'string'))
-          errors.push(finding('missing-blueprint-area', `The blueprint has no usable content for its "${area}" area.`, paths.blueprint));
-        else if (!areaText(value))
+            (typeof value !== 'object' && typeof value !== 'string')) {
+          if (area === 'look')
+            warnings.push(finding('incomplete-area', 'The "look" area has no answer recorded yet.', paths.blueprint));
+          else
+            errors.push(finding('missing-blueprint-area', `The blueprint has no usable content for its "${area}" area.`, paths.blueprint));
+        } else if (!areaText(value))
           warnings.push(finding('incomplete-area', `The "${area}" area has no answer recorded yet.`, paths.blueprint));
       }
 
@@ -371,6 +410,7 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
 
 module.exports = {
   BLUEPRINT_AREAS,
+  IMPORTABLE_SCHEMA_VERSIONS,
   REQUIRED_FRONTMATTER,
   SCHEMA_VERSION,
   THIN_AREA_CHARS,
