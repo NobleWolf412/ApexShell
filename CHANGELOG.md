@@ -51,6 +51,32 @@
   services → stores), emitted as a valid flowchart marked source 'derived' —
   the drill holds its output to the module's OWN validator, so the fallback
   can never emit what the contract would refuse.
+- **STUDIO v2, Wave F slice F1 — the product-contract spines (schemas +
+  addendum)** (`extensions/studio/lib/spines.js` new,
+  `design/contract-spines.md` new; drill in `test/studio-spines-drill.js` —
+  new files only, zero edits to existing lib/renderer/main code): the two
+  contract files a scaffolded app is born with, beside A2's tokens.json
+  (§ Wave F). `design/components.json` schema 1 — the typed component
+  library (name, optional purpose, variants, effects, token-ROLE bindings
+  resolved against a fixed `<group>.<role>` table whose color roles come
+  straight from design.js's COLOR_ROLES) — and `design/manifest.json`
+  schema 1 — the UI manifest (screens, each naming the components + variants
+  it uses). `validateComponents`/`validateManifest` follow the contract.js
+  voice: deterministic, total (never a throw), `{valid, errors, warnings}`
+  in plain language, every count/length capped and over-cap refused whole —
+  never truncated into acceptance. Passing the parsed library to
+  `validateManifest` turns on the drift check (unknown component /
+  undeclared variant = WARNING, the canonical-drift precedent; a broken
+  library performs no drift check at all). `renderContractAddendum(tokens,
+  components?, manifest?)` produces the deterministic markdown a Coder
+  kickoff will carry (F2 wires it into Lift-off): the three spines, the
+  tokens honesty ledger (derived groups vs house defaults, said plainly),
+  EXISTS / MUST-create / present-but-unusable per spine file, and the one
+  law — no hard-coded colors or fonts, tokens only. Both schemas documented
+  with examples in `design/contract-spines.md` (the file scaffold templates
+  and coder personas read; spines.js is its executable twin). No UI, no bus
+  verbs, no wiring — pure lib + docs.
+
 - **STUDIO v2, Wave S slice S2 — the studio boot mode, per-window captions,
   the ⧉ affordance, and the reopen preference** (`renderer/shell.js`,
   `renderer/styles/shell.css`, `main/main.js`, `main/bus.js`,
