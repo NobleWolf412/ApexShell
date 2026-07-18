@@ -32,6 +32,36 @@
   RUN form's caret); the store caps at 100, the list shows the last 30.
   Update & restart applies.
 
+- **STUDIO v2, Wave F slice F2 — the contract addendum rides the kickoff**
+  (`extensions/studio/main.js` + `extensions/studio/lib/liftoff.js`;
+  `test/studio-liftoff-drill.js` grown to 25 checks — no renderer change:
+  the addendum rides the brief invisibly). Lift-off's "Delegate to the
+  Architect" brief is now the verbatim PROJECT.md text PLUS F1's
+  `renderContractAddendum` output, behind a pinned separator (`===== CONTRACT
+  ADDENDUM (rides the kickoff; not part of PROJECT.md) =====`) — so a Coder
+  persona's step-0 kickoff carries the three spines' ground truth (§ Wave F:
+  quality as a property of construction, not prompting luck). At delegate
+  time main.js reads the created package's `design/tokens.json`,
+  `components.json`, and `manifest.json` FAIL-SOFT: absent = the addendum's
+  honest does-not-exist-yet line, unreadable/unparseable = a junk sentinel
+  the spines/design validators reject, so the file reports
+  present-but-unusable by name — a broken spine costs one honest line, never
+  the kickoff. Composition lives in `lib/liftoff.js`
+  (`composeKickoffBrief`), pure and drillable: `BRIEF_CAP` mirrors
+  `main/tasks.js`'s own 20000-char `taskCreate` brief cap (untouched), and
+  when PROJECT.md + addendum exceeds it the ADDENDUM absorbs the whole
+  overflow — PROJECT.md is never cut — closing with an honest
+  `[addendum truncated]` marker composed to land exactly at the cap, so
+  tasks.js's own silent slice never eats it. Lift-off's "Open a chat here"
+  stays a bare seat for now, stated rather than faked: `seatCreate` reads no
+  kickoff text off the wire (a seat's kickoff comes from its persona preset
+  alone), and `main/seats.js` is outside this slice's surface — the additive
+  message-carried kickoff there is the named follow-up. Drill additions pin
+  the separator/marker/cap verbatim on the test side and prove: addendum
+  rides the brief byte-for-byte after PROJECT.md, absent spines stated
+  honestly, malformed spine = present-but-unusable, truncation order +
+  marker (pure and through the REAL tasks.js cap). Update & restart applies
+  (extension-main change).
 - **STUDIO v2, Wave B slice B2 — the app frame** (`main/appFrame.js` NEW +
   its `main/main.js` wiring — the wave's one core touch, narrow and argued;
   `extensions/studio/{renderer.js,style.css}`; drill in

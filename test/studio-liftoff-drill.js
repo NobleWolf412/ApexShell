@@ -9,6 +9,12 @@
 // A separate section drills main/tasks.js's own `brief` addition (the step-0
 // kickoff carrying PROJECT.md verbatim) against the REAL tasks.js module,
 // mirroring test/taskboard-drill.js's own stub-seats harness.
+// Slice F2 (§ Wave F): the delegate brief grows the contract addendum —
+// composed in lib/liftoff.js (PROJECT.md first, pinned separator, the
+// addendum truncated with an honest marker when the tasks.js cap looms) and
+// fed from the created package's spine files fail-soft in main.js. The
+// separator, marker, and cap number are pinned on THIS side so a drift over
+// there fails the gate.
 // Run: node test/studio-liftoff-drill.js
 'use strict';
 
@@ -19,6 +25,7 @@ const path = require('path');
 
 const creator = require('../extensions/studio/lib/creator');
 const liftoff = require('../extensions/studio/lib/liftoff');
+const spines = require('../extensions/studio/lib/spines');
 const contract = require('../extensions/studio/lib/contract');
 const studio = require('../extensions/studio/main');
 const drafts = require('../extensions/studio/lib/drafts');
@@ -105,6 +112,40 @@ gate('planDelegateRoute: known route ok; unknown preset warns without ok', () =>
   const empty = liftoff.planDelegateRoute({ presetNames: known, route: [] });
   assert.equal(empty.ok, false);
   assert.ok(empty.error);
+});
+
+// F2: separator, marker, and cap pinned VERBATIM on this side — a wording or
+// number drift in lib/liftoff.js must fail here, not surprise a Coder seat.
+const SEP = '\n\n===== CONTRACT ADDENDUM (rides the kickoff; not part of PROJECT.md) =====\n\n';
+const MARKER = '\n[addendum truncated]';
+
+gate('composeKickoffBrief: pinned separator/marker/cap; under the cap the addendum rides verbatim', () => {
+  assert.equal(liftoff.ADDENDUM_SEPARATOR, SEP);
+  assert.equal(liftoff.ADDENDUM_TRUNCATED_MARKER, MARKER);
+  assert.equal(liftoff.BRIEF_CAP, 20000, 'mirrors main/tasks.js taskCreate\'s own brief cap');
+  assert.equal(liftoff.composeKickoffBrief('project text', 'addendum text'),
+    'project text' + SEP + 'addendum text', 'verbatim, no marker when nothing was cut');
+  assert.equal(liftoff.composeKickoffBrief('project text', ''), 'project text',
+    'no addendum = the brief is PROJECT.md alone, no dangling separator');
+  assert.equal(liftoff.composeKickoffBrief('project text', undefined), 'project text');
+});
+
+gate('composeKickoffBrief: over the cap PROJECT.md wins whole — the addendum absorbs the overflow with the honest marker', () => {
+  const project = 'P'.repeat(19000);
+  const addendum = 'A'.repeat(5000);
+  const brief = liftoff.composeKickoffBrief(project, addendum);
+  assert.equal(brief.length, liftoff.BRIEF_CAP, 'composed to exactly the cap — tasks.js\'s slice has nothing left to cut');
+  assert.ok(brief.startsWith(project), 'PROJECT.md is never truncated');
+  assert.equal(brief.indexOf(SEP), project.length, 'the separator sits right after the intact PROJECT.md');
+  assert.ok(brief.endsWith(MARKER), 'the cut addendum says so');
+  const kept = brief.slice(project.length + SEP.length, brief.length - MARKER.length);
+  assert.ok(kept.length < addendum.length && /^A+$/.test(kept),
+    'only the addendum tail was cut — truncation order is addendum-first, PROJECT.md last');
+});
+
+gate('composeKickoffBrief: a PROJECT.md leaving no room drops the addendum whole — never a partial separator or an eaten marker', () => {
+  const project = 'P'.repeat(19995);
+  assert.equal(liftoff.composeKickoffBrief(project, 'A'.repeat(500)), project);
 });
 
 // ==========================================================================
@@ -218,7 +259,7 @@ gate('Lift-off (a): a collision from ctx.seats.registerWorkspace surfaces as a w
   assert.equal(result.payload.warning, true);
 });
 
-gate('Lift-off (b): with a live Architect preset, delegate injects taskCreate with the route and the verbatim PROJECT.md', () => {
+gate('Lift-off (b): with a live Architect preset, delegate injects taskCreate with the route and the verbatim PROJECT.md + addendum', () => {
   const h = freshHarness('lift-delegate-ok');
   const created = createdProject(h);
   const canonical = fs.readFileSync(path.join(created.projectDir, 'PROJECT.md'), 'utf8');
@@ -228,11 +269,61 @@ gate('Lift-off (b): with a live Architect preset, delegate injects taskCreate wi
   assert.ok(taskCreateCall, 'taskCreate was injected');
   assert.deepEqual(taskCreateCall.route, ['Architect']);
   assert.equal(taskCreateCall.cwd, created.projectDir);
-  assert.equal(taskCreateCall.brief, canonical, 'the brief is the PROJECT.md text verbatim, not a summary');
+  // F2: the brief opens with the PROJECT.md text verbatim (never a summary),
+  // then the pinned separator, then the contract addendum byte-for-byte —
+  // the package carries tokens.json (Create wrote it) and neither other
+  // spine, so the expected addendum is renderContractAddendum(tokens) alone.
+  const tokens = JSON.parse(fs.readFileSync(path.join(created.projectDir, 'design', 'tokens.json'), 'utf8'));
+  assert.ok(taskCreateCall.brief.startsWith(canonical), 'PROJECT.md rides first, verbatim');
+  assert.equal(taskCreateCall.brief, canonical + SEP + spines.renderContractAddendum(tokens),
+    'the addendum rides the brief verbatim, right after PROJECT.md behind the pinned separator');
   assert.equal(taskCreateCall.start, true);
   const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffDelegateResult');
   assert.equal(result.payload.ok, true);
   assert.ok(!h.bus.injected.some((m) => m.type === 'taskRouteSave'), 'no template save unless requested');
+});
+
+gate('Lift-off (b): absent spines are stated honestly in the addendum — tokens EXISTS, the other two do-not-exist-yet', () => {
+  const h = freshHarness('lift-delegate-absent');
+  const created = createdProject(h);
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  const brief = h.bus.injected.find((m) => m.type === 'taskCreate').brief;
+  assert.ok(brief.includes('`design/tokens.json` — EXISTS.'), 'Create wrote tokens.json, and the addendum says so');
+  assert.ok(brief.includes('`design/components.json` — does not exist yet.'),
+    'an absent component library is stated, never invented');
+  assert.ok(brief.includes('`design/manifest.json` — does not exist yet.'),
+    'an absent manifest is stated, never invented');
+  assert.ok(brief.includes('No hard-coded colors or fonts — tokens only.'), 'the one law rides every kickoff');
+});
+
+gate('Lift-off (b): a malformed spine reads present-but-unusable in the addendum — never a crash, never silently absent', () => {
+  const h = freshHarness('lift-delegate-malformed');
+  const created = createdProject(h);
+  // components.json: not even JSON. manifest.json: parses but is not a usable
+  // schema-1 manifest. Both must fail SOFT into honest addendum lines.
+  fs.writeFileSync(path.join(created.projectDir, 'design', 'components.json'), '{ this is not json', 'utf8');
+  fs.writeFileSync(path.join(created.projectDir, 'design', 'manifest.json'), JSON.stringify({ schema: 1 }), 'utf8');
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffDelegateResult');
+  assert.equal(result.payload.ok, true, 'a broken spine never costs the kickoff itself');
+  const brief = h.bus.injected.find((m) => m.type === 'taskCreate').brief;
+  assert.ok(brief.includes('`design/components.json` — present but not a usable schema-1 library.'));
+  assert.ok(brief.includes('`design/manifest.json` — present but not a usable schema-1 manifest.'));
+});
+
+gate('Lift-off (b): a valid component library is inventoried by name in the addendum', () => {
+  const h = freshHarness('lift-delegate-spined');
+  const created = createdProject(h);
+  fs.writeFileSync(path.join(created.projectDir, 'design', 'components.json'), JSON.stringify({
+    schema: 1,
+    components: [{ name: 'button', variants: ['primary'], tokens: { background: 'color.accent' } }],
+  }), 'utf8');
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  const brief = h.bus.injected.find((m) => m.type === 'taskCreate').brief;
+  assert.ok(brief.includes('`design/components.json` — EXISTS with 1 component: button.'));
 });
 
 gate('Lift-off (b): an unknown preset in the route warns instead of creating a task', () => {
@@ -337,6 +428,22 @@ gate('Lift-off (c): open a chat here starts exactly one bare seat, no task/route
     const t = taskBus.lastList()[0];
     const kickoff0 = tasks._test.composeKickoff(t, 0);
     assert.ok(!kickoff0.includes('PROJECT BRIEF'));
+  });
+
+  gate('F2: a cap-length composed brief survives the REAL tasks.js trim+slice intact — PROJECT.md whole, marker not eaten', () => {
+    // Compose right at the 20000 edge: if lib/liftoff.js's cap ever drifted
+    // above tasks.js's own `.trim().slice(0, 20000)`, that slice would eat
+    // the marker mid-addendum and this gate would catch it.
+    const project = 'The canonical text. ' + 'P'.repeat(18500);
+    const brief = liftoff.composeKickoffBrief(project, 'A'.repeat(9000));
+    assert.ok(brief.endsWith(MARKER), 'the composed brief was truncated with the marker');
+    taskBus.handlers.get('taskCreate')({
+      title: 'cap test', cwd: repo, route: ['Architect'], brief, start: false,
+    });
+    const t = taskBus.lastList()[0];
+    const kickoff0 = tasks._test.composeKickoff(t, 0);
+    assert.ok(kickoff0.includes(project), 'PROJECT.md rides whole through the real tasks.js cap');
+    assert.ok(kickoff0.includes(MARKER), 'the honest marker rides too — tasks.js had nothing left to cut');
   });
 }
 
