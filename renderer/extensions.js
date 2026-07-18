@@ -23,6 +23,12 @@
       }
       if (ext.renderer) {
         const s = document.createElement('script');
+        // async=false keeps injected scripts executing in the ORDER main sent
+        // them (dynamically created scripts default to async). A host extension
+        // that exposes a global others register into — e.g. studio's ApexStudio,
+        // consumed by the personas renderer — must run first; main/extensions.js
+        // emits it ahead of its dependents (manifest `priority`).
+        s.async = false;
         s.src = ext.renderer;
         s.onerror = () => console.error('[extensions] failed to load ' + ext.renderer);
         document.body.appendChild(s);

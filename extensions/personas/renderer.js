@@ -1284,7 +1284,18 @@
     });
   });
 
-  ApexShell.registerDockPane(pane, { order: 20 });
+  // Re-homed into the STUDIO shell: the Persona Builder is now a sub-view of
+  // the studio dock pane instead of owning its own dock tab. Same pane DOM,
+  // same styles, same bus traffic — only the registration seam changed
+  // (ApexShell.registerDockPane → ApexStudio.registerBuilder). STUDIO is
+  // guaranteed to run first (main/extensions.js priority + ordered injection),
+  // so window.ApexStudio exists here; mount hands it this pane to frame.
+  ApexStudio.registerBuilder({
+    id: 'personas',
+    label: 'PERSONAS',
+    order: 10,
+    mount: (el) => el.appendChild(pane),
+  });
   ApexBus.post('personaWorkspaceGet', {});
   ApexBus.post('personaManageList', {});
 })();

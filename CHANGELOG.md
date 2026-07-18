@@ -1,5 +1,18 @@
 # Apex Shell Changelog
 
+## Unreleased
+
+- **STUDIO shell** (`extensions/studio/`): a new dock pane (order 20 — the slot
+  PERSONAS held) that hosts the builders as sub-views behind PERSONAS|PROJECTS
+  sub-tabs. Exposes the `ApexStudio.registerBuilder({id, label, mount, order})`
+  seam. The Persona Builder is re-homed into it unchanged (same DOM, styles, and
+  bus traffic — only its registration seam moved from `ApexShell.registerDockPane`
+  to `ApexStudio.registerBuilder`). PROJECTS ships as an empty placeholder for the
+  App Builder (slice 2+). Extension load order gained an optional manifest
+  `priority` so the studio host initializes before its dependents (renderer
+  scripts now inject `async=false` to honor it). New `test:studio` drill, chained
+  into `npm test`. (App Builder v1, slice 1 of 9.)
+
 ## 0.2.0 — 2026-07-17
 
 Personas returned as a first-class, tool-driven system, plus a wave of

@@ -1,0 +1,6 @@
+{
+  "name": "Studio",
+  "renderer": "renderer.js",
+  "styles": ["style.css"],
+  "priority": -10
+}

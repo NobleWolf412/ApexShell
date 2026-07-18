@@ -1,0 +1,37 @@
+/* STUDIO — one dock sheet hosting the builders as sub-views. Uses the same
+   dock-pane tokens as shell.css (surface / edge / accent / dim / text). */
+.studioBody { display: flex; flex-direction: column;
+  padding: 0 !important; overflow: hidden !important; }
+
+/* the sub-tab header clears the never-buried tab gutter itself (56px), so the
+   builder views below keep their own left indent unchanged (re-home safety). */
+.studioTabs { flex: none; display: flex; gap: 4px; align-items: flex-end;
+  padding: 12px 16px 0 56px; border-bottom: 1px solid var(--edge); }
+.studioTab { border: 1px solid var(--edge); border-bottom: none;
+  border-radius: 9px 9px 0 0; padding: 8px 18px; margin-bottom: -1px;
+  background: var(--surface); color: var(--dim);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .2em;
+  cursor: pointer; user-select: none; }
+.studioTab:hover { color: var(--text); border-color: var(--accent); }
+.studioTab[data-active="true"] { color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent); }
+
+.studioViews { position: relative; flex: 1; min-height: 0; overflow: auto; }
+.studioView { display: block; }
+.studioView[hidden] { display: none; }
+.studioPlaceholder { max-width: 440px; margin: clamp(48px, 9vh, 110px) auto;
+  padding: 0 34px; color: var(--dim); font-size: 13px; line-height: 1.7;
+  text-align: center; }
+
+/* A re-homed builder pane keeps its own DOM/classes (zero behavior change):
+   the STUDIO sheet is now its frame, so drop the old dock-pane chrome
+   (absolute sizing, shadow, right border, the redundant sibling tab) and tie
+   its body's visibility to the STUDIO sheet's open state instead of the
+   .open class the shell only toggles on real dock panes. */
+.studioView .sidePane, .studioView .dockPane {
+  position: static; width: auto; transform: none; }
+.studioView .paneBody { position: static; width: auto; inset: auto;
+  overflow: visible; box-shadow: none; border-right: 0; }
+.studioView .dockTab { display: none; }
+.studioPane.open .studioView .paneBody { visibility: visible; }

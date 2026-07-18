@@ -118,12 +118,22 @@ ApexShell/
 An extension = `extensions/<name>/extension.json`:
 
 ```json
-{ "name": "...", "main": "main.js", "renderer": "renderer.js", "styles": ["style.css"] }
+{ "name": "...", "main": "main.js", "renderer": "renderer.js",
+  "styles": ["style.css"], "priority": -10 }
 ```
 
 All fields but `name` optional. Main half loads eagerly at window creation,
 try-wrapped (a broken extension toasts; the shell lives). Renderer half is
 injected after shell boot (script/link tags — CSP 'self' covers them).
+
+`priority` (optional, default 0, lower loads first) orders BOTH the main-half
+`register()` calls and the renderer-injection order. It exists for the case
+where one extension exposes a renderer global that others register into: the
+**studio** shell (`ApexStudio`, `priority: -10`) must run before the personas
+renderer that calls `ApexStudio.registerBuilder`. The renderer injector runs
+the injected scripts with `async=false` so that emitted order is honored at
+execution time (renderer/extensions.js), not left to whichever file loads
+first. When no extension sets `priority`, order is alphabetical as before.
 
 `main.js` exports `register(ctx)` (+ optional `dispose()`). ctx carries:
 
@@ -147,6 +157,7 @@ What each half can contribute:
 | Contribution | How |
 |---|---|
 | Dock tab (left) | renderer half builds a `.sidePane.dockPane` element and calls `ApexShell.registerDockPane(el, {order})` — order slots the tab (VIEWER/TERMINAL sit at 10/15) |
+| Studio sub-view | a builder renderer calls `ApexStudio.registerBuilder({id, label, mount(el), order})` — mount gets a view container; STUDIO frames it as a sub-tab (PERSONAS=10, PROJECTS=20). Provided by `extensions/studio/`; personas is the first tenant |
 | Seat presets / rail buttons | main half via `ctx.seats.registerPreset` — the shell renders the buttons and defaults-panel entries from the data |
 | Monitor source | today: add a module + require-map row in `main/monitors/index.js` (a small core edit); panes then reference its type |
 | Background watcher / bus verbs | main half: `ctx.bus.on(...)` + its own timers; clean them in `dispose()` |
@@ -263,11 +274,12 @@ pane) + `main/engine/handoff.js` (pure packet contract).
 ## Verification duties (inherited by anyone who edits)
 
 - ANY main/renderer logic change → `npm test` — the full hermetic drill suite
-  (zero LLM spend) must pass whole. It runs two targets (audit M7): `test:core`
+  (zero LLM spend) must pass whole. It runs three targets (audit M7): `test:core`
   (launch-args, taskboard, audit, skills, linkify — the Law-3-pure subset that
-  needs NO `extensions/`, so it proves the core in isolation) and `test:persona`
-  (the personas EXTENSION's own drills). Keep new core drills in `test:core`;
-  extension drills belong to their extension's target.
+  needs NO `extensions/`, so it proves the core in isolation), `test:studio`
+  (the STUDIO shell + `registerBuilder` seam), and `test:persona` (the personas
+  EXTENSION's own drills). Keep new core drills in `test:core`; extension drills
+  belong to their extension's target.
 - Engine or lane change → `npm run test:live` — the gates that spend real
   sessions (engine-harness on the Claude lane, codex-drill, pty-drill).
 - Full-stack proofs on demand: park the electron launcher stub
