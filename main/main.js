@@ -144,6 +144,22 @@ function createWindow() {
     } catch { /* never block on logging */ }
   };
   lifeLog('createWindow');
+  // Navigation lock (external audit H1): the top frame carries preload.js, so
+  // nothing may navigate it off the initial loadFile — CSP does not stop
+  // navigation. A drop-in extension's renderer script (vetted only by CSP
+  // 'self') could otherwise point the webContents at a remote origin. Deny new
+  // windows outright; allow ONLY the initial file:// load, block every other
+  // navigation. External links still open via externalUrl.js (shell.openExternal).
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const guardNav = (e, url) => {
+    // the app's own index.html (initial + reloads), and our confined+CSP-locked
+    // apex:// artifact protocol — everything else is denied
+    if (/^(file|apex):\/\//i.test(url)) return;
+    e.preventDefault();
+    lifeLog(`blocked navigation to ${url}`);
+  };
+  win.webContents.on('will-navigate', guardNav);
+  win.webContents.on('will-redirect', guardNav);
   win.webContents.on('did-fail-load', (_e, code, desc, url) =>
     lifeLog(`did-fail-load ${code} ${desc} ${url}`));
   win.webContents.on('render-process-gone', (_e, details) =>
