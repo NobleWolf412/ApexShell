@@ -234,8 +234,12 @@ const gate = (name, ok, note) => {
       { launch: { model: 'haiku', effort: 'low' }, kickoff: 'Reply with exactly: APEX-DISPOSABLE-OK' },
       true);
     r.controller.close();
+    // The wire's init event reports the CLI's resolved FULL model name (e.g.
+    // "claude-haiku-4-5-20251001"), not the short tier alias we passed —
+    // same as gate 1 above, which only ever notes init.m.model without an
+    // exact match. Check containment, not equality.
     gate('7a disposable launch override: valid tier honored',
-         !!r.init && r.init.model === 'haiku' && r.text.includes('APEX-DISPOSABLE-OK'),
+         !!r.init && /haiku/i.test(r.init.model || '') && r.text.includes('APEX-DISPOSABLE-OK'),
          `model ${r.init && r.init.model}`);
   } catch (e) { gate('7a disposable launch override: valid tier honored', false, e.message); }
 
