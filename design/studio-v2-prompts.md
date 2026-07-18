@@ -527,3 +527,45 @@ test/studio-boom-drill.js. npm test WHOLE; APEX_SMOKE both variants exit
 0; CHANGELOG + floorplan (appFrame inspect seam). Update & restart — say
 so. Core diffs pasted INLINE in the report.
 ```
+
+## Slice E1 — the living BUILD step (main tree, closes the loop)
+
+```
+Read design/studio-v2.md (§ Wave E — closing the loop) and the shipped
+surface it unifies: the Lift-off step (renderLiftoff — register/delegate/
+chat + the B1 RUN drawer + the B2/B3 PREVIEW card + boom ledger). Implement
+SLICE E1 ONLY:
+
+(1) THE BUILD STEP: Lift-off renames to BUILD (step id stays 'liftoff' —
+renames that break goStep routing are how card/step collisions happen;
+label + copy change only). The step reorganizes into a milestone-first
+layout: MILESTONES parsed deterministically from the delivery area's prose
+(numbered/bulleted lines and 'milestone'-marked sentences; lib function +
+drill; imperfect parsing is fine — the list is user-visible and the
+delivery card is the fix), each milestone a row with status (open/building/
+done — derived from board tasks whose title carries the milestone slug and
+whose cwd is the project dir; taskList already broadcasts + boundSeatIds
+exists; STATUS IS DERIVED, never stored) and a DELEGATE THIS button that
+pre-fills the existing delegate flow with the milestone as extra brief
+context (the C2 boomIntent pattern — reuse it, one more bounded block on
+the F2 addendum). The register/chat/RUN/PREVIEW/ledger cards remain, below
+the milestone track.
+
+(2) THE CHAT KICKOFF SEAM (small additive CORE touch, flagged by F2):
+main/seats.js's createFromMessage gains an optional msg.kickoff read —
+string, capped 24000, sent as the seat's first user turn exactly like a
+preset kickoff would be (study how preset kickoff text flows; reuse that
+path, do not invent a second). The studio's Open-a-chat then carries
+PROJECT.md + the F2 addendum as the kickoff. Argue the diff line-by-line
+in the report; drill at whatever seam is drillable (taskboard-drill land
+or a seats-level check — study what exists).
+
+(3) THE F2 GAP CLOSES: projectsLiftoffChat composes the same brief as
+delegate (composeKickoffBrief) and sends it via the new seam.
+
+Done: npm test whole (milestone parser drill cases: numbered/bulleted/
+prose/empty/hostile; derived-status drill against stubbed taskList data;
+kickoff seam drill; liftoff drill extended for the chat brief),
+APEX_SMOKE=1 both variants exit 0, CHANGELOG + floorplan (BUILD step +
+the seats.js seam). Update & restart applies — say so.
+```
