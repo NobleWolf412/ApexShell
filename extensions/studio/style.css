@@ -47,7 +47,13 @@
 /* ---- PROJECTS builder: the guided interview (slice 3). Scoped to the projects
    view so nothing leaks into the re-homed persona pane. Uses shell.css tokens
    (surface / edge / accent / dim / faint / text / good / warning). ---- */
-.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; position: relative; }
+/* Each builder view carries its OWN share of the never-buried left tab gutter
+   (.studioBody zeroes the dock pane's 52px clearance to run this layout, and
+   the persona view's 74px padding covers its own): without this the stepper
+   rail renders underneath the VIEWER/TERMINAL/TODO tabs and its labels clip
+   (operator report, 2026-07-18). 52px = shell.css's .dockPane .paneBody. */
+.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; position: relative;
+  padding-left: 52px; }
 .studioView[data-builder="projects"] .pjRail { width: 200px; flex: none;
   border-right: 1px solid var(--edge); padding: 16px 0; }
 .studioView[data-builder="projects"] .pjStep { display: block; width: 100%;
