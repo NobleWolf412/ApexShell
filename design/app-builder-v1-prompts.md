@@ -1,5 +1,24 @@
 # App Builder v1 — build prompts
 
+## One-line invocation (paste this, nothing else)
+
+Every fresh seat gets the SAME line — it finds its own slice:
+
+```
+Read design/app-builder-v1-prompts.md in full. Find the highest "Slice N —"
+commit in git log; your job is slice N+1's prompt from that file, executed
+EXACTLY as written including every gate. If the working tree already holds
+uncommitted work for a slice, inventory it against the spec and FINISH that
+slice instead. ONE slice only: commit it (only its own files — never git
+add -A; unrelated design docs sit in the tree), print the evidence, and
+STOP. Do not begin the next slice under any circumstances.
+```
+
+Model per slice: opus for 5 (the engine touch); sonnet, medium effort, for
+everything else.
+
+## How the slices work
+
 How to run this: **one slice per fresh seat, in the repo root, in order.**
 Never two slices in one context — a fresh seat re-reads the spec and can't
 inherit the last slice's drift. The seat picks up CLAUDE.md on its own; these
@@ -109,6 +128,10 @@ bounded suggestion count, capped string lengths, unknown fields dropped,
 never an exception. Render as chips the user accepts into the card. Backstop
 timeout like the relationship pass. Done: npm test whole with a parser drill
 (valid, oversized, hostile, empty replies), CHANGELOG.md.
+Drill scope: drill the contract/lifecycle logic only (parsers, bounds,
+preflight/TTL, state transitions). For UI behavior, APEX_SMOKE=1 plus a
+printed manual-check list in your final message is sufficient — do not
+author DOM-interaction drills.
 ```
 
 ## Slice 7 — the co-designer
@@ -127,6 +150,10 @@ reopen starts fresh from the digest. Reference the mockup's co-designer panel
 for the UX. Done: npm test whole including the patch-contract drill
 (hostile blocks: unknown card, 5+ patches, oversized proposal, nested junk),
 APEX_SMOKE=1 exit 0, CHANGELOG.md.
+Drill scope: drill the contract/lifecycle logic only (patch parser, digest
+composer, seat lifecycle). For UI behavior, APEX_SMOKE=1 plus a printed
+manual-check list in your final message is sufficient — do not author
+DOM-interaction drills.
 ```
 
 ## Slice 8 — Create + Lift-off
@@ -145,6 +172,10 @@ sub-tab; (c) Open a chat here (one seat, project cwd, no chain).
 Done: npm test whole with lift-off drills (task created with route, unknown
 preset warns, workspace registered once, seatconfig otherwise untouched),
 APEX_SMOKE=1 exit 0, CHANGELOG.md + floorplan.md (the workflow-layer touch).
+Drill scope: drill the contract/lifecycle logic only (atomic write, workspace
+registration, task creation, route validation). For UI behavior, APEX_SMOKE=1
+plus a printed manual-check list in your final message is sufficient — do not
+author DOM-interaction drills.
 ```
 
 ## Slice 9 — import + polish
@@ -160,7 +191,20 @@ messages throughout. Done: npm test whole (import drills: clean import,
 missing areas, hostile paths), APEX_SMOKE=1 exit 0, CHANGELOG.md, and a final
 pass confirming design/app-builder-v1.md § Required verification is fully
 covered — list each item with where its drill lives.
+Drill scope: drill the contract/lifecycle logic only (import mapping, audit
+validation). For UI behavior, APEX_SMOKE=1 plus a printed manual-check list
+in your final message is sufficient — do not author DOM-interaction drills.
 ```
+
+---
+
+## Slice 10 — the Sweep
+
+No bespoke prompt here: use the ready-to-paste sweep prompt in
+design/sweep-v1.md with scope = the App Builder wave (slices 1–9's commit
+range). It deletes this file and the mockup, flips the spec's status line,
+and proves the deletions with the whole suite. The wave is not done until
+this slice runs.
 
 ---
 
