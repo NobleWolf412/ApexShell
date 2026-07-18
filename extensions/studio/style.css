@@ -143,6 +143,16 @@
   font-size: 11.5px; line-height: 1.5; }
 .studioView[data-builder="projects"] .pjErr[data-tone="warn"] { color: var(--warning); }
 
+/* ---- per-card AI suggest pass (slice 6) ---- */
+.studioView[data-builder="projects"] .pjAiSuggest { margin-top: 14px; padding-top: 12px;
+  border-top: 1px dashed var(--edge); }
+.studioView[data-builder="projects"] .pjAiRow { display: flex; flex-wrap: wrap;
+  gap: 10px; align-items: center; }
+.studioView[data-builder="projects"] .pjAiUsage { margin-top: 8px; }
+.studioView[data-builder="projects"] .pjAiChipRow { margin-top: 10px; }
+.studioView[data-builder="projects"] .pjAiChip { border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
 /* ---- Blueprint Review + Canonical Draft (slice 4) ---- */
 .studioView[data-builder="projects"] .pjGapNote { margin-top: 10px; }
 .studioView[data-builder="projects"] .pjReviewList { max-width: 700px; margin-bottom: 16px; }

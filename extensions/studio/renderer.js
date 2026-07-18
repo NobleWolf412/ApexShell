@@ -180,6 +180,10 @@ function mountProjects(el, hasBus) {
     confirmOverwrite: false,
     validation: null,      // last projectsValidationStatus report
     suggestedProjectId: '',
+    // ---- slice 6: per-card AI suggest pass (opt-in, one disposable turn) ----
+    // Keyed to a single card at a time; switching cards drops any stale
+    // prepared/result state rather than carrying it to the wrong question.
+    suggest: { card: null, prepared: null, busy: false, phase: null, result: null },
   };
 
   // The six canonical sections — key + default heading — mirrored from
@@ -406,6 +410,90 @@ function mountProjects(el, hasBus) {
     });
   }
 
+  // ---- slice 6: AI suggest pass block (opt-in, one card at a time) --------
+  // Prepare shows a usage estimate; nothing runs until the user hits RUN,
+  // mirroring personas' personaTestPrepare→personaTestStart two-step gate.
+  function suggestFor(cardKey) {
+    if (state.suggest.card !== cardKey) return { card: cardKey, prepared: null, busy: false, phase: null, result: null };
+    return state.suggest;
+  }
+
+  function renderAiSuggestBlock(card) {
+    const s = suggestFor(card.key);
+    const canRun = Boolean(s.prepared) && !s.busy;
+    const chips = (s.result && s.result.suggestions) || [];
+    const errText = (s.result && s.result.error) ||
+      (s.phase === 'error' && s.errorText) || '';
+    return (
+      '<div class="pjAiSuggest">' +
+        '<div class="pjAiRow">' +
+          '<button type="button" class="pjBtn pjAiPrepare" ' + (s.busy ? 'disabled' : '') + ' ' +
+            'title="Runs one hidden, tool-disabled disposable session to suggest additions to this answer — a real Claude turn, opt-in.">' +
+            (s.prepared ? 'RE-CHECK USAGE' : 'AI SUGGEST (USES A SESSION)') +
+          '</button>' +
+          (s.prepared
+            ? '<button type="button" class="pjBtn primary pjAiRun" ' + (canRun ? '' : 'disabled') + '>RUN AI PASS</button>'
+            : '') +
+          (s.busy ? '<button type="button" class="pjBtn pjAiStop">STOP</button>' : '') +
+        '</div>' +
+        (s.prepared
+          ? '<div class="pjWsSub pjAiUsage">' + escapeHtml(usageNote(s.prepared.usage)) + '</div>'
+          : '') +
+        (s.busy ? '<div class="pjWsSub pjAiUsage">Running the disposable turn…</div>' : '') +
+        (errText ? '<div class="pjErr" data-tone="warn">' + escapeHtml(errText) + '</div>' : '') +
+        (chips.length
+          ? '<div class="pjChipRow pjAiChipRow">' +
+              chips.map((c, i) => `<span class="pjChip pjAiChip" data-ai-i="${i}">${escapeHtml(c)}</span>`).join('') +
+            '</div>'
+          : '') +
+      '</div>'
+    );
+  }
+
+  function usageNote(usage) {
+    if (!usage) return 'Usage data is unavailable — the pass can still run.';
+    if (usage.stale) return 'Usage snapshot is stale, but the pass can still run.';
+    const bits = [];
+    if (usage.session) bits.push('session ' + usage.session);
+    if (usage.weekly) bits.push('weekly ' + usage.weekly);
+    return bits.length ? 'Usage — ' + bits.join(' · ') : 'Usage check passed.';
+  }
+
+  function wireAiSuggestBlock(card) {
+    const prepareBtn = main.querySelector('.pjAiPrepare');
+    const runBtn = main.querySelector('.pjAiRun');
+    const stopBtn = main.querySelector('.pjAiStop');
+    const box = answerBox();
+    if (prepareBtn) prepareBtn.addEventListener('click', () => {
+      if (!state.draft) return;
+      state.suggest = { card: card.key, prepared: null, busy: false, phase: null, result: null };
+      ApexBus.post('projectsCardSuggestPrepare', { id: state.draft.id, card: card.key });
+    });
+    if (runBtn) runBtn.addEventListener('click', () => {
+      const s = suggestFor(card.key);
+      if (!s.prepared || runBtn.disabled) return;
+      state.suggest = { ...s, busy: true, phase: 'running', result: null };
+      ApexBus.post('projectsCardSuggestRun', {
+        id: s.prepared.draftId, card: s.prepared.card,
+        expectedRevision: s.prepared.revision, approved: true,
+      });
+      renderCard(card);   // reflect busy state immediately
+    });
+    if (stopBtn) stopBtn.addEventListener('click', () => ApexBus.post('projectsCardSuggestStop', {}));
+    for (const chip of main.querySelectorAll('.pjAiChip[data-ai-i]')) {
+      chip.addEventListener('click', () => {
+        const s = suggestFor(card.key);
+        const text = ((s.result && s.result.suggestions) || [])[Number(chip.dataset.aiI)];
+        if (!text || !box) return;
+        // A chip only ever proposes text into the free-text box — the user
+        // still has to save/next for it to become part of the answer; the AI
+        // never writes the draft directly.
+        box.value = (box.value ? box.value + '\n' : '') + '• ' + text;
+        chip.style.opacity = '.35';
+      });
+    }
+  }
+
   function renderCard(card) {
     if (!card) { state.step = 'start'; return renderStart(); }
     const idx = cardIndex(card.key);
@@ -425,6 +513,7 @@ function mountProjects(el, hasBus) {
           '<span class="pjChip pjHelpToggle">Help me decide</span>' +
         '</div>' +
         '<div class="pjHelp" ' + (state.helpOpen ? '' : 'hidden') + '></div>' +
+        renderAiSuggestBlock(card) +
         '<div class="pjBtnRow">' +
           (idx > 0 ? '<button type="button" class="pjBtn pjBack">← BACK</button>' : '') +
           '<button type="button" class="pjBtn primary pjNext">' +
@@ -448,6 +537,8 @@ function mountProjects(el, hasBus) {
         chip.style.opacity = '.35';
       });
     }
+
+    wireAiSuggestBlock(card);
 
     const help = main.querySelector('.pjHelp');
     const renderHelp = () => {
@@ -762,6 +853,33 @@ function mountProjects(el, hasBus) {
   ApexBus.on('projectsValidationStatus', (m) => {
     state.validation = m.report;
     if (state.step === 'canonical') render();
+  });
+
+  // ---- slice 6: per-card AI suggest pass -----------------------------------
+  ApexBus.on('projectsCardSuggestPrepared', (m) => {
+    state.suggest = { card: m.card, prepared: m, busy: false, phase: 'prepared', result: null };
+    if (state.step === m.card) renderCard(findCard(m.card));
+  });
+
+  ApexBus.on('projectsCardSuggestStatus', (m) => {
+    if (m.phase === 'error') {
+      const card = state.suggest.card;
+      state.suggest = { card, prepared: null, busy: false, phase: 'error', result: null, errorText: m.error };
+      if (state.step === card) renderCard(findCard(card));
+      return;
+    }
+    if (m.phase === 'stopped') {
+      const card = state.suggest.card;
+      state.suggest = { card, prepared: null, busy: false, phase: 'stopped', result: null };
+      if (state.step === card) renderCard(findCard(card));
+    }
+    // 'running' is already reflected client-side the instant RUN is clicked.
+  });
+
+  ApexBus.on('projectsCardSuggestResult', (m) => {
+    const card = m.card;
+    state.suggest = { card, prepared: null, busy: false, phase: m.error ? 'error' : 'done', result: m };
+    if (state.step === card) renderCard(findCard(card));
   });
 
   render();

@@ -375,6 +375,7 @@ module.exports = {
   isSafeProjectId,
   parseFrontmatter,
   projectPaths,
+  readSiblingContexts,
   resolveInside,
   validateProjectPackage,
 };

@@ -97,6 +97,40 @@
   (hermetic, zero LLM spend) chained into `test:studio`. `npm run test:live`
   gates the engine cases. Update & restart applies. (App Builder v1, slice 5
   of 9 — the engine touch.)
+- **App Builder per-card AI suggest pass** (`extensions/studio/`): each
+  interview card now offers an opt-in AI pass alongside its free heuristic
+  chips — one disposable turn, never run without explicit approval. Mirrors
+  `extensions/personas/main.js`'s `personaTestPrepare`/`personaRelSuggestLlm`
+  pattern exactly: `projectsCardSuggestPrepare` reports a usage snapshot
+  (`ctx.usage.claudeSnapshot()`) and stamps a 5-minute TTL (same order as
+  personas' `TEST_PREPARE_TTL_MS`) on the prepared-but-unapproved state;
+  `projectsCardSuggestRun` refuses to fire without `approved: true`, re-checks
+  the TTL and the draft's revision, and allows only one pass at a time. The
+  disposable call (`ctx.seats.startDisposable`) carries `launch: { model,
+  effort }` sourced from the STUDIO header picker
+  (`modelPicker.readModelPick`) — omitted entirely when no pick is saved yet,
+  byte-identical to the legacy path per slice 5's contract. A 120-second
+  backstop timer (matching `personaRelSuggestLlm`'s) force-finishes the pass
+  with an error if the seat never answers, and `done()` always posts a result.
+  New `lib/suggest.js`: the prompt builder (the card's question + the current
+  answer + every existing project's `project-context.md` digest, read via
+  `contract.readSiblingContexts` — reused, not reinvented, for overlap
+  detection) and the untrusted-reply parser, which allows only a bounded,
+  capped list of suggestion strings (`MAX_SUGGESTIONS`/`TEXT_CAP` matching
+  `relationships.js`'s own caps) — oversize is trimmed rather than rejected,
+  unknown fields and wrong-typed entries are dropped silently, and a missing
+  JSON block, non-JSON payload, or empty reply fails closed to an empty list
+  plus a clear error, never a thrown exception. Parsed suggestions render as
+  chips on the card; clicking one proposes text into the free-text answer —
+  the AI never writes the draft directly, the user still saves/next for it to
+  count. New `test/studio-suggest-drill.js` (parser: valid / oversized /
+  hostile / non-JSON-empty-missing-block; prompt builder as a pure function;
+  and the full prepare→approve→run bus wiring driven through a stubbed
+  `ctx.seats.startDisposable`, covering the approval gate, TTL expiry,
+  revision staleness, single-flight, a dead seat, the backstop, and the launch
+  passthrough) chained into `test:studio`; zero LLM spend. Renderer edits
+  apply on Reload; the `main.js`/`contract.js` changes need Update & restart.
+  (App Builder v1, slice 6 of 9.)
 
 ## 0.2.0 — 2026-07-17
 

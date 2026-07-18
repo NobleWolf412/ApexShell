@@ -19,6 +19,7 @@ const contract = require('./lib/contract');
 const render = require('./lib/render');
 const blueprint = require('./lib/blueprint');
 const modelPicker = require('./lib/modelPicker');
+const suggest = require('./lib/suggest');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -378,6 +379,137 @@ function register(ctx) {
       publishModelPick();
     }
   });
+
+  // ---- per-card AI suggest pass (slice 6, § AI integration Level 1) --------
+  // Opt-in: the pass never runs without an explicit approved:true on the RUN
+  // verb. Usage preflight + a TTL on the prepared-but-unapproved state mirror
+  // extensions/personas/main.js's personaTestPrepare/personaTestStart exactly;
+  // the disposable call shape (prompt → onEvent accumulate text → parse on
+  // 'result' → backstop timeout → done() that always posts) mirrors that
+  // module's personaRelSuggestLlm. One pass runs at a time.
+  const SUGGEST_PREPARE_TTL_MS = 5 * 60 * 1000;   // == personas' TEST_PREPARE_TTL_MS
+  const SUGGEST_BACKSTOP_MS = 120000;             // == personaRelSuggestLlm's backstop
+  let preparedSuggest = null;    // { draftId, card, revision, preparedAt }
+  let activeSuggestSeat = null;  // { controller, backstop } — one pass at a time
+
+  const findInterviewCard = (key) => CARDS.find((c) => c.key === key);
+
+  ctx.bus.on('projectsCardSuggestPrepare', (message) => {
+    try {
+      const card = findInterviewCard(message && message.card);
+      if (!card) throw new Error('Unknown interview card.');
+      const draft = currentWorkspaceDraft(message && message.id);
+      const usage = ctx.usage && typeof ctx.usage.claudeSnapshot === 'function'
+        ? ctx.usage.claudeSnapshot() : null;
+      const usageFresh = Boolean(usage && usage.asOf && !usage.stale &&
+        Date.now() - usage.asOf <= 5 * 60 * 1000);
+      preparedSuggest = {
+        draftId: draft.id,
+        card: card.key,
+        revision: draft.revision,
+        preparedAt: Date.now(),
+      };
+      ctx.bus.post('projectsCardSuggestPrepared', {
+        draftId: draft.id,
+        card: card.key,
+        revision: draft.revision,
+        usage: usage ? {
+          session: usage.session || null,
+          weekly: usage.weekly || null,
+          asOf: usage.asOf || null,
+          stale: !usageFresh,
+        } : null,
+        requiresApproval: true,
+      });
+    } catch (err) {
+      preparedSuggest = null;
+      ctx.bus.post('projectsCardSuggestStatus', { phase: 'error', error: err.message });
+    }
+  });
+
+  ctx.bus.on('projectsCardSuggestRun', (message) => {
+    try {
+      if (!message || message.approved !== true)
+        throw new Error('The AI suggestion pass runs a hidden Claude session — it needs explicit approval.');
+      if (!preparedSuggest || message.id !== preparedSuggest.draftId ||
+          message.card !== preparedSuggest.card ||
+          message.expectedRevision !== preparedSuggest.revision)
+        throw new Error('Prepare the AI suggestion pass again from the current draft.');
+      if (Date.now() - preparedSuggest.preparedAt > SUGGEST_PREPARE_TTL_MS)
+        throw new Error('The usage check expired; prepare the AI suggestion pass again.');
+      if (activeSuggestSeat) throw new Error('An AI suggestion pass is already running.');
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+
+      const card = findInterviewCard(preparedSuggest.card);
+      const draft = currentWorkspaceDraft(preparedSuggest.draftId);
+      if (draft.revision !== preparedSuggest.revision)
+        throw new Error('The draft changed; prepare the AI suggestion pass again.');
+
+      const workspace = selectedWorkspace(ctx.stateDir);
+      // '' can never match a real project folder (isSafeProjectId requires a
+      // non-empty kebab-case name), so this reads every existing project's
+      // digest — there is no "self" yet, this card's project isn't created.
+      const contexts = contract.readSiblingContexts(workspace, '');
+      const answer = draft.answers[card.key] || '';
+      const prompt = suggest.buildPrompt(card, answer, contexts);
+
+      // Slice 5's launch override: pass launch.{model,effort} only when the
+      // STUDIO picker actually holds a pick, so an unset picker is byte-
+      // identical to the legacy (no-launch) disposable call.
+      const pick = modelPicker.readModelPick(ctx.stateDir);
+      const launch = (pick.model || pick.effort)
+        ? { model: pick.model || undefined, effort: pick.effort || undefined }
+        : null;
+
+      let finalText = '';
+      const done = (payload) => {
+        if (!activeSuggestSeat) return;
+        const seat = activeSuggestSeat;
+        activeSuggestSeat = null;
+        clearTimeout(seat.backstop);
+        try { seat.controller.close(); } catch { /* already gone */ }
+        ctx.bus.post('projectsCardSuggestResult', {
+          draftId: draft.id, card: card.key, suggestions: [], error: null,
+          ...payload,
+        });
+      };
+      const controller = ctx.seats.startDisposable({
+        kickoff: prompt,
+        ...(launch ? { launch } : {}),
+        onEvent: (event) => {
+          if (!activeSuggestSeat) return;
+          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
+          else if (event.type === 'result') {
+            const parsed = suggest.parseLlmReply(finalText);
+            done(parsed.error ? { error: parsed.error } : { suggestions: parsed.suggestions });
+          } else if (event.type === 'dead') {
+            done({ error: 'the suggestion seat exited before answering' });
+          }
+        },
+      });
+      activeSuggestSeat = {
+        controller,
+        backstop: setTimeout(() => done({ error: 'the suggestion pass timed out' }), SUGGEST_BACKSTOP_MS),
+      };
+      preparedSuggest = null;
+      ctx.bus.post('projectsCardSuggestStatus', { phase: 'running' });
+    } catch (err) {
+      ctx.bus.post('projectsCardSuggestResult', {
+        draftId: message && message.id, card: message && message.card,
+        suggestions: [], error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsCardSuggestStop', () => {
+    if (!activeSuggestSeat) return;
+    const seat = activeSuggestSeat;
+    activeSuggestSeat = null;
+    clearTimeout(seat.backstop);
+    try { seat.controller.close(); } catch { /* already gone */ }
+    ctx.bus.post('projectsCardSuggestStatus', { phase: 'stopped' });
+  });
 }
 
 module.exports = {
@@ -390,3 +522,4 @@ module.exports = {
 };
 
 module.exports.modelPicker = modelPicker;
+module.exports.suggest = suggest;
