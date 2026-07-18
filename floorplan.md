@@ -118,12 +118,22 @@ ApexShell/
 An extension = `extensions/<name>/extension.json`:
 
 ```json
-{ "name": "...", "main": "main.js", "renderer": "renderer.js", "styles": ["style.css"] }
+{ "name": "...", "main": "main.js", "renderer": "renderer.js",
+  "styles": ["style.css"], "priority": -10 }
 ```
 
 All fields but `name` optional. Main half loads eagerly at window creation,
 try-wrapped (a broken extension toasts; the shell lives). Renderer half is
 injected after shell boot (script/link tags — CSP 'self' covers them).
+
+`priority` (optional, default 0, lower loads first) orders BOTH the main-half
+`register()` calls and the renderer-injection order. It exists for the case
+where one extension exposes a renderer global that others register into: the
+**studio** shell (`ApexStudio`, `priority: -10`) must run before the personas
+renderer that calls `ApexStudio.registerBuilder`. The renderer injector runs
+the injected scripts with `async=false` so that emitted order is honored at
+execution time (renderer/extensions.js), not left to whichever file loads
+first. When no extension sets `priority`, order is alphabetical as before.
 
 `main.js` exports `register(ctx)` (+ optional `dispose()`). ctx carries:
 
@@ -141,12 +151,22 @@ injected after shell boot (script/link tags — CSP 'self' covers them).
     none); `cwd` overrides the workspace for that seat.
   - `setDefaultCwd(dir)` — where blank seats/terminals spawn.
   - `setWrapPrompt(text)` — replaces the generic End-Session close-out.
+  - `presetNames()` / `registerWorkspace({name, path})` — added for the App
+    Builder's Lift-off (slice 8): a read-only live-preset list (the
+    Delegate-to-Architect gate) and a `_workspaces` registration that WARNS
+    on a name/path collision instead of clobbering (unlike the picker's own
+    `workspaceAdd` bus verb, which last-writer-wins). Plain synchronous
+    `ctx.seats` methods, not bus verbs — `bus.post()`/`bus.on()` are
+    main→renderer/renderer→main only, so a synchronous return value can never
+    reach another main-side module through the bus; this is why
+    `checkPresetNames`/`replacePresetGroup` already lived here too.
 
 What each half can contribute:
 
 | Contribution | How |
 |---|---|
 | Dock tab (left) | renderer half builds a `.sidePane.dockPane` element and calls `ApexShell.registerDockPane(el, {order})` — order slots the tab (VIEWER/TERMINAL sit at 10/15) |
+| Studio sub-view | a builder renderer calls `ApexStudio.registerBuilder({id, label, mount(el), order})` — mount gets a view container; STUDIO frames it as a sub-tab (PERSONAS=10, PROJECTS=20). Provided by `extensions/studio/`; personas is the first tenant |
 | Seat presets / rail buttons | main half via `ctx.seats.registerPreset` — the shell renders the buttons and defaults-panel entries from the data |
 | Monitor source | today: add a module + require-map row in `main/monitors/index.js` (a small core edit); panes then reference its type |
 | Background watcher / bus verbs | main half: `ctx.bus.on(...)` + its own timers; clean them in `dispose()` |
@@ -179,6 +199,22 @@ Launch dial resolution: seat `current` → seat `default` → `_default` →
 hard `manual`. `_workspace` sets the bare default cwd; preset `cwd` and
 `setDefaultCwd` override.
 
+**Disposable launch override** (App Builder slice 5): `createDisposable`
+(`seatHost.js`) and the `ctx.seats.startDisposable` extension seam accept an
+optional `launch: { model, effort }` — `model` validates against the
+Claude-lane tiers ONLY (`fable | opus | sonnet | haiku`; a disposable always
+spawns via `claudeSeat`, so anything else is a caller bug, rejected with a
+clean thrown `Error` before any scratch dir or child process exists). The
+existing flat `model`/`effort` params (`main/audit.js`'s haiku pass) still
+work untouched — `launch`, when present, simply wins over them — and omitting
+`launch` entirely (the shape `personaTestPrepare`/`personaRelSuggestLlm` use)
+is byte-identical to before this slice. `main/seats.js`'s `startDisposable` is
+a pure passthrough; the engine is the single validation gate, so
+`test/engine-harness.js` (which drives `createDisposable` directly, no
+Electron in the loop) is what proves the three cases: a valid tier steering a
+real spawn, a non-Claude lane rejected before anything spawns, and the
+omitted-launch shape spawning exactly as it always has.
+
 **Per-persona toolset wall** (`launchFor` in `seats.js`): a persona's
 seatconfig entry may carry top-level `tools` (the CLI's built-in allowlist,
 e.g. `Read,Glob,Grep,WebSearch,WebFetch,Write,Bash,TodoWrite`) and
@@ -203,7 +239,13 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   `[seat-launch]` + the persona's own kickoff + an `<apex-task>` block
   carrying the repo cwd, the PERSONA HOME (absolute — task cwd overrides
   the preset cwd, so relative memory paths would otherwise orphan), the
-  previous step's packet, and the completion contract.
+  previous step's packet, and the completion contract. `taskCreate` accepts
+  one more optional field, `brief` — a verbatim text block (capped 20 KB)
+  that rides STEP 0's kickoff only, never later steps. It exists for the App
+  Builder's Lift-off "Delegate to the Architect" (`extensions/studio/`,
+  slice 8): the canonical PROJECT.md text needs to reach the first seat
+  verbatim, not as a rumor of it, and no other channel into `composeTaskBody`
+  existed. Omitted, a task behaves exactly as before this addition.
 - A step signals completion by ending its final message with one fenced
   ```apex-handoff``` JSON block: `status done | needs-decision | bounce`,
   plus summary/findings/decision/artifacts. The content is UNTRUSTED —
@@ -263,11 +305,12 @@ pane) + `main/engine/handoff.js` (pure packet contract).
 ## Verification duties (inherited by anyone who edits)
 
 - ANY main/renderer logic change → `npm test` — the full hermetic drill suite
-  (zero LLM spend) must pass whole. It runs two targets (audit M7): `test:core`
+  (zero LLM spend) must pass whole. It runs three targets (audit M7): `test:core`
   (launch-args, taskboard, audit, skills, linkify — the Law-3-pure subset that
-  needs NO `extensions/`, so it proves the core in isolation) and `test:persona`
-  (the personas EXTENSION's own drills). Keep new core drills in `test:core`;
-  extension drills belong to their extension's target.
+  needs NO `extensions/`, so it proves the core in isolation), `test:studio`
+  (the STUDIO shell + `registerBuilder` seam), and `test:persona` (the personas
+  EXTENSION's own drills). Keep new core drills in `test:core`; extension drills
+  belong to their extension's target.
 - Engine or lane change → `npm run test:live` — the gates that spend real
   sessions (engine-harness on the Claude lane, codex-drill, pty-drill).
 - Full-stack proofs on demand: park the electron launcher stub

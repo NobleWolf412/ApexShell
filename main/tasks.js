@@ -119,6 +119,14 @@ function composeTaskBody(task, stepIndex) {
   // override that would orphan the persona's memory. Hand it home explicitly.
   if (preset.cwd && preset.cwd !== task.cwd)
     lines.push('PERSONA HOME (your memory/ and log/ live HERE — always use these absolute paths): ' + preset.cwd);
+  // App Builder slice 8 (Lift-off "Delegate to the Architect"): an optional
+  // brief rides step 0's kickoff ONLY — the canonical PROJECT.md text itself,
+  // verbatim, not a summary of it. Absent for every task that doesn't set it
+  // (taskCreate's existing callers), so this is purely additive.
+  if (stepIndex === 0 && task.brief) {
+    lines.push('', 'PROJECT BRIEF (the canonical PROJECT.md — read this before anything else):',
+      '--- BEGIN PROJECT.md ---', task.brief, '--- END PROJECT.md ---');
+  }
   lines.push('You are step ' + (stepIndex + 1) + ' of ' + total + ' on the route: ' + routeStr + '.');
   // reviewers see the bounce budget so they spend it on blockers, not polish
   if (stepIndex > 0)
@@ -788,6 +796,10 @@ function taskCreate(msg) {
   }
   if (!routeSteps) routeSteps = normalizeRoute(msg.route);
   if (!routeSteps) { toast('a task needs a route of 1–' + MAX_ROUTE + ' personas'); return; }
+  // App Builder slice 8: an optional verbatim brief (PROJECT.md) that rides
+  // step 0's kickoff only (composeTaskBody). Capped well above any real
+  // canonical's size; absent for every existing caller.
+  const brief = typeof msg.brief === 'string' ? msg.brief.trim().slice(0, 20000) : '';
   const known = api.seats.presetNames();
   const unknown = routeSteps.filter((p) => !known.includes(p));
   if (unknown.length)
@@ -799,6 +811,7 @@ function taskCreate(msg) {
     status: 'open',
     auto: !!msg.auto,
     fromRail: false,               // explicit: non-rail chain (see assertFromRailInvariant)
+    brief,
     route: routeSteps.map((persona) => ({ persona })),
     currentStep: 0,
     bounces: 0,

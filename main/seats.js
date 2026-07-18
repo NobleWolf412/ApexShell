@@ -68,6 +68,13 @@ const extensionApi = {
       .map((name) => presetNameConflict(owner, name))
       .filter(Boolean);
   },
+  // A read-only list of live persona/seat preset names (App Builder slice 8,
+  // Lift-off's Delegate-to-Architect gate). A bus verb can't answer this: the
+  // bus is post()=main→renderer / on()=renderer→main only, so a value posted
+  // back never reaches another main-side module — the same reason
+  // checkPresetNames/replacePresetGroup already sit here as plain methods
+  // instead of on the wire. Read-only, no state change.
+  presetNames() { return presetNames(); },
   replacePresetGroup(owner, items) {
     if (!Array.isArray(items)) throw new Error('Preset group must be an array.');
     const names = validatePresetNames(owner, items.map((preset) => preset && preset.name));
@@ -102,8 +109,42 @@ const extensionApi = {
   },
   setDefaultCwd(dir) { if (dir && fs.existsSync(dir)) cwdOverride = dir; },
   setWrapPrompt(text) { if (typeof text === 'string' && text) wrapOverride = text; },
+  // Register {name, path} into `_workspaces` — collision (same name OR same
+  // path) WARNS and never clobbers the existing entry; every other seatconfig
+  // key is untouched (App Builder slice 8, Lift-off's "Register workspace").
+  // The picker's own workspaceBrowse/workspaceAdd bus verb silently REPLACES
+  // a same-path entry (last-writer-wins, no warning) — fine for the picker's
+  // own "re-browse the same folder" flow, wrong for Lift-off's contract, so
+  // this is a distinct, narrow method beside it rather than a behavior change
+  // to workspaceAdd. Plain ctx.seats method, not a bus verb, for the same
+  // reason presetNames() above is: post() cannot answer back to a caller
+  // that is itself main-side, only to the renderer.
+  registerWorkspace({ name, path: workspacePath } = {}) {
+    if (typeof workspacePath !== 'string' || !path.isAbsolute(workspacePath) || !fs.existsSync(workspacePath))
+      return { ok: false, error: 'That path is not a folder we can register.' };
+    const cleanName = (typeof name === 'string' && name.trim())
+      ? name.trim() : (path.basename(workspacePath) || workspacePath);
+    const cur = readWorkspaces();
+    const collision = cur.list.find((w) => w.name === cleanName ||
+      path.resolve(w.path) === path.resolve(workspacePath));
+    if (collision) {
+      return {
+        ok: false, warning: true, existing: collision,
+        error: `A workspace already uses this ${collision.name === cleanName ? 'name' : 'path'}: ${collision.name}`,
+      };
+    }
+    const list = cur.list.concat([{ name: cleanName, path: workspacePath }]);
+    writeWorkspaces({ list, defaultPath: cur.defaultPath || workspacePath });
+    postWorkspaces();
+    return { ok: true, name: cleanName, path: workspacePath };
+  },
   startDisposable(options) {
     if (!host) throw new Error('Seat engine is unavailable.');
+    // A straight passthrough: `options.launch = { model, effort }` (App Builder
+    // slice 5) rides along untouched — the engine's createDisposable is the
+    // single validation gate (a bad tier throws there), so every caller of
+    // this seam, extension or core module, is covered without duplicating
+    // the Claude-tier allowlist here.
     return host.createDisposable(options || {});
   },
 };

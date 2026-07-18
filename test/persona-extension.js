@@ -1383,15 +1383,25 @@ function completeDisposableTest(bus, draft, disposableSeat) {
         on(type, fn) { handlers.set(type, fn); },
         post(type, payload) { posts.push({ type, payload }); },
       };
-      global.ApexShell = {
-        registerDockPane(element, options) { registered = { element, options }; },
+      // The Persona Builder re-homed into the STUDIO shell: it registers as a
+      // studio builder instead of owning a dock pane. The pane element is
+      // handed to STUDIO through the mount(el) callback.
+      let mountTarget;
+      global.ApexStudio = {
+        registerBuilder(spec) {
+          registered = spec;
+          spec.mount({ appendChild(child) { mountTarget = child; } });
+        },
       };
       try {
         const renderer = require.resolve('../extensions/personas/renderer');
         delete require.cache[renderer];
         require(renderer);
-        assert.equal(registered.element, pane);
-        assert.deepEqual(registered.options, { order: 20 });
+        assert.equal(registered.id, 'personas');
+        assert.equal(registered.label, 'PERSONAS');
+        assert.equal(registered.order, 10);
+        assert.equal(typeof registered.mount, 'function');
+        assert.equal(mountTarget, pane);
         assert.match(pane.innerHTML, /PERSONAS/);
         assert.equal(posts[0].type, 'personaWorkspaceGet');
 

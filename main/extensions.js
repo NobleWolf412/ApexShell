@@ -47,6 +47,12 @@ function discover() {
       console.error('[extensions] bad manifest ' + mf + ':', err.message);
     }
   }
+  // Load ORDER matters when one extension exposes a global others register into
+  // (studio's ApexStudio ← the personas renderer). Optional manifest `priority`
+  // (lower loads first, default 0) sorts both the main-half register() calls and
+  // the renderer-injection order; the renderer runs them async=false to honor it.
+  found.sort((a, b) =>
+    ((a.manifest.priority || 0) - (b.manifest.priority || 0)) || a.name.localeCompare(b.name));
   return found;
 }
 

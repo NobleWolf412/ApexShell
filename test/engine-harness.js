@@ -195,6 +195,85 @@ const gate = (name, ok, note) => {
   const tail3 = events.slice(cur3).filter((m) => m.type === 'seatEvt' && m.id === id3);
   gate('6 ✕ mid-turn: closed seat streams nothing (ghost drill)', tail3.length === 0,
        tail3.length ? 'leaked: ' + tail3.map((m) => m.m.type).join(',') : 'silent');
+  // -- 7. App Builder slice 5: disposable launch override ------------------
+  // createDisposable now accepts `launch: { model, effort }` — validated
+  // against the Claude-lane tiers ONLY, since a disposable always spawns via
+  // claudeSeat regardless of what a caller asks for. Three cases: the override
+  // steers a real spawn, a non-Claude lane is rejected before anything spawns,
+  // and the existing no-launch call shape (personaTestPrepare/
+  // personaRelSuggestLlm/audit.js's exact usage today) keeps working untouched.
+  function runDisposable(opts, waitForResult, timeoutMs = 60000) {
+    return new Promise((resolve, reject) => {
+      let initEvt = null, text = '';
+      const t = setTimeout(() => reject(new Error('disposable timed out')), timeoutMs);
+      let controller;
+      const settle = (fn) => { clearTimeout(t); fn(); };
+      try {
+        controller = host.createDisposable({
+          ...opts,
+          onEvent: (m) => {
+            if (m.type === 'init') {
+              initEvt = m;
+              if (!waitForResult) settle(() => resolve({ init: initEvt, text, controller }));
+            } else if (m.type === 'text') {
+              text += m.text || '';
+            } else if (m.type === 'result') {
+              if (waitForResult) settle(() => resolve({ init: initEvt, text, controller }));
+            } else if (m.type === 'dead') {
+              settle(() => reject(new Error('disposable died: ' + m.code)));
+            }
+          },
+        });
+      } catch (e) { clearTimeout(t); reject(e); }
+    });
+  }
+
+  // 7a. valid tier honored — the override actually steers the spawned model.
+  try {
+    const r = await runDisposable(
+      { launch: { model: 'haiku', effort: 'low' }, kickoff: 'Reply with exactly: APEX-DISPOSABLE-OK' },
+      true);
+    r.controller.close();
+    // The wire's init event reports the CLI's resolved FULL model name (e.g.
+    // "claude-haiku-4-5-20251001"), not the short tier alias we passed —
+    // same as gate 1 above, which only ever notes init.m.model without an
+    // exact match. Check containment, not equality.
+    gate('7a disposable launch override: valid tier honored',
+         !!r.init && /haiku/i.test(r.init.model || '') && r.text.includes('APEX-DISPOSABLE-OK'),
+         `model ${r.init && r.init.model}`);
+  } catch (e) { gate('7a disposable launch override: valid tier honored', false, e.message); }
+
+  // 7b. non-Claude lane rejected — synchronous, clean throw, nothing spawns
+  // (no live spend: the rejection happens before the disposable's scratch dir
+  // or child process are created).
+  {
+    const bad = ['codex', 'qwen', 'agy', 'bogus-tier'];
+    const rejections = bad.map((m) => {
+      let onEventFired = false;
+      try {
+        host.createDisposable({ launch: { model: m }, onEvent: () => { onEventFired = true; } });
+        return { m, threw: false, onEventFired };
+      } catch (e) { return { m, threw: true, onEventFired, message: e.message }; }
+    });
+    const allRejectedCleanly = rejections.every((r) => r.threw && !r.onEventFired);
+    gate('7b disposable launch override: non-Claude lane rejected (codex/qwen/agy/bogus)',
+         allRejectedCleanly,
+         rejections.map((r) => `${r.m}:${r.threw ? 'threw' : 'SPAWNED'}`).join(' '));
+  }
+
+  // 7c. omitted launch = legacy — the EXACT call shape personaTestPrepare and
+  // personaRelSuggestLlm use today (kickoff + onEvent, no model/effort/launch
+  // at all). Must not throw and must spawn exactly as it always has; only
+  // waits for `init` (not a full turn) to bound the live spend.
+  try {
+    const r = await runDisposable({ kickoff: 'Reply with exactly: APEX-LEGACY-OK' }, false);
+    r.controller.close();
+    gate('7c disposable launch override: omitted launch is byte-identical to legacy',
+         !!r.init, `model ${(r.init && r.init.model) || '(cli default, unspecified — as always)'}`);
+  } catch (e) {
+    gate('7c disposable launch override: omitted launch is byte-identical to legacy', false, e.message);
+  }
+
   host.disposeAll();
 
   // -- verdict --

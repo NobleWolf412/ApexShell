@@ -29,6 +29,18 @@ const { backfill } = require('./transcripts');
 let nextId = 1;
 let nextDisposableId = 1;
 
+// Disposable launch override (App Builder slice 5): a caller may pass
+// `launch: { model, effort }` to steer a disposable's Claude tier without
+// touching the persona/audit call sites that already pass flat model/effort
+// (main/audit.js's haiku pass predates this and must keep working unchanged).
+// `model` is validated against the Claude-lane tiers ONLY — codex/qwen/agy are
+// lanes the disposable primitive never spawns (it always calls claudeSeat's
+// startSeat below), so an out-of-set value is a caller bug, rejected here with
+// a clean thrown Error (every current call site already try/catches
+// createDisposable/startDisposable) rather than reaching the CLI as a bad
+// --model flag.
+const CLAUDE_MODEL_TIERS = new Set(['fable', 'opus', 'sonnet', 'haiku']);
+
 // Context windows learned from live results (modelUsage.contextWindow), keyed
 // by full model name. Transcripts carry per-message usage but NOT the window —
 // this map lets a resumed chat's meter show a ceiling immediately. Wire-truth
@@ -264,8 +276,20 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
   // Hidden, tool-disabled Claude session for bounded extension workflows such
   // as Persona Builder behavior tests. It never joins the roster or history,
   // and Claude is launched with session persistence disabled.
-  function createDisposable({ kickoff, model, effort, onEvent }) {
+  function createDisposable({ kickoff, model, effort, launch, onEvent }) {
     if (typeof onEvent !== 'function') throw new Error('Disposable seat requires an event sink.');
+    // `launch` (if given) wins over flat model/effort — the flat params stay
+    // for the pre-existing call sites (audit.js) so omitting `launch` entirely
+    // is byte-identical to today. Either path funnels through the same gate.
+    const resolvedModel = (launch && launch.model !== undefined) ? launch.model : model;
+    const resolvedEffort = (launch && launch.effort !== undefined) ? launch.effort : effort;
+    if (resolvedModel !== undefined && !CLAUDE_MODEL_TIERS.has(resolvedModel)) {
+      throw new Error(
+        `Disposable launch override rejected: "${resolvedModel}" is not a Claude-lane ` +
+        'tier (fable | opus | sonnet | haiku) — codex/qwen/agy lanes cannot back a disposable.');
+    }
+    model = resolvedModel;
+    effort = resolvedEffort;
     const label = 'disposable-' + nextDisposableId++;
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-disposable-'));
     let closed = false;
