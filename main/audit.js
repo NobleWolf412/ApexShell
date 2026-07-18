@@ -176,7 +176,10 @@ function scheduleAudit(id, w) {
 
 function runAudit(id) {
   const w = watched.get(id);
-  if (!w || w.running || !w.turns.length) return;
+  if (!w || !w.turns.length) return;
+  // a turn that completes while a pass is in flight must not be dropped — mark
+  // it pending; finish() reschedules so the seat is re-reviewed (audit M6).
+  if (w.running) { w.pending = true; return; }
   // suppress on chain steps — the Task Board chain has its own audit gate, no
   // point double-billing the same work.
   if (isChainSeat(id)) {
@@ -200,6 +203,8 @@ function runAudit(id) {
     w.controller = null;
     bus.post('auditFindings', { id, findings: findings || [], error: error || null,
       count: w.count, estTokens: w.estTokens });
+    // a turn arrived mid-pass — review it now that we're free (audit M6)
+    if (w.pending && watched.has(id)) { w.pending = false; scheduleAudit(id, w); }
     // ceiling: auto-stop this watch once it crosses the configured budget
     if (cfg.autoOff && w.estTokens >= cfg.budget && watched.has(id)) {
       stopWatch(id, 'ceiling');
