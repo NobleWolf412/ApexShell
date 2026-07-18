@@ -263,8 +263,11 @@ pane) + `main/engine/handoff.js` (pure packet contract).
 ## Verification duties (inherited by anyone who edits)
 
 - ANY main/renderer logic change → `npm test` — the full hermetic drill suite
-  (taskboard, audit, skills, persona ×5, linkify; zero LLM spend) must pass
-  whole.
+  (zero LLM spend) must pass whole. It runs two targets (audit M7): `test:core`
+  (launch-args, taskboard, audit, skills, linkify — the Law-3-pure subset that
+  needs NO `extensions/`, so it proves the core in isolation) and `test:persona`
+  (the personas EXTENSION's own drills). Keep new core drills in `test:core`;
+  extension drills belong to their extension's target.
 - Engine or lane change → `npm run test:live` — the gates that spend real
   sessions (engine-harness on the Claude lane, codex-drill, pty-drill).
 - Full-stack proofs on demand: park the electron launcher stub
