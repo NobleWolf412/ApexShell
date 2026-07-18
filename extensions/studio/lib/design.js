@@ -319,6 +319,10 @@ function validateTokens(value) {
   return problems;
 }
 
+// The constants export wholesale as the module's public contract (the
+// suggest.js precedent). The drill pins the two warning STRINGS verbatim on
+// purpose — importing them there would let a wording drift pass the gate —
+// so their exports exist for consumers, not for the drill.
 module.exports = {
   ABSENT_LOOK_WARNING,
   UNPARSED_LOOK_WARNING,

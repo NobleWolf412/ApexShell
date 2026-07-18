@@ -657,6 +657,14 @@ function deleteDraftMockups(stateDir, draftId) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+// The cap/type constants export wholesale as the module's public contract
+// (the suggest.js precedent): drills and the drafts.js/renderer mirrors pin
+// what they need, and the rest stay so a future consumer imports rather than
+// re-invents a number. MAX_SCREENS in particular is enforced nowhere in this
+// module — its one living enforcement is drafts.validateMockupApproval's
+// mirrored 24 (require-cycle, same one-way mirror as APPROVAL_SCREEN_RE).
+// mockupsRoot/readProvenance are internal-only since Sweep A6 (nothing
+// outside called them; listMockups/collectApprovedMockups carry their data).
 module.exports = {
   MAX_MOCKUP_BYTES,
   MAX_SCREENS,
@@ -680,10 +688,8 @@ module.exports = {
   buildPrompt,
   checkSelfContained,
   parseLlmReply,
-  mockupsRoot,
   draftMockupsDir,
   writeMockup,
-  readProvenance,
   isMockupStale,
   listMockups,
   isApprovalCurrent,

@@ -145,6 +145,8 @@ function validateMockupApproval(value) {
   if (value === null || value === undefined) return;
   if (typeof value !== 'object' || Array.isArray(value))
     throw new Error('Draft mockup approval is invalid.');
+  // 24 == mockup.MAX_SCREENS, 48 == mockup.MAX_SCREEN_ID — the same one-way
+  // mirror as APPROVAL_SCREEN_RE above (mockup.js requires this module).
   if (!Array.isArray(value.screens) || !value.screens.length || value.screens.length > 24 ||
       value.screens.some((id) => typeof id !== 'string' || id.length > 48 || !APPROVAL_SCREEN_RE.test(id)) ||
       new Set(value.screens).size !== value.screens.length)
