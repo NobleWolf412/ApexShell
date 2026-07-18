@@ -50,7 +50,7 @@
 /* ---- PROJECTS builder: the guided interview (slice 3). Scoped to the projects
    view so nothing leaks into the re-homed persona pane. Uses shell.css tokens
    (surface / edge / accent / dim / faint / text / good / warning). ---- */
-.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; }
+.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; position: relative; }
 .studioView[data-builder="projects"] .pjRail { width: 200px; flex: none;
   border-right: 1px solid var(--edge); padding: 16px 0; }
 .studioView[data-builder="projects"] .pjStep { display: block; width: 100%;
@@ -197,3 +197,52 @@
 .studioView[data-builder="projects"] .pjFinding[data-sev="error"] { color: var(--warning); }
 .studioView[data-builder="projects"] .pjFinding[data-sev="warning"] { color: var(--text); }
 .studioView[data-builder="projects"] .pjFinding[data-sev="suggestion"] { color: var(--faint); }
+
+/* ---- the co-designer panel (slice 7) ---- */
+.studioView[data-builder="projects"] .pjCoLauncher { position: absolute; right: 18px; bottom: 18px; z-index: 2; }
+.studioView[data-builder="projects"] .pjCoLauncher[hidden] { display: none; }
+
+.studioView[data-builder="projects"] .pjCoPanel { width: 320px; flex: none;
+  border-left: 1px solid var(--edge); background: var(--surface);
+  display: flex; flex-direction: column; min-height: 0; }
+.studioView[data-builder="projects"] .pjCoPanel[hidden] { display: none; }
+.studioView[data-builder="projects"] .pjCoHead { flex: none; display: flex; align-items: center;
+  gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--edge); }
+.studioView[data-builder="projects"] .pjCoTitle { color: var(--accent); font-size: 10.5px;
+  font-weight: 700; letter-spacing: .22em; }
+.studioView[data-builder="projects"] .pjCoSub { flex: 1; text-align: right; color: var(--dim);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+.studioView[data-builder="projects"] .pjCoLog { flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.studioView[data-builder="projects"] .pjCoMsg { font-size: 12px; line-height: 1.5;
+  padding: 9px 12px; border-radius: 10px; max-width: 92%; white-space: pre-wrap;
+  overflow-wrap: anywhere; }
+.studioView[data-builder="projects"] .pjCoMsgUser { align-self: flex-end; color: var(--text);
+  background: var(--bg); border: 1px solid var(--edge); }
+.studioView[data-builder="projects"] .pjCoMsgAi { align-self: flex-start; color: var(--text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
+.studioView[data-builder="projects"] .pjCoErr { flex: none; margin: 0 12px 10px; padding: 8px 10px;
+  color: var(--warning); font-size: 11.5px; line-height: 1.5; border: 1px solid var(--warning);
+  border-radius: 8px; background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.studioView[data-builder="projects"] .pjCoErr[hidden] { display: none; }
+.studioView[data-builder="projects"] .pjCoInputRow { flex: none; display: flex; gap: 8px;
+  padding: 10px; border-top: 1px solid var(--edge); }
+.studioView[data-builder="projects"] .pjCoInput { flex: 1; min-width: 0; padding: 8px 10px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--bg); color: var(--text);
+  font-size: 12px; }
+.studioView[data-builder="projects"] .pjCoInput:focus { outline: none; border-color: var(--accent); }
+.studioView[data-builder="projects"] .pjCoInput:disabled { opacity: .5; }
+
+/* patches proposed by the co-designer, pinned ON their target card — the
+   draft is never touched until an explicit ACCEPT click here. */
+.studioView[data-builder="projects"] .pjCoPatches { margin-top: 14px; }
+.studioView[data-builder="projects"] .pjPatch { border: 1px solid var(--accent); border-radius: 10px;
+  padding: 12px 14px; margin-top: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.studioView[data-builder="projects"] .pjPatchWho { color: var(--accent); font-size: 9px;
+  font-weight: 700; letter-spacing: .18em; margin-bottom: 6px; }
+.studioView[data-builder="projects"] .pjPatchText { color: var(--text); font-size: 12.5px;
+  line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.studioView[data-builder="projects"] .pjPatchWhy { color: var(--dim); font-size: 11px;
+  line-height: 1.5; margin-top: 6px; }

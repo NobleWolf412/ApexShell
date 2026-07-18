@@ -20,6 +20,7 @@ const render = require('./lib/render');
 const blueprint = require('./lib/blueprint');
 const modelPicker = require('./lib/modelPicker');
 const suggest = require('./lib/suggest');
+const codesigner = require('./lib/codesigner');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -510,6 +511,148 @@ function register(ctx) {
     try { seat.controller.close(); } catch { /* already gone */ }
     ctx.bus.post('projectsCardSuggestStatus', { phase: 'stopped' });
   });
+
+  // ---- the co-designer panel (slice 7, § AI integration Level 2) ----------
+  // ONE long-lived disposable controller per open panel session — NOT a fresh
+  // one per turn. `codesignerOpen` starts it (its kickoff already sends turn
+  // one, exactly like createDisposable's own kickoff-on-construct contract);
+  // `codesignerSend` reuses the SAME controller.send() for every later turn;
+  // `codesignerClose` (explicit, or an implicit re-open) tears it down. A
+  // closed panel is a closed seat: reopening always starts fresh from a fresh
+  // digest, never resuming — mirrors the relationship pass's backstop
+  // discipline of "a stuck seat can always be killed," just without a timer,
+  // because a chat panel has no natural end-of-turn to time out against.
+  const CODESIGNER_BACKSTOP_MS = 10 * 60 * 1000; // generous — a live chat, not one turn
+  let activeCodesigner = null; // { controller, draftId, backstop, seq, patches: [] }
+
+  const closeCodesigner = (phase, error) => {
+    if (!activeCodesigner) return;
+    const session = activeCodesigner;
+    activeCodesigner = null;
+    clearTimeout(session.backstop);
+    try { session.controller.close(); } catch { /* already gone */ }
+    ctx.bus.post('codesignerStatus', { phase, draftId: session.draftId, error: error || null });
+  };
+
+  ctx.bus.on('codesignerOpen', (message) => {
+    // Opening always replaces any previous session — "closed panel = closed
+    // seat; reopening starts fresh" holds whether the old panel was closed
+    // explicitly or the user just re-opened over it.
+    closeCodesigner('closed', null);
+    try {
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+      const draft = currentWorkspaceDraft(message && message.id);
+      const kickoff = codesigner.buildKickoff(draft, CARDS);
+
+      // Slice 5's launch override, same passthrough as the suggest pass:
+      // omitted entirely when the STUDIO picker holds no pick.
+      const pick = modelPicker.readModelPick(ctx.stateDir);
+      const launch = (pick.model || pick.effort)
+        ? { model: pick.model || undefined, effort: pick.effort || undefined }
+        : null;
+
+      const session = { draftId: draft.id, finalText: '', seq: 0, patches: [], backstop: null };
+      const controller = ctx.seats.startDisposable({
+        kickoff,
+        ...(launch ? { launch } : {}),
+        onEvent: (event) => {
+          if (activeCodesigner !== session) return;
+          if (event.type === 'delta') {
+            ctx.bus.post('codesignerDelta', { draftId: session.draftId, text: event.text || '' });
+          } else if (event.type === 'text') {
+            session.finalText += (session.finalText ? '\n\n' : '') + (event.text || '');
+          } else if (event.type === 'result') {
+            if (!event.ok) {
+              ctx.bus.post('codesignerMessage', { draftId: session.draftId, role: 'assistant', text: '', error: 'the co-designer turn failed' });
+              return;
+            }
+            const parsed = codesigner.parsePatchReply(session.finalText);
+            const withIds = parsed.patches.map((p) => ({ id: 'p' + (++session.seq), ...p }));
+            session.patches.push(...withIds);
+            ctx.bus.post('codesignerMessage', {
+              draftId: session.draftId, role: 'assistant', text: session.finalText, error: null,
+            });
+            if (withIds.length)
+              ctx.bus.post('codesignerPatches', { draftId: session.draftId, patches: session.patches.slice() });
+            session.finalText = '';
+          } else if (event.type === 'dead') {
+            closeCodesigner('error', 'the co-designer seat exited unexpectedly');
+          }
+        },
+      });
+      session.controller = controller;
+      session.backstop = setTimeout(
+        () => closeCodesigner('error', 'the co-designer session timed out'),
+        CODESIGNER_BACKSTOP_MS
+      );
+      activeCodesigner = session;
+      ctx.bus.post('codesignerStatus', { phase: 'open', draftId: draft.id, error: null });
+    } catch (err) {
+      ctx.bus.post('codesignerStatus', { phase: 'error', draftId: message && message.id, error: err.message });
+    }
+  });
+
+  ctx.bus.on('codesignerSend', (message) => {
+    try {
+      if (!activeCodesigner || !message || activeCodesigner.draftId !== message.id)
+        throw new Error('Open the co-designer panel before sending a turn.');
+      const text = String((message && message.text) || '').trim();
+      if (!text) throw new Error('Nothing to send.');
+      // Re-read the draft so the digest reflects whatever the user just did to
+      // a card, INCLUDING a patch accepted moments ago — the co-designer always
+      // argues from the current draft, never a memorized snapshot of it.
+      const draft = currentWorkspaceDraft(activeCodesigner.draftId);
+      const turn = codesigner.buildTurn(text, draft, CARDS);
+      activeCodesigner.controller.send(turn);   // the SAME controller — no new disposable
+      ctx.bus.post('codesignerStatus', { phase: 'sending', draftId: draft.id, error: null });
+    } catch (err) {
+      ctx.bus.post('codesignerStatus', { phase: 'error', draftId: message && message.id, error: err.message });
+    }
+  });
+
+  ctx.bus.on('codesignerClose', (message) => {
+    if (activeCodesigner && (!message || activeCodesigner.draftId === message.id))
+      closeCodesigner('closed', null);
+  });
+
+  // Accept/reject never touch the seat — they mutate the DRAFT (like every
+  // other draft edit, through the same revision gate) and then drop the patch
+  // from the pending list. The AI never writes the blueprint; this is the only
+  // path that does, and it only runs on an explicit user click.
+  ctx.bus.on('codesignerPatchAccept', (message) => {
+    try {
+      if (!activeCodesigner || !message || activeCodesigner.draftId !== message.id)
+        throw new Error('That co-designer session is no longer open.');
+      const idx = activeCodesigner.patches.findIndex((p) => p.id === (message && message.patchId));
+      if (idx < 0) throw new Error('That patch is no longer pending.');
+      const patch = activeCodesigner.patches[idx];
+      const draft = currentWorkspaceDraft(activeCodesigner.draftId);
+      const current = draft.answers[patch.card] || '';
+      const updatedAnswer = (current.trim() ? current + '\n' : '') + '• ' + patch.proposal;
+      const updated = drafts.updateDraft(ctx.stateDir, draft.id, message.expectedRevision, {
+        answers: { [patch.card]: updatedAnswer },
+      });
+      activeCodesigner.patches.splice(idx, 1);
+      // A dedicated post, NOT postDraftStatus/projectsDraftStatus: that handler
+      // also drives step navigation (jumps to draft.currentCard), which would
+      // yank the user away from wherever they are reading the co-designer
+      // panel just because a patch on some OTHER card was accepted. This just
+      // refreshes the draft in place.
+      ctx.bus.post('projectsDraftPatched', { draft: updated, cards: CARDS });
+      ctx.bus.post('codesignerPatches', { draftId: updated.id, patches: activeCodesigner.patches.slice() });
+    } catch (err) {
+      ctx.bus.post('toast', { text: 'Patch was not accepted: ' + err.message });
+    }
+  });
+
+  ctx.bus.on('codesignerPatchReject', (message) => {
+    if (!activeCodesigner || !message || activeCodesigner.draftId !== message.id) return;
+    const idx = activeCodesigner.patches.findIndex((p) => p.id === (message && message.patchId));
+    if (idx < 0) return;
+    activeCodesigner.patches.splice(idx, 1);
+    ctx.bus.post('codesignerPatches', { draftId: activeCodesigner.draftId, patches: activeCodesigner.patches.slice() });
+  });
 }
 
 module.exports = {
@@ -523,3 +666,4 @@ module.exports = {
 
 module.exports.modelPicker = modelPicker;
 module.exports.suggest = suggest;
+module.exports.codesigner = codesigner;

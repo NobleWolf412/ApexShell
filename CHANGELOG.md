@@ -131,6 +131,52 @@
   passthrough) chained into `test:studio`; zero LLM spend. Renderer edits
   apply on Reload; the `main.js`/`contract.js` changes need Update & restart.
   (App Builder v1, slice 6 of 9.)
+- **App Builder co-designer** (`extensions/studio/`): the PROJECTS builder gains
+  a persistent side-panel chat riding **ONE long-lived disposable controller**
+  per open panel session — not a fresh one per turn. `codesignerOpen` starts it
+  (its kickoff turn fires the same way `createDisposable`'s own kickoff-on-
+  construct already does); every later `codesignerSend` reuses that SAME
+  controller's `.send()`, streamed live back to the panel via `codesignerDelta`
+  (running text) and finalized on `codesignerMessage`. **Closed panel = closed
+  seat**: `codesignerClose` (explicit, or an implicit re-open) always tears the
+  controller down, and reopening starts a **fresh** controller from a fresh
+  digest — no session resumption, no leftover state. Each turn — including the
+  kickoff — is prefixed with a compact **blueprint digest** (new
+  `lib/codesigner.js`'s `buildDigest`: structured per-card status —
+  answered/thin/empty plus char count, never the free-text answers themselves
+  and never the running conversation) so the co-designer always argues from the
+  draft as it stands *right now*, including a card the user just edited or a
+  patch just accepted. A reply may end with one fenced ` ```apex-studio ` JSON
+  block proposing up to `MAX_PATCHES` (4) card patches; the parser
+  (`extractPatchBlock`/`validatePatches`/`parsePatchReply`) mirrors
+  `main/engine/handoff.js`'s untrusted-packet discipline exactly — strict
+  allowlist (only the six interview card keys; the v1 draft schema has exactly
+  one free-text field per card, so `field` allowlists to `"answer"` alone),
+  bounded array (a 5th+ patch is **trimmed**, not grounds to drop the whole
+  block — the same choice `handoff.js` makes for its own `MAX_ARTIFACTS` and
+  `suggest.js` makes for `MAX_SUGGESTIONS`), capped strings (`PROPOSAL_CAP` 800 /
+  `WHY_CAP` 300, trimmed not rejected), and drop-not-throw on anything else
+  (wrong types, nested junk, unknown fields, non-JSON, missing block, empty
+  reply — all fail closed to an empty patch list). Patches render as
+  **accept/reject chips ON their target card** (`renderCoPatchBlock`/
+  `wireCoPatchesForCard` in `renderer.js`) — the AI never writes the blueprint;
+  only an explicit **ACCEPT** click (`codesignerPatchAccept`) appends the
+  proposal into that card's answer through the normal revision-gated
+  `drafts.updateDraft`, posted back via a dedicated `projectsDraftPatched`
+  event that refreshes the draft **without** the step-navigation side effect
+  `projectsDraftStatus` carries (accepting a patch on a card you're not looking
+  at must not yank you there). Uses slice 5's launch override exactly like
+  slice 6: `launch: { model, effort }` from `modelPicker.readModelPick`, omitted
+  entirely when unset. New `test/studio-codesigner-drill.js` — the patch-block
+  contract (valid/unknown-card/5+-trim/oversize-cap/nested-junk/non-JSON-empty-
+  missing-block, all as discrete named checks), the digest composer (proves it
+  is structured card-state, not a transcript or the raw answer text), and the
+  controller lifecycle (open starts exactly one `startDisposable` call, three
+  sends reuse that one controller, close closes it and rejects a further send,
+  reopen starts a distinct controller and closes the old one, accept/reject
+  wiring) — driven through a stubbed `ctx.seats.startDisposable`, zero LLM
+  spend, chained into `test:studio`. Renderer edits apply on Reload; the
+  `main.js` change needs Update & restart. (App Builder v1, slice 7 of 9.)
 
 ## 0.2.0 — 2026-07-17
 

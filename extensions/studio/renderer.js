@@ -150,11 +150,39 @@ function mountProjects(el, hasBus) {
     '<div class="pjRoot">' +
       '<div class="pjRail" role="tablist"></div>' +
       '<div class="pjMain"></div>' +
+      '<div class="pjCoLauncher" hidden>' +
+        '<button type="button" class="pjBtn primary pjCoOpenBtn" title="A persistent chat, seated on the STUDIO model picker\'s choice, that argues from your current draft. Patches it proposes land as accept/reject chips on the card — it never writes the blueprint itself.">CO-DESIGNER</button>' +
+      '</div>' +
+      '<div class="pjCoPanel" hidden>' +
+        '<div class="pjCoHead">' +
+          '<span class="pjCoTitle">CO-DESIGNER</span>' +
+          '<span class="pjCoSub"></span>' +
+          '<button type="button" class="pjBtn pjCoCloseBtn">CLOSE</button>' +
+        '</div>' +
+        '<div class="pjCoLog"></div>' +
+        '<div class="pjCoErr" hidden></div>' +
+        '<div class="pjCoInputRow">' +
+          '<input type="text" class="pjCoInput" maxlength="4000" placeholder="Argue with it…" />' +
+          '<button type="button" class="pjBtn primary pjCoSendBtn">SEND</button>' +
+        '</div>' +
+      '</div>' +
     '</div>';
   if (!hasBus) return;   // headless shell drill: skeleton only, no bus, no wiring
 
   const rail = el.querySelector('.pjRail');
   const main = el.querySelector('.pjMain');
+  // ---- co-designer panel DOM (slice 7) — a fixed sibling of pjRail/pjMain, so
+  // its own render() calls never get wiped out by a card/review/canonical
+  // repaint of .pjMain.
+  const coLauncher = el.querySelector('.pjCoLauncher');
+  const coOpenBtn = el.querySelector('.pjCoOpenBtn');
+  const coPanel = el.querySelector('.pjCoPanel');
+  const coHeadSub = el.querySelector('.pjCoSub');
+  const coLog = el.querySelector('.pjCoLog');
+  const coErr = el.querySelector('.pjCoErr');
+  const coInput = el.querySelector('.pjCoInput');
+  const coSendBtn = el.querySelector('.pjCoSendBtn');
+  const coCloseBtn = el.querySelector('.pjCoCloseBtn');
 
   const escapeHtml = (s) => String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -184,6 +212,16 @@ function mountProjects(el, hasBus) {
     // Keyed to a single card at a time; switching cards drops any stale
     // prepared/result state rather than carrying it to the wrong question.
     suggest: { card: null, prepared: null, busy: false, phase: null, result: null },
+    // ---- slice 7: the co-designer panel (one long-lived controller per open) ----
+    codesigner: {
+      open: false,
+      busy: false,       // a turn is in flight (open's first turn, or a send)
+      log: [],           // [{ role: 'user'|'assistant', text }] — this session only
+      streaming: '',     // in-flight assistant text (deltas accumulate here)
+      streamingIndex: -1,// index into log of the bubble currently streaming
+      patches: [],       // [{ id, card, field, proposal, why }] — pending chips
+      error: null,
+    },
   };
 
   // The six canonical sections — key + default heading — mirrored from
@@ -279,6 +317,7 @@ function mountProjects(el, hasBus) {
   // ---- render -------------------------------------------------------------
   function render() {
     renderRail();
+    coUpdateVisibility();
     if (state.step === 'ws') return renderWs();
     if (state.step === 'start') return renderStart();
     if (state.step === 'review') return renderReview();
@@ -494,6 +533,132 @@ function mountProjects(el, hasBus) {
     }
   }
 
+  // ---- co-designer patch chips ON the target card (slice 7) --------------
+  // A patch never touches the card until the user clicks ACCEPT here — the
+  // draft is untouched by the mere existence of a chip.
+  function renderCoPatchBlock(card) {
+    const patches = state.codesigner.patches.filter((p) => p.card === card.key);
+    if (!patches.length) return '';
+    return '<div class="pjCoPatches">' + patches.map((p) =>
+      '<div class="pjPatch" data-patch-id="' + escapeHtml(p.id) + '">' +
+        '<div class="pjPatchWho">CO-DESIGNER PROPOSES</div>' +
+        '<div class="pjPatchText">' + escapeHtml(p.proposal) + '</div>' +
+        (p.why ? '<div class="pjPatchWhy">why: ' + escapeHtml(p.why) + '</div>' : '') +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn primary pjPatchAccept" data-patch-id="' + escapeHtml(p.id) + '">ACCEPT INTO CARD</button>' +
+          '<button type="button" class="pjBtn pjPatchReject" data-patch-id="' + escapeHtml(p.id) + '">REJECT</button>' +
+        '</div>' +
+      '</div>').join('') + '</div>';
+  }
+
+  function wireCoPatchesForCard() {
+    for (const btn of main.querySelectorAll('.pjPatchAccept')) {
+      btn.addEventListener('click', () => {
+        if (!state.draft || btn.disabled) return;
+        btn.disabled = true;
+        ApexBus.post('codesignerPatchAccept', {
+          id: state.draft.id, patchId: btn.dataset.patchId, expectedRevision: state.draft.revision,
+        });
+      });
+    }
+    for (const btn of main.querySelectorAll('.pjPatchReject')) {
+      btn.addEventListener('click', () => {
+        if (!state.draft || btn.disabled) return;
+        btn.disabled = true;
+        ApexBus.post('codesignerPatchReject', { id: state.draft.id, patchId: btn.dataset.patchId });
+      });
+    }
+  }
+
+  // ---- the co-designer panel itself (slice 7) -----------------------------
+  // ONE session at a time, riding ONE long-lived controller (main.js). Opening
+  // always starts fresh (empty log/patches); closing tears the seat down and
+  // clears local state too, so a reopen never shows a stale conversation.
+  function coUpdateVisibility() {
+    const hasDraft = Boolean(state.draft);
+    coLauncher.hidden = !hasDraft || state.codesigner.open;
+    coPanel.hidden = !state.codesigner.open;
+  }
+
+  function coUpdateControls() {
+    const cs = state.codesigner;
+    const canSend = cs.open && cs.controllerActive && !cs.busy;
+    coInput.disabled = !canSend;
+    coSendBtn.disabled = !canSend;
+    coHeadSub.textContent = cs.busy ? 'thinking…' : (cs.controllerActive ? 'live' : 'not connected');
+  }
+
+  function coRenderLog() {
+    const cs = state.codesigner;
+    coLog.innerHTML = cs.log.map((m, i) => {
+      const text = (i === cs.streamingIndex) ? (m.text + cs.streaming) : m.text;
+      const cls = m.role === 'user' ? 'pjCoMsgUser' : 'pjCoMsgAi';
+      return '<div class="pjCoMsg ' + cls + '">' + (escapeHtml(text) || '&hellip;') + '</div>';
+    }).join('');
+    coLog.scrollTop = coLog.scrollHeight;
+  }
+
+  function coShowError(message) {
+    const cs = state.codesigner;
+    cs.error = message || null;
+    coErr.hidden = !cs.error;
+    coErr.textContent = cs.error || '';
+  }
+
+  function coReset() {
+    state.codesigner = {
+      open: false, busy: false, controllerActive: false,
+      log: [], streaming: '', streamingIndex: -1, patches: [], error: null,
+    };
+    coErr.hidden = true;
+    coLog.innerHTML = '';
+  }
+  coReset();
+
+  coOpenBtn.addEventListener('click', () => {
+    if (!state.draft || state.codesigner.open) return;
+    coReset();
+    const cs = state.codesigner;
+    cs.open = true;
+    cs.busy = true;   // opening already sends the kickoff turn
+    // seed the assistant's first (streaming) bubble now, so the panel never
+    // looks empty while the disposable's opening turn is still in flight
+    cs.log.push({ role: 'assistant', text: '' });
+    cs.streamingIndex = 0;
+    coUpdateVisibility();
+    coUpdateControls();
+    coRenderLog();
+    ApexBus.post('codesignerOpen', { id: state.draft.id });
+  });
+
+  coCloseBtn.addEventListener('click', () => {
+    if (!state.draft) return;
+    ApexBus.post('codesignerClose', { id: state.draft.id });
+    coReset();
+    coUpdateVisibility();
+    coUpdateControls();
+    if (isCardStep(state.step)) renderCard(findCard(state.step));   // drop any chips
+  });
+
+  function coSend() {
+    const cs = state.codesigner;
+    if (!state.draft || !cs.open || !cs.controllerActive || cs.busy) return;
+    const text = coInput.value.trim();
+    if (!text) return;
+    coInput.value = '';
+    cs.log.push({ role: 'user', text });
+    cs.log.push({ role: 'assistant', text: '' });
+    cs.streamingIndex = cs.log.length - 1;
+    cs.streaming = '';
+    cs.busy = true;
+    coShowError(null);
+    coUpdateControls();
+    coRenderLog();
+    ApexBus.post('codesignerSend', { id: state.draft.id, text });
+  }
+  coSendBtn.addEventListener('click', coSend);
+  coInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') coSend(); });
+
   function renderCard(card) {
     if (!card) { state.step = 'start'; return renderStart(); }
     const idx = cardIndex(card.key);
@@ -514,6 +679,7 @@ function mountProjects(el, hasBus) {
         '</div>' +
         '<div class="pjHelp" ' + (state.helpOpen ? '' : 'hidden') + '></div>' +
         renderAiSuggestBlock(card) +
+        renderCoPatchBlock(card) +
         '<div class="pjBtnRow">' +
           (idx > 0 ? '<button type="button" class="pjBtn pjBack">← BACK</button>' : '') +
           '<button type="button" class="pjBtn primary pjNext">' +
@@ -539,6 +705,7 @@ function mountProjects(el, hasBus) {
     }
 
     wireAiSuggestBlock(card);
+    wireCoPatchesForCard(card);
 
     const help = main.querySelector('.pjHelp');
     const renderHelp = () => {
@@ -880,6 +1047,64 @@ function mountProjects(el, hasBus) {
     const card = m.card;
     state.suggest = { card, prepared: null, busy: false, phase: m.error ? 'error' : 'done', result: m };
     if (state.step === card) renderCard(findCard(card));
+  });
+
+  // ---- slice 7: the co-designer panel ---------------------------------------
+  // A dedicated draft refresh that does NOT drive step navigation (unlike
+  // projectsDraftStatus) — accepting a patch on a card the user isn't even
+  // looking at must not yank them there.
+  ApexBus.on('projectsDraftPatched', (m) => {
+    if (!state.draft || !m.draft || m.draft.id !== state.draft.id) return;
+    state.draft = m.draft;
+    if (m.cards) state.cards = m.cards;
+    if (isCardStep(state.step)) renderCard(findCard(state.step));
+  });
+
+  ApexBus.on('codesignerStatus', (m) => {
+    if (!state.draft || m.draftId !== state.draft.id) return;
+    const cs = state.codesigner;
+    if (m.phase === 'open') {
+      cs.controllerActive = true;
+      cs.busy = true;
+      coShowError(null);
+    } else if (m.phase === 'sending') {
+      // already reflected client-side the instant SEND was clicked
+    } else if (m.phase === 'closed') {
+      cs.controllerActive = false;
+      cs.busy = false;
+    } else if (m.phase === 'error') {
+      cs.controllerActive = false;
+      cs.busy = false;
+      coShowError(m.error || 'the co-designer session ended unexpectedly');
+    }
+    coUpdateControls();
+  });
+
+  ApexBus.on('codesignerDelta', (m) => {
+    if (!state.draft || m.draftId !== state.draft.id) return;
+    const cs = state.codesigner;
+    if (!cs.open || cs.streamingIndex < 0) return;
+    cs.streaming += m.text || '';
+    coRenderLog();
+  });
+
+  ApexBus.on('codesignerMessage', (m) => {
+    if (!state.draft || m.draftId !== state.draft.id) return;
+    const cs = state.codesigner;
+    if (cs.streamingIndex >= 0 && cs.log[cs.streamingIndex])
+      cs.log[cs.streamingIndex].text = (m.text || cs.streaming || '').trim() || '(no reply)';
+    cs.streaming = '';
+    cs.streamingIndex = -1;
+    cs.busy = false;
+    if (m.error) coShowError(m.error);
+    coUpdateControls();
+    coRenderLog();
+  });
+
+  ApexBus.on('codesignerPatches', (m) => {
+    if (!state.draft || m.draftId !== state.draft.id) return;
+    state.codesigner.patches = m.patches || [];
+    if (isCardStep(state.step)) renderCard(findCard(state.step));
   });
 
   render();

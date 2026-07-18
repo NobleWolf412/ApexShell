@@ -11,7 +11,7 @@
     "test:live": "node test/engine-harness.js && node test/codex-drill.js && node test/pty-drill.js",
     "test:persona-fixtures": "node test/persona-apex-fixtures.js",
     "test:core": "node test/launch-args-drill.js && node test/taskboard-drill.js && node test/audit-drill.js && node test/skills-drill.js && node test/linkify-drill.js",
-    "test:studio": "node test/studio-drill.js && node test/studio-lib-drill.js && node test/studio-drafts-drill.js && node test/studio-review-drill.js && node test/studio-model-picker-drill.js && node test/studio-suggest-drill.js",
+    "test:studio": "node test/studio-drill.js && node test/studio-lib-drill.js && node test/studio-drafts-drill.js && node test/studio-review-drill.js && node test/studio-model-picker-drill.js && node test/studio-suggest-drill.js && node test/studio-codesigner-drill.js",
     "test:persona": "node test/persona-contract.js && node test/persona-extension.js && node test/persona-manage-drill.js && node test/persona-import-drill.js && node test/persona-relationships-drill.js"
   },
   "devDependencies": {
