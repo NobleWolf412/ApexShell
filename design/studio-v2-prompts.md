@@ -423,3 +423,34 @@ honestly, malformed spine = present-but-unusable line, truncation order +
 marker), CHANGELOG.md. Only extensions/studio/main.js, lib/liftoff.js,
 the liftoff drill, package.json if needed, CHANGELOG — nothing else.
 ```
+
+## Slice D2 — the ARCHITECTURE step (main tree)
+
+```
+Read design/studio-v2.md (§ Wave D — the X-ray) and D1's shipped contract
+(extensions/studio/lib/xray.js + test/studio-xray-drill.js). Implement
+SLICE D2 ONLY: the ARCHITECTURE step in the PROJECTS stepper (between SEE
+and Create — argue placement if the flow reads better elsewhere). The step
+shows the project's diagram: the D1 FALLBACK (deriveFallbackDiagram, free,
+always available, badged 'derived from your architecture card') renders
+immediately; an opt-in AI pass (the A3 prepare/approve/TTL/backstop
+machinery verbatim, one disposable turn on the model picker via
+launch:{model,effort}, prompt = D1's buildDiagramPrompt) upgrades it,
+badged 'AI-drawn' with provenance + the stale rule (canonical moves →
+STALE badge + regenerate, never silent). RENDERING (the argued decision):
+NO external mermaid library, NO new deps — render the validated mermaid
+source yourself: parse the D1-allowlisted subset (you may extend xray.js
+with a parseValidated() returning {nodes, edges, subgraphs} — the grammar
+is already line-anchored, parsing it is mechanical) and lay it out as
+plain HTML/CSS boxes and SVG arrows in a simple layered layout (tiers by
+edge direction — the fallback's own tier structure makes this natural;
+imperfect layout for exotic AI output is acceptable and honest, note it
+in the UI as 'diagram view — layout is approximate'). Store the diagram
+source + provenance on the DRAFT (drafts.js validated field, the
+mockupApproval pattern); Create copies architecture.mmd + provenance into
+the package (atomic stage, the A4 mockups pattern). Done: npm test whole
+(extend studio-xray-drill.js: parseValidated on valid/fallback sources,
+layout-input shape; extend drafts/liftoff drills for the field + package
+copy), APEX_SMOKE=1 both variants exit 0, CHANGELOG.md. Extension code
+only — no main/, no engine. Update & restart applies — say so.
+```
