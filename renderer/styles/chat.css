@@ -97,6 +97,26 @@
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
   50%      { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 }
+/* soft hierarchy (design/consult-v1.md §Button row semantics): an active
+   board todo bound to this chat is the natural next step — Hand off → accents,
+   never disables. A steady dot, not the pulse: this is a standing state, not
+   a fresh moment like .ready. */
+#chatTabs #delegateBtn.linked { color: var(--text); border-color: var(--accent); }
+#chatTabs #delegateBtn.linked::before { content: '● '; color: var(--accent); font-size: 8px; }
+
+/* Consult → : the sibling that means the OPPOSITE of Hand off — nothing
+   leaves this chat. Deliberately plainer than Hand off (no accent border by
+   default) so the row itself teaches the split; .open marks a live consult. */
+#chatTabs #consultBtn {
+  margin-left: auto;
+  align-self: center;
+  border: 1px solid var(--edge); background: none; color: var(--dim);
+  font-size: 11px; padding: 3px 8px; border-radius: 4px;
+  cursor: pointer; white-space: nowrap; flex: none;
+}
+#chatTabs #consultBtn + #delegateBtn { margin-left: 6px; }
+#chatTabs #consultBtn:hover { color: var(--text); border-color: var(--accent); }
+#chatTabs #consultBtn.open { color: var(--text); border-color: var(--accent); }
 /* context meter — the divider above the input, colors only (numbers pinned in
    the ctxTop row above): fill = window used; accent → warning ≥65% → critical ≥85% */
 .ctxBar {
@@ -365,6 +385,109 @@
   font: inherit; font-size: 12px; outline: none; }
 .permCard .qother:focus { border-color: var(--accent); border-style: solid; }
 .permCard button.allow:disabled { opacity: .4; cursor: default; filter: none; }
+
+/* ---- Consult v1: picker popover (design/consult-v1.md) ---- */
+#consultMenu {
+  position: fixed;
+  z-index: 470;
+  width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.5);
+  padding: 8px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+#consultMenu[hidden] { display: none; }
+#consultMenu .rmHead { color: var(--faint); font-size: 10px; letter-spacing: .1em; padding: 0 2px; }
+#consultMenu .cmUsage { color: var(--faint); font-size: 10.5px; padding: 0 2px; }
+#consultMenu select.cmPersona {
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 4px 6px; font-size: 12px;
+}
+#consultMenu .cmDials { display: flex; gap: 6px; }
+#consultMenu .cmDials select {
+  flex: 1; min-width: 0;
+  background: var(--bg); color: var(--dim); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 3px 5px; font-size: 11px; cursor: pointer;
+}
+#consultMenu .cmDials select:hover { color: var(--text); }
+#consultMenu label.cmFresh { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; }
+#consultMenu label.cmFresh input { accent-color: var(--accent); cursor: pointer; }
+#consultMenu textarea.cmQuestion {
+  width: 100%; resize: vertical; box-sizing: border-box;
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 6px 8px; font: inherit; font-size: 12px; outline: none;
+}
+#consultMenu textarea.cmQuestion:focus { border-color: var(--accent); }
+#consultMenu .cmActions { display: flex; justify-content: flex-end; gap: 6px; }
+#consultMenu .cmActions button {
+  border: 1px solid var(--edge); background: none; color: var(--dim);
+  font-size: 11.5px; padding: 4px 12px; border-radius: 4px; cursor: pointer;
+}
+#consultMenu .cmActions button:first-child { border-color: var(--accent); color: var(--text); }
+#consultMenu .cmActions button:hover { filter: brightness(1.2); }
+
+/* ---- Consult v1: the card (auditor-card styling family — .auCard's rounded,
+   left-accented box — but in-flow inside the chat column, like .permCard) ---- */
+.consultCard {
+  flex: none;
+  width: min(860px, 100% - 28px);
+  margin: 0 auto;
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  padding: 9px 12px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.consultCard[hidden] { display: none; }
+.ccHead { display: flex; align-items: center; gap: 8px; }
+.ccTitle { color: var(--text); font-weight: 700; }
+.ccMeta { color: var(--faint); font-size: 10.5px; flex: 1; }
+.ccKill { border: 0; background: none; color: var(--faint); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.ccKill:hover { color: var(--critical); }
+.ccReply {
+  overflow-y: auto;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+.ccReply:empty::before { content: 'thinking…'; color: var(--faint); }
+.ccReply code {
+  background: var(--surface); border: 1px solid var(--edge); border-radius: 3px;
+  padding: 0 4px; font-family: Consolas, monospace; font-size: 12px;
+}
+.ccReply pre {
+  background: var(--surface); border: 1px solid var(--edge); border-radius: 5px;
+  padding: 8px 10px; overflow-x: auto; font-family: Consolas, monospace; font-size: 11.5px;
+}
+.ccNotice { color: var(--warning); font-size: 11px; }
+.ccNotice[hidden] { display: none; }
+.ccFoot { display: flex; gap: 6px; align-items: flex-end; }
+.ccFoot textarea {
+  flex: 1; resize: none; box-sizing: border-box; min-height: 26px; max-height: 90px;
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 5px; padding: 5px 8px; font: inherit; font-size: 12px; outline: none;
+}
+.ccFoot textarea:focus { border-color: var(--accent); }
+.ccFoot textarea:disabled { opacity: .5; }
+.ccFoot button {
+  border: 1px solid var(--edge); background: none; color: var(--dim);
+  font-size: 11.5px; padding: 5px 10px; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.ccFoot button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.ccFoot button:disabled { opacity: .4; cursor: default; }
+.ccFoot .ccToCompose { border-color: color-mix(in srgb, var(--accent) 55%, var(--edge)); }
 
 /* ---- composer ---- */
 .composer {

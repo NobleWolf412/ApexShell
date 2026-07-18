@@ -14,6 +14,7 @@ const monitors = require('./monitors');
 const seats = require('./seats');
 const tasks = require('./tasks');
 const auditWatch = require('./audit');
+const consult = require('./consult');
 const skills = require('./skills');
 const terminal = require('./terminal');
 const artifacts = require('./artifacts');
@@ -116,6 +117,7 @@ function createWindow() {
   extensions.register({ seats: seats.extensionApi, usage: { claudeSnapshot: usage.claudeSnapshot } });
   tasks.register();   // after extensions — routes validate against live presets
   auditWatch.register();   // live-auditor watch manager (opt-in per seat)
+  consult.register();      // Consult → : a disposable second opinion on the current chat
   skills.register();       // Claude Code skills surface (list / create / promote recipes)
   terminal.register({ cwd: seats.defaultCwd });
   liveUpdate.register(() => win);
@@ -373,6 +375,7 @@ app.on('window-all-closed', () => {
   try { monitors.dispose(); } catch (e) { console.error('monitors.dispose:', e.message); }
   try { tasks.dispose(); } catch (e) { console.error('tasks.dispose:', e.message); }
   try { auditWatch.dispose(); } catch (e) { console.error('audit.dispose:', e.message); }
+  try { consult.dispose(); } catch (e) { console.error('consult.dispose:', e.message); }
   try { seats.dispose(); } catch (e) { console.error('seats.dispose:', e.message); }
   try { terminal.dispose(); } catch (e) { console.error('terminal.dispose:', e.message); }
   try { artifacts.dispose(); } catch (e) { console.error('artifacts.dispose:', e.message); }

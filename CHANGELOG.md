@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **Consult v1, slice 1** (`main/consult.js`, `main/engine/consult.js`,
+  `renderer/chatView.js`): a **Consult →** button beside Hand off → in every
+  live, non-chain seat's tab row. One click: pick a persona (or "just a
+  model"), ask a question, and a hidden, tool-less disposable seat — seeded
+  with a bounded digest of the current chat (the live auditor's own
+  6-turn/8KB window) plus, for a persona, its own tiered memory (foundation +
+  canonical always; its `memory/projects/<slug>/state.md` + `MEMORY.md`
+  unless "fresh eyes" is on) — streams a second opinion into an in-chat
+  consult card. Up to 5 turns ride the same controller, each follow-up
+  carrying a fresh digest delta; a 120s per-turn backstop and every
+  dead/timeout/error close the consult and say so plainly — the chat's own
+  transcript is untouched by every failure mode, and by design (main never
+  inspects the reply, the renderer renders it exactly like chat prose). "Send
+  to composer" fills the operator's composer with the whole reply — never
+  sends it. Hand off →'s tab-row button gains a soft accent when the chat has
+  a live board-task binding (`main/tasks.js`'s `chatTasks`, now surfaced to
+  the renderer as `boundSeatIds`) — a suggestion, never a gate. New
+  `test/consult-drill.js` (pure contract + lifecycle state machine, zero LLM
+  spend), chained into `test:core`.
+- **Consult v1, slice 2** (polish): the picker gains a model/effort dial (the
+  disposable launch override, App Builder slice 5 — steers that one consult's
+  seat only; omitted stays the default lane model) and a Claude usage
+  snapshot (session/weekly %) so spend is visible before send. "Send to
+  composer" now sends just the selected text when part of the reply is
+  selected, otherwise the whole reply. Consult → is listed in the `?`
+  gestures/shortcuts overlay beside Hand off →. `test/consult-drill.js`
+  gained launch-override passthrough coverage (22/22).
+
 - **STUDIO shell** (`extensions/studio/`): a new dock pane (order 20 — the slot
   PERSONAS held) that hosts the builders as sub-views behind PERSONAS|PROJECTS
   sub-tabs. Exposes the `ApexStudio.registerBuilder({id, label, mount, order})`
