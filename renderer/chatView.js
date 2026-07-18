@@ -212,7 +212,10 @@ window.ApexChat = (function () {
       // clicks landing in the scrollbar gutter (right of the content box)
       if (e.offsetX >= c.feed.clientWidth) c.sbDrag = true;
     });
-    addEventListener('pointerup', () => { c.sbDrag = false; });
+    // stored so removeChat can drop it — a per-chat global listener never
+    // removed leaked one closure per open/close (+ per reload remount) (audit L3)
+    c.onPointerUp = () => { c.sbDrag = false; };
+    addEventListener('pointerup', c.onPointerUp);
     c.feed.addEventListener('scroll', () => {
       if (c.sbDrag && !nearBottom(c)) c.userScrolled = true;
       if (nearBottom(c)) c.userScrolled = false;
@@ -317,6 +320,7 @@ window.ApexChat = (function () {
   function removeChat(id) {
     const c = chats.get(id);
     if (!c) return;
+    if (c.onPointerUp) removeEventListener('pointerup', c.onPointerUp);   // (audit L3)
     if (c.term) c.term.dispose();
     c.wrap.remove();
     chats.delete(id);
