@@ -258,7 +258,7 @@ ipcMain.handle('attachment:pick', async (_e, seatId) => {
       if (mediaType && stat.size <= 4 * 1024 * 1024)
         item.data = fs.readFileSync(dest).toString('base64');
       results.push(item);
-    } catch (e) { lifeLog(`attachment skipped (${source}): ${e.message}`); }
+    } catch (e) { console.error(`[attachment] skipped ${source}: ${e.message}`); }
   }
   return results;
 });
