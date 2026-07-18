@@ -253,7 +253,17 @@ function mountProjects(el, hasBus) {
       routeText: '', saveAsTemplate: false, templateName: '',
       delegateBusy: false, delegateResult: null,
       chatBusy: false, chatResult: null,
+      // E1: the BUILD step's milestone track. `milestones` null = not asked
+      // yet for this project ([] = asked, none parsed); `milestone` is a
+      // DELEGATE THIS pre-fill riding the next DELEGATE click (the C2
+      // boomIntent pattern). Status is never held here — it derives from
+      // state.board on every paint (never stored, so it can't go stale).
+      milestones: null, milestonesError: null, milestone: null,
     },
+    // E1: the live task board (main/tasks.js's taskList broadcast) — the
+    // derived-status source for the milestone track. Held whole; the BUILD
+    // step filters by project cwd at render time.
+    board: [],
     // ---- slice B1: the RUN drawer (dev-server runner on Lift-off) ----
     // `form` is the user's working copy of the config inputs — it survives
     // re-renders (the liveAnswers rule) and is seeded from the saved config
@@ -366,7 +376,10 @@ function mountProjects(el, hasBus) {
       // route goStep/renderStep to the card.
       { id: 'xray', label: 'X-ray', sub: 'architecture diagram' },
       { id: 'create', label: 'Create', sub: 'write the package' },
-      { id: 'liftoff', label: 'Lift-off', sub: 'register · delegate · chat' },
+      // E1: Lift-off is the BUILD step now — LABEL ONLY. The step id stays
+      // 'liftoff': renames that break goStep routing are how card/step
+      // collisions happen (the D2 'xray'-not-'architecture' lesson).
+      { id: 'liftoff', label: 'Build', sub: 'milestones · run · preview' },
     ];
   }
 
@@ -1940,7 +1953,7 @@ function mountProjects(el, hasBus) {
                 (state.createBusy || bundle.canonicalDrift ? 'disabled' : '') + '>CREATE PROJECT</button>' +
             '</div>') +
         (state.createError ? '<div class="pjErr" data-tone="warn">Not created — ' + escapeHtml(state.createError) + '</div>' : '') +
-        (already ? '<div class="pjBtnRow"><button type="button" class="pjBtn primary pjToLiftoff">LIFT-OFF →</button></div>' : '') +
+        (already ? '<div class="pjBtnRow"><button type="button" class="pjBtn primary pjToLiftoff">BUILD →</button></div>' : '') +
       '</div>' +
       '<div class="pjCard">' +
         '<div class="pjBtnRow"><button type="button" class="pjBtn pjCreateBack">← BACK TO CANONICAL</button></div>' +
@@ -2111,8 +2124,58 @@ function mountProjects(el, hasBus) {
     }
   }
 
-  // ---- Lift-off (slice 8): the payoff screen, offered right after Create
-  // succeeds. Three independent actions — none of them chains into another.
+  // ---- E1: the milestone track's derive logic — the client mirror of
+  // lib/liftoff.js's milestoneSlug/deriveMilestoneStatus (the renderer can't
+  // require node libs; the lib export is the drilled AUTHORITY and this
+  // mirror is held to it — the SECTIONS/validatePickMessage discipline).
+  // Matching: slug-in-slugified-title on token boundaries (the '-' wrap),
+  // same-cwd via plain normalized strings (both sides originate from the
+  // same projectDir string). Precedence: any live task = 'building' (a
+  // re-delegated done milestone honestly reopens), else a done task =
+  // 'done', else 'open'; 'failed' counts as neither.
+  const MS_ACTIVE_STATUSES = ['open', 'running', 'paused', 'needs-attention'];
+  const msSlug = (text) => String(text || '')
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+    .slice(0, 48).replace(/-+$/g, '');
+  const msDirKey = (dir) => String(dir || '')
+    .replace(/\\/g, '/').replace(/\/+$/g, '').toLowerCase();
+  function milestoneStatus(slug, tasks, projectDir) {
+    const wantDir = msDirKey(projectDir);
+    if (!slug || !wantDir) return 'open';
+    let done = false;
+    for (const t of (Array.isArray(tasks) ? tasks : [])) {
+      if (!t || typeof t.title !== 'string' || typeof t.cwd !== 'string') continue;
+      if (msDirKey(t.cwd) !== wantDir) continue;
+      if (!('-' + msSlug(t.title) + '-').includes('-' + slug + '-')) continue;
+      if (MS_ACTIVE_STATUSES.includes(t.status)) return 'building';
+      if (t.status === 'done') done = true;
+    }
+    return done ? 'done' : 'open';
+  }
+
+  // Status chips patch in place on every taskList broadcast — a full render
+  // per board change would eat the RUN form's caret (the projectsServerLog /
+  // patchInstruments precedent). The row SET only changes when the parsed
+  // milestones do, and that path renders in full.
+  function patchMilestones() {
+    const p = state.createdProject;
+    if (!p) return;
+    for (const row of main.querySelectorAll('.pjMsRow')) {
+      const st = milestoneStatus(row.dataset.slug, state.board, p.projectDir);
+      const chip = row.querySelector('.pjMsStatus');
+      if (chip && chip.dataset.status !== st) {
+        chip.dataset.status = st;
+        chip.textContent = st.toUpperCase();
+      }
+    }
+  }
+
+  // ---- BUILD (slice 8's Lift-off, reorganized by E1 § Wave E): the living
+  // payoff screen, offered right after Create succeeds. Milestone-first: the
+  // track (parsed from the delivery area, status derived off the board) sits
+  // on top; the register/delegate/chat/RUN/PREVIEW/boom cards remain below.
+  // The actions stay independent — none of them chains into another.
   function renderLiftoff() {
     if (!state.createdProject) { state.step = 'create'; return renderCreate(); }
     const p = state.createdProject;
@@ -2136,8 +2199,14 @@ function mountProjects(el, hasBus) {
         busy: false, candidates: null, truncated: false, result: null,
         ledger: [], revertMsg: null, revertBusy: false,
       };
+      // E1: a fresh project gets a fresh milestone track (same guard — the
+      // reply re-renders, which must not re-ask)
+      lift.milestones = null;
+      lift.milestonesError = null;
+      lift.milestone = null;
       ApexBus.post('projectsServerConfigGet', { projectId: p.projectId });
       ApexBus.post('projectsBoomLedgerGet', { projectId: p.projectId });
+      ApexBus.post('projectsMilestonesGet', { projectId: p.projectId });
     }
     const srv = state.server;
     const form = srv.form || (srv.config ? {
@@ -2149,9 +2218,40 @@ function mountProjects(el, hasBus) {
     } : { command: '', argsText: '', cwd: '', port: '', readyRegex: '' });
     const srvRunning = srv.phase === 'starting' || srv.phase === 'ready';
 
+    // E1: the milestone track — the step's headline. Rows derive status at
+    // paint time (never stored); DELEGATE THIS pre-fills the delegate flow
+    // below, the same handoff shape a demoted boom takes.
+    const msRows = (lift.milestones || []).map((ms) => {
+      const st = milestoneStatus(ms.slug, state.board, p.projectDir);
+      return '<div class="pjMsRow" data-slug="' + escapeHtml(ms.slug) + '">' +
+        '<span class="pjMsStatus" data-status="' + st + '">' + st.toUpperCase() + '</span>' +
+        '<span class="pjMsText">' + escapeHtml(ms.text) + '</span>' +
+        '<button type="button" class="pjBtn pjMsDelegate" data-slug="' + escapeHtml(ms.slug) + '" ' +
+          (lift.delegateBusy ? 'disabled ' : '') +
+          'title="Pre-fill the delegate flow below with this milestone — its slug rides the task title (how the status here tracks the board) and the kickoff carries it as a bounded MILESTONE FOCUS block">DELEGATE THIS</button>' +
+      '</div>';
+    }).join('');
+
     main.innerHTML =
-      '<h2 class="pjTitle">Lift-off — ' + escapeHtml(p.displayName || p.projectId) + '</h2>' +
+      '<h2 class="pjTitle">Build — ' + escapeHtml(p.displayName || p.projectId) + '</h2>' +
       '<p class="pjLead">' + escapeHtml(p.projectDir) + '</p>' +
+
+      '<div class="pjCard">' +
+        '<div class="pjLabel">MILESTONES — THE DELIVERY PLAN' +
+          (lift.milestones && lift.milestones.length ? ' (' + lift.milestones.length + ')' : '') + '</div>' +
+        '<div class="pjWsSub">Parsed from the blueprint\'s delivery area — numbered/bulleted lines and ' +
+          'milestone-marked sentences. Status is derived live from the board (a task in this project\'s ' +
+          'folder whose title carries the milestone), never stored. Wrong list? The delivery card is the fix.</div>' +
+        (lift.milestones === null
+          ? '<div class="pjWsSub">Reading the delivery plan…</div>'
+          : (lift.milestones.length
+              ? '<div class="pjMsTrack">' + msRows + '</div>'
+              : '<div class="pjWsSub">No milestones found — write the delivery area as a numbered ' +
+                'list (or say "milestone" in a sentence) and the track fills in.</div>')) +
+        (lift.milestonesError
+          ? '<div class="pjErr" data-tone="warn">' + escapeHtml(lift.milestonesError) + '</div>'
+          : '') +
+      '</div>' +
 
       '<div class="pjCard">' +
         '<div class="pjLabel">REGISTER WORKSPACE</div>' +
@@ -2187,6 +2287,13 @@ function mountProjects(el, hasBus) {
               escapeHtml(String(lift.boomIntent).slice(0, 160)) + '” ' +
               '<button type="button" class="pjBtn pjBoomHandoffClear" title="Drop the boom handoff from the kickoff">✕</button></div>'
           : '') +
+        // E1: a milestone's DELEGATE THIS pre-fills the same way — one more
+        // bounded block on the same composition, plus the slug on the title.
+        (lift.milestone
+          ? '<div class="pjWsSub" data-tone="quiet">MILESTONE FOCUS rides the kickoff: “' +
+              escapeHtml(String(lift.milestone.text).slice(0, 160)) + '” ' +
+              '<button type="button" class="pjBtn pjMsHandoffClear" title="Drop the milestone focus from the kickoff">✕</button></div>'
+          : '') +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn primary pjLiftDelegateBtn" ' + (lift.delegateBusy ? 'disabled' : '') + '>DELEGATE →</button>' +
         '</div>' +
@@ -2201,7 +2308,8 @@ function mountProjects(el, hasBus) {
 
       '<div class="pjCard">' +
         '<div class="pjLabel">OPEN A CHAT HERE</div>' +
-        '<div class="pjWsSub">One plain chat seat in this project\'s folder — no route, no task.</div>' +
+        '<div class="pjWsSub">One plain chat seat in this project\'s folder — no route, no task. ' +
+          'It opens on the same brief a delegation carries: PROJECT.md + the contract addendum.</div>' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn pjLiftChatBtn" ' + (lift.chatBusy ? 'disabled' : '') + '>OPEN CHAT</button>' +
         '</div>' +
@@ -2329,6 +2437,8 @@ function mountProjects(el, hasBus) {
         saveAsTemplate: lift.saveAsTemplate,
         templateName: lift.templateName,
         boomIntent: lift.boomIntent || undefined,   // C2: the demote handoff
+        // E1: text only — main recomputes the slug, never trusts one
+        milestone: lift.milestone ? lift.milestone.text : undefined,
       });
     });
 
@@ -2338,6 +2448,21 @@ function mountProjects(el, hasBus) {
       lift.chatResult = null;
       render();
       ApexBus.post('projectsLiftoffChat', { projectId: p.projectId });
+    });
+
+    // E1: the milestone track's wiring — DELEGATE THIS pre-fills the delegate
+    // flow (the C2 boom-demote pattern); ✕ drops the pre-fill.
+    for (const btn of main.querySelectorAll('.pjMsDelegate'))
+      btn.addEventListener('click', () => {
+        const ms = (lift.milestones || []).find((x) => x.slug === btn.dataset.slug);
+        if (!ms) return;
+        lift.milestone = { text: ms.text, slug: ms.slug };
+        render();
+      });
+    const msClear = main.querySelector('.pjMsHandoffClear');
+    if (msClear) msClear.addEventListener('click', () => {
+      lift.milestone = null;
+      render();
     });
 
     // slice B1: the RUN drawer's wiring. Every keystroke lands in srv.form so
@@ -2829,7 +2954,8 @@ function mountProjects(el, hasBus) {
       state.createdProject = { projectId: m.projectId, projectDir: m.projectDir, displayName: m.displayName };
       state.liftoff = { registerBusy: false, registerName: '', registerResult: null,
         routeText: '', saveAsTemplate: false, templateName: '',
-        delegateBusy: false, delegateResult: null, chatBusy: false, chatResult: null };
+        delegateBusy: false, delegateResult: null, chatBusy: false, chatResult: null,
+        milestones: null, milestonesError: null, milestone: null };
       state.step = 'liftoff';
     } else {
       state.createError = m.error;
@@ -2846,6 +2972,10 @@ function mountProjects(el, hasBus) {
   ApexBus.on('projectsLiftoffDelegateResult', (m) => {
     state.liftoff.delegateBusy = false;
     state.liftoff.delegateResult = m;
+    // E1: a LANDED delegation consumes its milestone pre-fill (the board task
+    // now carries the slug — the track shows 'building'); a refusal keeps it
+    // for the retry, the boomIntent way.
+    if (m && m.ok) state.liftoff.milestone = null;
     if (state.step === 'liftoff') render();
   });
 
@@ -2853,6 +2983,24 @@ function mountProjects(el, hasBus) {
     state.liftoff.chatBusy = false;
     state.liftoff.chatResult = m;
     if (state.step === 'liftoff') render();
+  });
+
+  // E1: the parsed milestone track (per-project — the guard mirrors
+  // forRunProject's, and a stale project's post drops).
+  ApexBus.on('projectsMilestones', (m) => {
+    if (!m || !state.createdProject || m.projectId !== state.createdProject.projectId) return;
+    state.liftoff.milestones = Array.isArray(m.milestones) ? m.milestones : [];
+    state.liftoff.milestonesError = m.error || null;
+    if (state.step === 'liftoff') render();
+  });
+
+  // E1: the board broadcast — the derived-status source. Chips patch in
+  // place (patchMilestones), never a full render: a board change mid-typing
+  // must not eat the RUN form's caret (the appFrameEvent discipline).
+  ApexBus.on('taskList', (m) => {
+    if (!m) return;
+    state.board = Array.isArray(m.tasks) ? m.tasks : [];
+    if (state.step === 'liftoff') patchMilestones();
   });
 
   // ---- slice B1: the RUN drawer (dev-server runner) ------------------------
@@ -3017,4 +3165,8 @@ function mountProjects(el, hasBus) {
     state.step = 'see';
   render();
   ApexBus.post('projectsWorkspaceGet', {});
+  // E1: ask the board for its current state (main/tasks.js answers a
+  // 'taskList' post with a fresh publish) — without this, a Reload
+  // mid-project would show every milestone 'open' until the next change.
+  ApexBus.post('taskList', {});
 }

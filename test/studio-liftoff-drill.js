@@ -149,6 +149,83 @@ gate('composeKickoffBrief: a PROJECT.md leaving no room drops the addendum whole
   assert.equal(liftoff.composeKickoffBrief(project, 'A'.repeat(500)), project);
 });
 
+// E1 (§ Wave E): the BUILD step's milestone machinery — the drilled authority
+// the renderer's mirror is held to.
+
+gate('E1 parseMilestones: numbered and bulleted lines are milestones, in order, slugged', () => {
+  const parsed = liftoff.parseMilestones(
+    'We ship in cuts.\n1. Auth flow\n2) Dashboard shell\n- Data import\n* Report export\n• Public beta');
+  assert.deepEqual(parsed, [
+    { text: 'Auth flow', slug: 'auth-flow' },
+    { text: 'Dashboard shell', slug: 'dashboard-shell' },
+    { text: 'Data import', slug: 'data-import' },
+    { text: 'Report export', slug: 'report-export' },
+    { text: 'Public beta', slug: 'public-beta' },
+  ]);
+});
+
+gate('E1 parseMilestones: prose counts ONLY its milestone-marked sentences', () => {
+  const parsed = liftoff.parseMilestones(
+    'The first milestone is a working login. We like blue. The last milestone is the beta!\nNothing else counts.');
+  assert.deepEqual(parsed.map((m) => m.slug),
+    ['the-first-milestone-is-a-working-login', 'the-last-milestone-is-the-beta']);
+});
+
+gate('E1 parseMilestones: empty/hostile input never throws — headings and comments skip, dupes drop, caps hold', () => {
+  assert.deepEqual(liftoff.parseMilestones(''), []);
+  assert.deepEqual(liftoff.parseMilestones(null), []);
+  assert.deepEqual(liftoff.parseMilestones(42), []);
+  assert.deepEqual(liftoff.parseMilestones('## Milestones and Delivery\n<!-- delivery not yet drafted -->'), [],
+    'the section\'s own heading and placeholder comment are never milestones');
+  assert.deepEqual(liftoff.parseMilestones('1. !!!\n2. ***'), [], 'all-punctuation items slug to nothing and drop');
+  assert.deepEqual(liftoff.parseMilestones('1. Auth flow\n2. auth   FLOW!'),
+    [{ text: 'Auth flow', slug: 'auth-flow' }], 'dedupe is by slug');
+  const flood = Array.from({ length: 100 }, (_, i) => (i + 1) + '. Item ' + i).join('\n');
+  assert.equal(liftoff.parseMilestones(flood).length, liftoff.MILESTONE_LIST_CAP);
+  const long = liftoff.parseMilestones('1. ' + 'word '.repeat(200))[0];
+  assert.equal(long.text.length, liftoff.MILESTONE_TEXT_CAP, 'row text is capped');
+  assert.ok(long.slug.length <= 48, 'slug is capped');
+});
+
+gate('E1 extractDeliverySection: slices between the canonical\'s delivery markers; missing markers = empty', () => {
+  const canonical = 'preamble\n<!-- app-builder:delivery:start -->\n## Milestones and Delivery\n\n1. Auth flow\n' +
+    '<!-- app-builder:delivery:end -->\ntail';
+  const section = liftoff.extractDeliverySection(canonical);
+  assert.ok(section.includes('1. Auth flow'));
+  assert.ok(!section.includes('preamble') && !section.includes('tail'));
+  assert.deepEqual(liftoff.parseMilestones(section), [{ text: 'Auth flow', slug: 'auth-flow' }]);
+  assert.equal(liftoff.extractDeliverySection('no markers here'), '');
+  assert.equal(liftoff.extractDeliverySection(null), '');
+});
+
+gate('E1 deriveMilestoneStatus: DERIVED, never stored — live task = building, done task = done, else open', () => {
+  const dir = 'C:\\ws\\snipersight';
+  const task = (title, status, cwd) => ({ title, status, cwd: cwd || dir });
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow', [], dir), 'open');
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('Delegate: SniperSight — auth-flow', 'running')], dir), 'building');
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('Delegate: SniperSight — auth-flow', 'done')], dir), 'done');
+  // a re-delegated done milestone honestly reopens: any live task wins
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('Delegate: SniperSight — auth-flow', 'done'), task('auth flow rework', 'open')], dir), 'building');
+  // failed counts as neither done nor building
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('Delegate: SniperSight — auth-flow', 'failed')], dir), 'open');
+  // another project's folder never lights this track
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('Delegate: SniperSight — auth-flow', 'running', 'C:\\ws\\other')], dir), 'open');
+  // cwd comparison is normalized (slashes/case/trailing), not byte-exact
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [task('auth flow', 'running', 'c:/ws/SniperSight/')], dir), 'building');
+  // token-boundary matching: 'auth' must not light 'author'
+  assert.equal(liftoff.deriveMilestoneStatus('auth',
+    [task('Author pages', 'running')], dir), 'open');
+  // hostile task shapes drop, never throw
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [null, {}, { title: 42, cwd: dir, status: 'running' }], dir), 'open');
+});
+
 // ==========================================================================
 // main.js bus wiring — projectsCreate / projectsRemove / Lift-off
 // ==========================================================================
@@ -440,6 +517,118 @@ gate('Lift-off (c): open a chat here starts exactly one bare seat, no task/route
   const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffChatResult');
   assert.equal(result.payload.ok, true);
 });
+
+// A draft whose delivery answer carries real milestones (fullDraft's filler
+// prose parses to none — deliberately, so the default-harness gates above
+// stay silent on E1). Re-answers delivery, then generates + creates.
+function createdProjectWithMilestones(h) {
+  const before = drafts.readDraft(h.stateDir, h.draftId);
+  const updated = drafts.updateDraft(h.stateDir, h.draftId, before.revision, {
+    answers: { delivery: 'We prove lift-off with tests at every cut.\n' +
+      '1. Auth flow\n2. Dashboard shell\n3. Public beta' },
+  });
+  h.revision = updated.revision;
+  return createdProject(h);
+}
+
+gate('E1: projectsMilestonesGet parses the created canonical\'s delivery section, fresh off disk', () => {
+  const h = freshHarness('e1-milestones');
+  const created = createdProjectWithMilestones(h);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMilestonesGet')({ projectId: created.projectId });
+  const post = h.bus.posts.find((p) => p.type === 'projectsMilestones');
+  assert.equal(post.payload.projectId, created.projectId);
+  assert.equal(post.payload.error, null);
+  assert.deepEqual(post.payload.milestones, [
+    { text: 'Auth flow', slug: 'auth-flow' },
+    { text: 'Dashboard shell', slug: 'dashboard-shell' },
+    { text: 'Public beta', slug: 'public-beta' },
+  ]);
+  // status never rides the post — it is DERIVED renderer-side off taskList
+  assert.ok(post.payload.milestones.every((m) => !('status' in m)));
+  // no created canonical = an honest error post, never a crash
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMilestonesGet')({ projectId: 'never-created' });
+  const miss = h.bus.posts.find((p) => p.type === 'projectsMilestones');
+  assert.deepEqual(miss.payload.milestones, []);
+  assert.match(miss.payload.error, /Create the project/);
+});
+
+gate('E1: DELEGATE THIS — the milestone rides the addendum tail as a bounded block AND its slug rides the task title', () => {
+  const h = freshHarness('e1-delegate-ms');
+  const created = createdProjectWithMilestones(h);
+  const canonical = fs.readFileSync(path.join(created.projectDir, 'PROJECT.md'), 'utf8');
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId, milestone: 'Auth flow' });
+  const call = h.bus.injected.find((m) => m.type === 'taskCreate');
+  assert.ok(call.brief.startsWith(canonical), 'PROJECT.md still rides first, verbatim');
+  assert.ok(call.brief.includes('MILESTONE FOCUS'), 'the bounded block rides the addendum tail');
+  assert.ok(call.brief.includes('Auth flow'));
+  assert.ok(call.title.endsWith(' — auth-flow'),
+    'the slug rides the title — the very field deriveMilestoneStatus matches on');
+  // the linkage closes: the task this delegate creates lights the track
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow',
+    [{ title: call.title, cwd: call.cwd, status: 'running' }], created.projectDir), 'building');
+  // an oversized milestone text is CUT in the block, and the slug still lands
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId, milestone: 'Big one ' + 'x'.repeat(2000) });
+  const big = h.bus.injected.find((m) => m.type === 'taskCreate');
+  const block = big.brief.slice(big.brief.indexOf('MILESTONE FOCUS'));
+  assert.ok(block.split('\n')[1].length <= liftoff.MILESTONE_TEXT_CAP, 'the block\'s text line is capped');
+  // no milestone = the exact pre-E1 title (nothing dangling)
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  const plain = h.bus.injected.find((m) => m.type === 'taskCreate');
+  assert.ok(!plain.title.includes('—') && !plain.brief.includes('MILESTONE FOCUS'));
+});
+
+gate('E1: Open-a-chat now carries the SAME composed brief as delegate through the seatCreate kickoff seam (F2 gap closed)', () => {
+  const h = freshHarness('e1-chat-kickoff');
+  const created = createdProject(h);
+  const canonical = fs.readFileSync(path.join(created.projectDir, 'PROJECT.md'), 'utf8');
+  const tokens = JSON.parse(fs.readFileSync(path.join(created.projectDir, 'design', 'tokens.json'), 'utf8'));
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffChat')({ projectId: created.projectId });
+  const seat = h.bus.injected.find((m) => m.type === 'seatCreate');
+  assert.equal(seat.kickoff, canonical + SEP + spines.renderContractAddendum(tokens),
+    'PROJECT.md verbatim + the pinned separator + the addendum — one composeKickoffBrief, same as delegate');
+  assert.ok(seat.kickoff.length <= liftoff.BRIEF_CAP,
+    'the composed brief never exceeds the compose cap, so the seats-side 24000 cap can never cut it');
+});
+
+// ==========================================================================
+// main/seats.js — the E1 message-carried kickoff seam (the one CORE touch).
+// Outside an Electron process require('electron') resolves to the npm
+// package's path string, so a require.cache stub supplies what seats.js
+// destructures at import (test/multiwindow-drill.js's own idiom). Only the
+// pure gate function drills here — the host.create wiring needs a live seat
+// host, which is test:live territory.
+// ==========================================================================
+{
+  const electronPath = require.resolve('electron');
+  if (!require.cache[electronPath]) {
+    require.cache[electronPath] = { id: electronPath, filename: electronPath, loaded: true,
+      exports: { ipcMain: { on() {}, removeAllListeners() {} }, dialog: {}, BrowserWindow: function () {} } };
+  }
+  const seats = require('../main/seats');
+
+  gate('E1 messageKickoff: string-only off the wire, trimmed-empty dropped, capped at 24000', () => {
+    assert.equal(seats._test.MSG_KICKOFF_CAP, 24000);
+    assert.ok(seats._test.MSG_KICKOFF_CAP > liftoff.BRIEF_CAP,
+      'the seat cap clears the compose cap — a full composed brief always rides whole');
+    assert.equal(seats._test.messageKickoff({ kickoff: 'hello seat' }), 'hello seat');
+    assert.equal(seats._test.messageKickoff({ kickoff: '   ' }), null);
+    assert.equal(seats._test.messageKickoff({ kickoff: 42 }), null);
+    assert.equal(seats._test.messageKickoff({}), null);
+    assert.equal(seats._test.messageKickoff(null), null);
+    assert.equal(seats._test.messageKickoff({ kickoff: 'x'.repeat(30000) }).length, 24000);
+  });
+
+  gate('E1 messageKickoff: NEVER on a resume — a resumed session already had its first turn', () => {
+    assert.equal(seats._test.messageKickoff({ kickoff: 'hello', resume: 'sess-1' }), null);
+    assert.equal(seats._test.messageKickoff({ kickoff: 'hello', resume: 'codex:t1' }), null);
+  });
+}
 
 // ==========================================================================
 // main/tasks.js — the `brief` field rides step 0's kickoff only, verbatim

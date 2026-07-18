@@ -189,6 +189,23 @@ body.studioMode .studioView[data-builder="projects"] .pjRoot { padding-left: 0; 
 .studioView[data-builder="projects"] .pjAiChip { border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
+/* ---- the milestone track (slice E1 — the BUILD step's headline) ---- */
+.studioView[data-builder="projects"] .pjMsTrack { display: flex; flex-direction: column;
+  gap: 8px; margin-top: 10px; }
+.studioView[data-builder="projects"] .pjMsRow { display: flex; align-items: baseline;
+  gap: 10px; padding: 7px 10px; border: 1px solid var(--edge); border-radius: 9px; }
+/* status chips wear the pjRunPhase livery: open=dim, building=warning, done=good */
+.studioView[data-builder="projects"] .pjMsStatus { flex-shrink: 0; color: var(--dim);
+  font-size: 9px; font-weight: 700; letter-spacing: .18em; border: 1px solid var(--edge);
+  border-radius: 6px; padding: 1px 6px; }
+.studioView[data-builder="projects"] .pjMsStatus[data-status="building"] { color: var(--warning);
+  border-color: var(--warning); }
+.studioView[data-builder="projects"] .pjMsStatus[data-status="done"] { color: var(--good);
+  border-color: var(--good); }
+.studioView[data-builder="projects"] .pjMsText { flex: 1; color: var(--text);
+  overflow-wrap: anywhere; }
+.studioView[data-builder="projects"] .pjMsDelegate { flex-shrink: 0; }
+
 /* ---- the RUN drawer (slice B1 — dev-server runner on Lift-off) ---- */
 .studioView[data-builder="projects"] .pjRunPhase { color: var(--dim); font-size: 9px;
   font-weight: 700; letter-spacing: .18em; border: 1px solid var(--edge);

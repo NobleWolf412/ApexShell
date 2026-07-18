@@ -840,6 +840,26 @@ gate('released rail chat keeps updating the SAME list — no fork after route en
   assert.equal(t.status, 'done', 'checklist settled → task done');
 });
 
+// ---------------- E1 (studio BUILD step) — derived milestone status ----------
+// The studio's milestone track never stores a status: it derives
+// open/building/done from the very title/cwd/status fields taskList
+// publishes. lib/liftoff.js's own drill covers the pure logic; THIS gate
+// pins the cross-module contract against a REAL taskList broadcast, so a
+// board-side rename of those fields fails here, not silently in the studio.
+gate('E1: a delegate task carrying a milestone slug drives the derived status open→building→done', () => {
+  const liftoff = require('../extensions/studio/lib/liftoff');
+  const projectDir = repo;   // the studio delegates with cwd = the project dir
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow', bus.lastList(), projectDir), 'open');
+  bus.send('taskCreate', { title: 'Delegate: SniperSight — auth-flow', cwd: repo,
+    route: ['Coder'], auto: true, start: true });
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow', bus.lastList(), projectDir), 'building');
+  const seatId = seats.created[seats.created.length - 1].id;
+  turn(seatId, { status: 'done', summary: 'auth built' });
+  assert.equal(liftoff.deriveMilestoneStatus('auth-flow', bus.lastList(), projectDir), 'done');
+  // an unrelated milestone never lights off this task
+  assert.equal(liftoff.deriveMilestoneStatus('public-beta', bus.lastList(), projectDir), 'open');
+});
+
 tasks.dispose();
 console.log('\nTASKBOARD DRILL: ' + passed + '/' + (passed + failed) + ' passed');
 process.exit(failed ? 1 : 0);

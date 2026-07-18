@@ -254,6 +254,23 @@ function launchFor(persona) {
 let host = null;
 let createFromMessage = null;
 
+// E1 (STUDIO's BUILD step): an optional message-carried kickoff — the seat's
+// first user turn, riding EXACTLY the slot a persona preset's kickoff rides
+// (host.create's first argument; no second path invented). String-only off
+// the wire, capped, and NEVER on a resume — a resumed session already had
+// its first turn, and re-sending a kickoff re-ran the whole seating ritual
+// (the preset arm's own hard-learned rule, above createFromMessage's final
+// host.create). When both exist the message wins whole: a composing caller
+// owns the entire first turn, the way tasks.js's composeKickoff already
+// folds the preset kickoff into its own composition before calling
+// createTaskSeat.
+const MSG_KICKOFF_CAP = 24000;
+function messageKickoff(msg) {
+  if (!msg || msg.resume) return null;
+  if (typeof msg.kickoff !== 'string' || !msg.kickoff.trim()) return null;
+  return msg.kickoff.slice(0, MSG_KICKOFF_CAP);
+}
+
 // ---- workflow-layer internal API (main/tasks.js) ----------------------------
 // The chain engine must observe every seat projection event, create seats and
 // learn their ids, and drive seat verbs — none of which the extension ctx
@@ -416,7 +433,7 @@ function register() {
         if (hit && hit.title) ctitle = hit.title;
       }
       host.create(
-        (p && !msg.resume) ? (p.kickoff || null) : null,
+        messageKickoff(msg) || ((p && !msg.resume) ? (p.kickoff || null) : null),
         ctitle,
         { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), resume: msg.resume,
           launch: { model: 'codex', codexModel: launch.codexModel,
@@ -456,7 +473,7 @@ function register() {
     // seats only. An unknown/retired preset name still opens a plain seat.
     const preset = presets.get(persona);
     host.create(
-      (preset && !msg.resume) ? (preset.kickoff || null) : null,
+      messageKickoff(msg) || ((preset && !msg.resume) ? (preset.kickoff || null) : null),
       title,
       { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), launch, resume: msg.resume });
   };
@@ -783,5 +800,8 @@ module.exports = {
   seatEntry,
   listSeats,
   closeSeat,
+  // drill seam (tasks.js's _test precedent): the message-kickoff gate is the
+  // only piece of createFromMessage that drills without a live seat host
+  _test: { messageKickoff, MSG_KICKOFF_CAP },
 };
 

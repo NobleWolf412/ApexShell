@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave E slice E1 — the living BUILD step + the chat-kickoff
+  seam** (`extensions/studio/{main.js,renderer.js,style.css}` +
+  `extensions/studio/lib/liftoff.js`; one argued core touch in
+  `main/seats.js`; drills: `test/studio-liftoff-drill.js` grows to 37,
+  `test/taskboard-drill.js` to 51). Lift-off renames to **BUILD** — label
+  and copy only, the step id stays `liftoff` (goStep routing) — and
+  reorganizes milestone-first: a MILESTONE track heads the screen, parsed
+  deterministically from the canonical's delivery section
+  (`lib/liftoff.js`: `extractDeliverySection` between the stable
+  app-builder markers + `parseMilestones` — numbered/bulleted lines and
+  'milestone'-marked sentences; slugged, deduped, capped 30×200; imperfect
+  parsing is fine by spec — the delivery card is the fix). Each row's
+  open/building/done status is **derived, never stored**
+  (`deriveMilestoneStatus`, mirrored in the renderer the
+  SECTIONS/validatePickMessage way): a `taskList` task in the project's
+  folder whose slugified title carries the milestone slug on token
+  boundaries — any live task = building (a re-delegated done milestone
+  honestly reopens), else a done task = done; chips patch in place per
+  broadcast (the caret discipline). DELEGATE THIS pre-fills the existing
+  delegate flow (the C2 boomIntent pattern): the milestone rides the F2
+  addendum as one more bounded MILESTONE FOCUS block, and its slug rides
+  the task TITLE — the very field the derived status matches on, closing
+  the loop. The core seam: `seatCreate` (`main/seats.js
+  createFromMessage`) reads an optional `msg.kickoff` — string-only,
+  capped 24000 (clears the 20000 compose cap), never on a resume, riding
+  exactly the preset-kickoff slot (host.create's first argument; message
+  wins whole over preset, the composeKickoff precedent) — and the F2 gap
+  closes: "Open a chat here" now sends the SAME composed brief as delegate
+  (PROJECT.md + contract addendum, one `composeKickoffBrief` call) as the
+  chat's first turn. Update & restart applies (extension main + core seats
+  + renderer).
+
 - **STUDIO v2, Wave C slice C2 — boom-change (the full loop on the app
   frame)** (`main/appFrame.js` + `main/main.js` — the last core touch;
   `extensions/studio/{main.js,renderer.js}` +

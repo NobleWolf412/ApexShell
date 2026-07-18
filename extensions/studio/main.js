@@ -1414,6 +1414,19 @@ function register(ctx) {
       : '';
   };
 
+  // E1 (§ Wave E) DELEGATE THIS on a milestone: the same composition again —
+  // one more bounded block on the addendum tail (the C2 boomHandoff pattern,
+  // byte-for-byte discipline). Text only off the wire; the slug the board
+  // matches on is recomputed here from that text, never trusted.
+  const milestoneHandoff = (text) => {
+    const cut = String(text || '').replace(/\s+/g, ' ').trim()
+      .slice(0, liftoff.MILESTONE_TEXT_CAP);
+    return cut
+      ? '\n\nMILESTONE FOCUS (this delegation builds ONE milestone of the ' +
+        'delivery plan — scope the work to it):\n' + cut
+      : '';
+  };
+
   // Lift-off (a): register the project's folder into seatconfig.json's
   // `_workspaces`. The actual write is ctx.seats.registerWorkspace — a plain
   // synchronous ctx.seats method, not a bus verb (see its comment in
@@ -1486,10 +1499,18 @@ function register(ctx) {
       // composed (and cap-trimmed, PROJECT.md winning) in lib/liftoff.js so
       // main/tasks.js's own 20000-char slice never cuts anything silently.
       // C2: a demoted boom's intent (if any) rides the addendum tail.
+      // E1: a milestone's DELEGATE THIS rides the same tail, one more
+      // bounded block — and its slug rides the TASK TITLE, which is what
+      // the BUILD step's derived status matches on (deriveMilestoneStatus).
+      const milestoneText = (message && typeof message.milestone === 'string')
+        ? message.milestone : '';
       const brief = liftoff.composeKickoffBrief(canonicalText,
-        contractAddendum(paths) + boomHandoff(message && message.boomIntent));
+        contractAddendum(paths) + boomHandoff(message && message.boomIntent) +
+        milestoneHandoff(milestoneText));
       const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
-      const title = 'Delegate: ' + (frontmatter.display_name || projectId);
+      const milestoneSlug = liftoff.milestoneSlug(milestoneText);
+      const title = 'Delegate: ' + (frontmatter.display_name || projectId) +
+        (milestoneSlug ? ' — ' + milestoneSlug : '');
       ctx.bus.inject({
         type: 'taskCreate', title, cwd: paths.projectDir,
         route, brief, auto: false, start: true,
@@ -1509,12 +1530,13 @@ function register(ctx) {
   // route, no task. seatCreate is main/seats.js's own normal "open a rail
   // seat" verb (the same one a click on a rail button posts); same
   // in-process dispatch reasoning as taskCreate above.
-  // F2 caveat, stated rather than faked: the contract addendum rides the
-  // DELEGATE kickoff (above) but cannot ride this one yet — seatCreate reads
-  // no kickoff text off the wire (a seat's kickoff comes from its persona
-  // preset alone; see main/seats.js createFromMessage), and main/seats.js is
-  // outside this slice's surface. Wiring an additive message-carried kickoff
-  // there is the follow-up; a dead field injected here today would be a lie.
+  // E1 closes the F2 gap this handler used to state as a caveat: seatCreate
+  // now reads an additive message-carried `kickoff` (main/seats.js
+  // createFromMessage — the seat's first user turn, the exact slot a persona
+  // preset's kickoff rides), so the chat opens on the SAME brief delegate
+  // composes: PROJECT.md verbatim + the contract addendum, one
+  // composeKickoffBrief call. No boom/milestone tail here — those are
+  // delegate-flow handoffs; a plain chat carries the plain brief.
   ctx.bus.on('projectsLiftoffChat', (message) => {
     try {
       const projectId = message && message.projectId;
@@ -1526,10 +1548,40 @@ function register(ctx) {
         throw new Error('Opening a chat requires the bus injection seam.');
       const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
       const title = 'Chat — ' + (frontmatter.display_name || projectId);
-      ctx.bus.inject({ type: 'seatCreate', persona: '', cwd: paths.projectDir, title });
+      // fail-soft like projectFrontmatter: a package missing its canonical
+      // still opens a plain chat — an absent brief, never a broken one
+      const canonicalText = fs.existsSync(paths.canonical)
+        ? fs.readFileSync(paths.canonical, 'utf8') : '';
+      const kickoff = canonicalText
+        ? liftoff.composeKickoffBrief(canonicalText, contractAddendum(paths))
+        : undefined;
+      ctx.bus.inject({ type: 'seatCreate', persona: '', cwd: paths.projectDir, title, kickoff });
       ctx.bus.post('projectsLiftoffChatResult', { ok: true, cwd: paths.projectDir, title });
     } catch (err) {
       ctx.bus.post('projectsLiftoffChatResult', { ok: false, error: err.message });
+    }
+  });
+
+  // E1 (§ Wave E): the BUILD step's milestone track. Parsed fresh off the
+  // canonical on every ask — the delivery card is the fix for a bad parse,
+  // so the parse must follow the file, never a cache. Status never rides
+  // this post: it is DERIVED renderer-side from the taskList broadcast
+  // (lib/liftoff.deriveMilestoneStatus is the drilled authority).
+  ctx.bus.on('projectsMilestonesGet', (message) => {
+    try {
+      const projectId = message && message.projectId;
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const paths = contract.projectPaths(workspace, projectId);
+      if (!fs.existsSync(paths.canonical))
+        throw new Error('Create the project before reading its milestones.');
+      const canonicalText = fs.readFileSync(paths.canonical, 'utf8');
+      const milestones = liftoff.parseMilestones(
+        liftoff.extractDeliverySection(canonicalText));
+      ctx.bus.post('projectsMilestones', { projectId, milestones, error: null });
+    } catch (err) {
+      ctx.bus.post('projectsMilestones', {
+        projectId: message && message.projectId, milestones: [], error: err.message,
+      });
     }
   });
 

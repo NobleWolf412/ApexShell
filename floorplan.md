@@ -304,6 +304,21 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   slice 8): the canonical PROJECT.md text needs to reach the first seat
   verbatim, not as a rumor of it, and no other channel into `composeTaskBody`
   existed. Omitted, a task behaves exactly as before this addition.
+- The same family, one module over: `seatCreate` (seats.js
+  `createFromMessage`) accepts an optional message-carried `kickoff` —
+  string-only, capped 24 KB, the seat's first user turn riding exactly the
+  slot a persona preset's kickoff rides (host.create's first argument, no
+  second path), NEVER on a resume, and winning whole over the preset's own
+  when both exist (a composing caller owns the entire first turn, the
+  `composeKickoff` way). Added for STUDIO v2's BUILD step (Wave E slice E1):
+  "Open a chat here" sends PROJECT.md + the contract addendum through it,
+  the same brief a delegation composes. The BUILD step itself (the renamed
+  Lift-off — step id stays `liftoff`) heads the screen with a milestone
+  track: milestones parse deterministically from the canonical's delivery
+  section (`lib/liftoff.js parseMilestones`), and each row's
+  open/building/done status is DERIVED live from this module's `taskList`
+  broadcast (same-cwd task whose title carries the milestone slug —
+  `deriveMilestoneStatus`, never stored anywhere).
 - A step signals completion by ending its final message with one fenced
   ```apex-handoff``` JSON block: `status done | needs-decision | bounce`,
   plus summary/findings/decision/artifacts. The content is UNTRUSTED —
