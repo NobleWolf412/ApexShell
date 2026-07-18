@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave C slice C1 — the surgeon + resolver contracts**
+  (`extensions/studio/lib/{resolver.js,surgeon.js}` new; drill in
+  `test/studio-surgeon-drill.js` — 28 checks over the new fixture mini-project
+  `test/studio-fixtures/resolver-app/`, wired into `test:studio`; new files
+  only — no UI, no bus verbs, no seat wiring, zero edits to existing
+  lib/renderer/main code (C2+ adds the inspector overlay, the seat, and the
+  boom ledger)). `resolver.js` is the tiered source resolver (§ Wave C):
+  given a picker-captured element context `{selector, classes[], text, tag,
+  html?}` and a project root, it returns ranked candidates `{file, line?,
+  tier, confidence}` — tier `hint` (high) parses `data-source="path[:line]"`
+  attrs out of the captured html (parse ONLY; the value is untrusted page
+  content, so it passes the surgeon's own relative/traversal-free path wall
+  and must name a real non-link file under the root, or it is dropped, never
+  repaired); tier `search` (medium) is a capped deterministic fs walk (skip
+  node_modules/.git/dist/build, max 2000 files, max 512 KB/file, extension
+  allowlist .html/.css/.js/.jsx/.ts/.tsx/.vue/.svelte, symlinks never
+  followed) scoring whole-token class matches + visible-text hits with
+  first-match line numbers, ranked score-desc/path-asc in plain byte order
+  (never localeCompare — the design.js determinism law); tier `context`
+  (low) is the always-present, always-last whole-context fallback descriptor
+  for the seat. Every result carries its tier honestly — never a silent
+  guess. `surgeon.js` is the apex-surgeon reply contract: the kickoff
+  builder (element context + the resolver's ranked candidates verbatim + the
+  user's intent + the ONE-minimal-edit law + the report shape) and the
+  fenced ```apex-surgeon JSON parser under handoff.js discipline — last
+  block wins, known fields only, result rebuilt field by field
+  (`{summary, edits:[{file, kind:'modified'|'created', hunks?}], followup?}`),
+  and STRICTER than its siblings on purpose: nothing is ever trimmed or
+  truncated into acceptance — a 7th edit, an absolute or `..` path (either
+  path flavor, any colon, control chars), an unknown kind, or any oversized
+  string fails the WHOLE reply closed to `{result:null, error}`.
+  `detectDemote` is the scope guard's pure half: a valid report claiming
+  more than 3 edits, or asking followup `"delegate"`, flags bigger-than-a-
+  boom for the proposal card C2+ renders.
+
 - **STUDIO v2, Wave B slice B1 — the dev-server runner**
   (`extensions/studio/lib/servers.js` new, `extensions/studio/{main.js,
   renderer.js,style.css}`; drill in `test/studio-servers-drill.js`, wired into
