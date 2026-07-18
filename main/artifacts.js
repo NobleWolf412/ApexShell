@@ -15,6 +15,13 @@ const isHtml = (e) => e === 'html' || e === 'htm';
 
 const current = new Map();   // seatId -> { path, watcher, t }
 
+// The apex:// protocol handler will serve ONLY files that were legitimately
+// surfaced as artifacts (external audit C2, 2026-07-18) — an untrusted artifact
+// page can no longer request apex://local/<any-absolute-path> (e.g. ~/.ssh keys)
+// and exfiltrate it. Populated whenever show() renders a real file.
+const served = new Set();
+function isServed(p) { try { return served.has(path.resolve(p)); } catch { return false; } }
+
 function show(id, p) {
   const ext = (p.split('.').pop() || '').toLowerCase();
   const m = { id, path: p, v: Date.now(),
@@ -35,6 +42,7 @@ function show(id, p) {
     bus.post('artifact', m);
     return;
   }
+  served.add(path.resolve(p));   // a real, legitimately-surfaced file — apex:// may serve it (C2)
   if (m.kind === 'text') {
     try {
       let t = fs.readFileSync(p, 'utf8');
@@ -89,4 +97,4 @@ function seatClosed(id) {
 
 function dispose() { for (const id of [...current.keys()]) seatClosed(id); }
 
-module.exports = { candidate, seatClosed, dispose };
+module.exports = { candidate, seatClosed, dispose, isServed };

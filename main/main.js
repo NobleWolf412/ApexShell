@@ -262,18 +262,30 @@ ipcMain.on('win:reload', () => liveUpdate.reload(win));
 
 app.whenReady().then(() => {
   // apex://local/<encodeURIComponent(absolute path)> → that file, read-only.
-  protocol.handle('apex', (req) => {
+  protocol.handle('apex', async (req) => {
     try {
       const u = new URL(req.url);
       if (u.host !== 'local') return new Response('not found', { status: 404 });
       const p = decodeURIComponent(u.pathname.replace(/^\//, ''));
-      // a directory would make net.fetch throw EISDIR ("illegal operation on a
-      // directory") into the iframe — answer cleanly instead
+      // CONFINEMENT (external audit C2): serve ONLY files that were legitimately
+      // surfaced as artifacts — never an arbitrary absolute path an untrusted
+      // artifact page requests (e.g. apex://local/<~/.ssh/id_rsa>).
+      if (!artifacts.isServed(p)) return new Response('not an available artifact', { status: 403 });
       let st = null;
       try { st = fs.statSync(p); } catch { /* missing */ }
       if (!st) return new Response('not found', { status: 404 });
       if (st.isDirectory()) return new Response('that path is a folder, not a file', { status: 400 });
-      return net.fetch(pathToFileURL(p).toString());
+      const res = await net.fetch(pathToFileURL(p).toString());
+      // EGRESS LOCK (external audit C2): the artifact iframe runs scripts; a
+      // restrictive per-response CSP lets it render (inline JS/CSS, data:/apex:
+      // images) but blocks ALL network — no default-src, no connect-src — so a
+      // page can't fetch a secret and phone it home. Belt to the confinement's
+      // suspenders: even a served file can't be exfiltrated.
+      const headers = new Headers(res.headers);
+      headers.set('Content-Security-Policy',
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+        "img-src data: apex:; font-src data:; media-src data:");
+      return new Response(res.body, { status: res.status, headers });
     } catch (e) {
       return new Response('bad request: ' + e.message, { status: 400 });
     }
