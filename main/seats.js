@@ -308,6 +308,9 @@ function register() {
     // learned context windows survive a restart — without this, resumed chats'
     // meters stay blank until the first completed turn (the operator, 2026-07-13)
     windowsFile: path.join(__dirname, '..', 'state', 'model-windows.json'),
+    // the HOST owns storage paths (audit M4): the engine must not compute an
+    // app-relative __dirname path for transcripts — inject it, like windowsFile.
+    transcriptsDir: path.join(__dirname, '..', 'state', 'transcripts'),
   });
 
   // view → engine (exact types — the engine validates its own set again).

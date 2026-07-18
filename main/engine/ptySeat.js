@@ -24,7 +24,7 @@ const path = require('path');
  *   onEvent        — (evt) => void   {type:'ptyData', data} chunks.
  *   onExit         — (code) => void
  */
-function startPtySeat({ command, args, cwd, cols, rows, log, onEvent, onExit }) {
+function startPtySeat({ command, args, cwd, cols, rows, log, onEvent, onExit, transcriptsDir }) {
   if (!pty) {
     log(`pty unavailable: ${ptyErr}`);
     setTimeout(() => {
@@ -76,7 +76,7 @@ function startPtySeat({ command, args, cwd, cols, rows, log, onEvent, onExit }) 
   // into the wiki. Raw bytes with ANSI; intake strips at ingest. Capture must
   // never break the terminal — every write is try-swallowed.
   const sessId = 'pty-' + Date.now().toString(36);
-  const tDir = path.resolve(__dirname, '..', '..', 'state', 'transcripts');
+  const tDir = transcriptsDir || path.resolve(__dirname, '..', '..', 'state', 'transcripts');
   const tenant = path.basename(String(command)).replace(/\.(cmd|exe|bat)$/i, '');
   let captureOk = false;
   try {

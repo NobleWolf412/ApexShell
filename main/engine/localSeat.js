@@ -153,7 +153,7 @@ function cleanReasoning(s) {
     .trim();
 }
 
-function startLocalSeat({ cwd, log, onEvent, onExit }) {
+function startLocalSeat({ cwd, log, onEvent, onExit, transcriptsDir }) {
   const messages = [{ role: 'system', content: SYSTEM() }];
   let aborter = null;
   let disposed = false;
@@ -167,7 +167,7 @@ function startLocalSeat({ cwd, log, onEvent, onExit }) {
   // archive them — a local model's chat is history too (the operator's
   // 2026-07-14 ruling; the unpersisted 8B rage session is why). Meta first
   // line, then one {ts, role, text} event per message. Append-only.
-  const T_DIR = path.resolve(__dirname, '..', '..', 'state', 'transcripts');
+  const T_DIR = transcriptsDir || path.resolve(__dirname, '..', '..', 'state', 'transcripts');
   const T_FILE = path.join(T_DIR, sessionId + '.jsonl');
   let metaWritten = false;
   function persist(role, text) {

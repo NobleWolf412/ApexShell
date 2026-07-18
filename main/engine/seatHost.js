@@ -65,12 +65,16 @@ const isHtml = (e) => e === 'html' || e === 'htm';
  *   projectsRoot — transcript store override (default ~/.claude/projects).
  */
 function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
-                          windowsFile: wf, wrapPrompt }) {
+                          windowsFile: wf, wrapPrompt, transcriptsDir }) {
   const wrapText = () =>
     (typeof wrapPrompt === 'function' ? wrapPrompt() : wrapPrompt) || SEAT_WRAPUP_PROMPT;
   const seats = new Map();   // id -> entry
   const disposables = new Set();
   const transcriptsRoot = projectsRoot || path.join(os.homedir(), '.claude', 'projects');
+  // Host-injected transcript dir for the local/pty lanes — the engine no longer
+  // computes an app-relative path itself (audit M4). Harness default = a temp
+  // dir, so a headless/relocated run never writes beside the engine file.
+  const localTranscripts = transcriptsDir || path.join(os.tmpdir(), 'apex-transcripts');
   if (wf) {
     windowsFile = wf;
     try {
@@ -178,6 +182,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         command: opts.launch.command || 'claude',
         args: opts.launch.args || [],
         cwd: opts.cwd || apexRoot,
+        transcriptsDir: localTranscripts,
         cols: opts.launch.cols, rows: opts.launch.rows,
         log: (l) => log(`[${id}] ${l}`),
         onEvent: postM,
@@ -204,6 +209,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
       entry.title = entry.title === 'Seat' ? 'Local coder (Ollama)' : entry.title;
       entry.seat = startLocalSeat({
         cwd: opts.cwd || apexRoot,
+        transcriptsDir: localTranscripts,
         log: (l) => log(`[${id}] ${l}`),
         onEvent: postM,
         onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
