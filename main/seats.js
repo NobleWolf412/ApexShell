@@ -158,9 +158,27 @@ function postWorkspaces() {
 // launch, `default` = that persona's saved default. Moved home to app/ when
 // the extension era was archived (2026-07-12, the operator's "proven").
 const CONFIG_FILE = path.resolve(__dirname, '..', 'seatconfig.json');
+// Last-good seatconfig, so a hand-edit typo can't silently DROP the tool wall
+// (external audit H2: launchFor failed OPEN — an unparseable file read as {},
+// dropping tools/disallowedTools and launching walled personas with the full
+// toolset). Absent = fresh install (fine, defaults). Present-but-corrupt =
+// keep the last parse that worked; if none, fail closed on permissions (manual)
+// and warn loudly rather than fail open.
+let lastGoodCfg = null;
 function launchFor(persona) {
-  let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch { /* defaults */ }
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+    lastGoodCfg = cfg;
+  } catch (e) {
+    if (fs.existsSync(CONFIG_FILE)) {
+      console.error('[seats] seatconfig.json is unparseable (' + e.message +
+        ') — using last-good config; walled personas keep their wall. FIX THE FILE.');
+      cfg = lastGoodCfg || {};       // never fail OPEN by dropping the wall
+    } else {
+      cfg = {};                      // absent — a fresh install, defaults are correct
+    }
+  }
   // File shape (J21/J23, flat): { "<persona>": {current, default}, "_default": {...} }
   const p = cfg[persona] || {};
   const base = cfg._default || {};
