@@ -454,3 +454,76 @@ layout-input shape; extend drafts/liftoff drills for the field + package
 copy), APEX_SMOKE=1 both variants exit 0, CHANGELOG.md. Extension code
 only — no main/, no engine. Update & restart applies — say so.
 ```
+
+## Slice C2 — boom-change (main tree, CORE — the last careful one)
+
+```
+Read design/studio-v2.md (§ Wave C — boom changed) and the shipped halves
+you are wiring: lib/resolver.js + lib/surgeon.js (C1), main/appFrame.js
+(B2/B3), the A5 pick-bridge validator discipline (lib/mockup.js
+validatePickMessage), and the A3/A6 disposable machinery. Implement SLICE
+C2 ONLY — the full boom loop on the app frame:
+
+(1) INSPECT MODE (core touch, argued line-by-line): main/appFrame.js gains
+inspect(win, on) — when on, the frame's webContents gets a picker injected
+via webContents.executeJavaScript (the A5 overlay pattern: fixed
+pointer-events-none highlight box, hover, click captures {selector,
+classes[], text<=160, tag, html<=2000 outerHTML slice for data-source
+hints}, Esc cancels; the script posts via console.log with a magic prefix
+'[apex-pick]'+JSON — the B3 console-message listener already flows to
+main, no debugger API needed after all: filter the magic prefix BEFORE
+the B3 error-level gate, strip it from normal chip flow, validate the
+payload with a shapePickPayload() twin of the A5 validator: caps, known
+fields rebuilt, fail-closed). Injection is idempotent (double-inject
+guard), removed on inspect-off/navigate. The renderer gets INSPECT as a
+strip toggle; picks post appFramePick per-window (postTo).
+
+(2) THE BOOM FLOW (extension): a pick opens a BOOM card over the PREVIEW
+area: the element context, an intent input, and GO. GO runs: resolver
+(project root = the created project dir) → candidates listed with
+tier/confidence honestly → one Surgeon disposable (A3 prepare/approve
+machinery COLLAPSED to a single approve-on-GO — the card IS the approval;
+usage snapshot shown on the card before GO; TTL n/a; single-flight;
+5-min backstop; launch from the picker) in the PROJECT cwd with the C1
+kickoff (surgeon.buildKickoff). The reply parses via surgeon.parseReply
+(fail-closed). Edits apply ONLY if: every path passes the C1 wall AND
+resolves inside the project dir (re-check at apply time — belt and
+braces); kind 'modified' requires the file exists, 'created' requires it
+does not. Apply = write the hunks as full-file content? NO — hunks are
+freeform text in C1's contract; v1 apply discipline: the Surgeon's
+kickoff (extend surgeon.js contractText minimally if needed) demands
+edits carry the COMPLETE new file content in hunks (capped 16KB — small
+files only in v1; bigger = followup:'delegate'), and apply writes
+atomically (temp+rename) after a git-aware backup.
+
+(3) THE LEDGER: before applying, snapshot: if the project dir is a git
+repo (a .git exists), record dirty-file paths and apply, then `git add
+<files> && git commit -m 'boom: <intent slice>'` via execFile (args
+array, no shell) in the project cwd — the commit hash is the revert
+token; if NOT a repo, copy each touched file to
+state/extensions/studio/boomledger/<projectId>/<ts>/<relpath> first.
+Ledger entries {ts, intent<=200, files[], mode:'git'|'backup', token,
+demoted?} persist in state/extensions/studio/boomledger/<projectId>.json
+(atomic, capped 100 entries, oldest dropped). REVERT: git mode = `git
+revert --no-edit <hash>` (execFile; refuse if the working tree is dirty,
+honest error); backup mode = restore the copies (atomic). The ledger
+card lists entries with REVERT buttons on the BOOM panel.
+
+(4) DEMOTE: surgeon.detectDemote fires → no apply, the card shows 'bigger
+than a boom' with a DELEGATE button that pre-fills the existing Lift-off
+delegate flow with the intent as extra brief context (reuse the F2
+composition — one function call, no new machinery).
+
+DRILLS (hermetic, stub the disposable + execFile seams): shapePickPayload
+twins the A5 vectors; magic-prefix routing (a page console.log WITHOUT
+the prefix still chips normally, WITH it never chips + parses; hostile
+prefix payloads fail closed); apply-time path re-wall (traversal/absolute/
+outside-project refuse even if parseReply somehow passed them); exists/
+not-exists kind rules; atomic write + backup-first ordering; ledger
+append/cap/persist; git vs backup mode selection; revert dirty-tree
+refusal; demote → no writes + delegate prefill shape. Extend
+test/appframe-drill.js (inspect/pick seam) + a new
+test/studio-boom-drill.js. npm test WHOLE; APEX_SMOKE both variants exit
+0; CHANGELOG + floorplan (appFrame inspect seam). Update & restart — say
+so. Core diffs pasted INLINE in the report.
+```
