@@ -1,6 +1,18 @@
 # Consult v1 — Build Specification
 
-Status: proposed.
+Status: implemented (both slices shipped: Consult 1 — core consult, card,
+send-to-composer, kill/timeout/turn-bound; Consult 2 — model/effort dial,
+usage snapshot, selection-level send, the ? overlay row — see CHANGELOG.md
+and floorplan.md § Consult v1; every "Required verification" bullet is
+covered by `test/consult-drill.js`, 22/22 in `test:core`). Divergences from
+this spec, all argued at their sites: the card header shows the persona name
+and a turn counter, not the "model, elapsed" sketched in § The flow step 3;
+failure modes (dead/timeout/error) close the consult with a plain error
+rather than offering an in-card retry — retry is a fresh Consult → click
+(`main/consult.js` finishTurn); and codex-lane chats consult with an EMPTY
+digest (their threads live outside the Claude transcript store —
+`main/consult.js` chatTurns) rather than being refused. No mockup or prompts
+files ever existed for this build — nothing to remove.
 
 ## Outcome
 
