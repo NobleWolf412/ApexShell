@@ -242,19 +242,23 @@ ipcMain.handle('attachment:pick', async (_e, seatId) => {
   fs.mkdirSync(dir, { recursive: true });
   const results = [];
   for (const source of picked.filePaths) {
-    const stat = fs.statSync(source);
-    if (!stat.isFile()) continue;
-    const parsed = path.parse(source);
-    let dest = path.join(dir, parsed.base), n = 2;
-    while (fs.existsSync(dest)) dest = path.join(dir, `${parsed.name} (${n++})${parsed.ext}`);
-    fs.copyFileSync(source, dest);
-    const mediaTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif', '.webp': 'image/webp' };
-    const mediaType = mediaTypes[parsed.ext.toLowerCase()] || '';
-    const item = { name: path.basename(dest), path: dest, size: stat.size, mediaType };
-    if (mediaType && stat.size <= 4 * 1024 * 1024)
-      item.data = fs.readFileSync(dest).toString('base64');
-    results.push(item);
+    // per-file guard (audit L2): one file deleted between dialog and stat, or an
+    // unreadable one, must not reject the whole batch and drop every attachment.
+    try {
+      const stat = fs.statSync(source);
+      if (!stat.isFile()) continue;
+      const parsed = path.parse(source);
+      let dest = path.join(dir, parsed.base), n = 2;
+      while (fs.existsSync(dest)) dest = path.join(dir, `${parsed.name} (${n++})${parsed.ext}`);
+      fs.copyFileSync(source, dest);
+      const mediaTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif', '.webp': 'image/webp' };
+      const mediaType = mediaTypes[parsed.ext.toLowerCase()] || '';
+      const item = { name: path.basename(dest), path: dest, size: stat.size, mediaType };
+      if (mediaType && stat.size <= 4 * 1024 * 1024)
+        item.data = fs.readFileSync(dest).toString('base64');
+      results.push(item);
+    } catch (e) { lifeLog(`attachment skipped (${source}): ${e.message}`); }
   }
   return results;
 });
