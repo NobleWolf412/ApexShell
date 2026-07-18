@@ -308,3 +308,70 @@ bounds sanitation (finite, non-negative, capped)); APEX_SMOKE=1 both
 variants exit 0 (no frame in smoke — nothing starts a server); CHANGELOG
 + floorplan (the new core file). Update & restart applies — say so.
 ```
+
+## Slice C1 — surgeon + resolver contracts (parallel worktree, libs only)
+
+```
+Read design/studio-v2.md (§ Wave C — boom changed). Implement SLICE C1
+ONLY: the two Wave C contracts as pure lib code — no UI, no bus verbs, no
+seat wiring (C2+ does that). NEW extensions/studio/lib/resolver.js: the
+tiered source resolver — given an element context {selector, classes[],
+text, tag} and a project root, return ranked candidates {file, line?,
+tier, confidence} via (a) framework dev hints if present (data-source
+attrs in the html — parse only), (b) class-name/text search over project
+files (fs walk with caps: skip node_modules/.git/dist/build, max 2000
+files, max 512KB/file, extensions allowlist .html/.css/.js/.jsx/.ts/.tsx/
+.vue/.svelte), (c) a low-confidence whole-context fallback descriptor for
+the seat. Deterministic ordering, every result carries its tier honestly.
+NEW extensions/studio/lib/surgeon.js: the apex-surgeon reply contract —
+kickoff/prompt builder (element context + resolver candidates + the user's
+intent + the ONE-minimal-edit law + the report shape), and the fenced
+apex-surgeon JSON block parser under handoff.js discipline: {summary,
+edits:[{file, kind:'modified'|'created', hunks?:string}], followup?} —
+known fields only, max 6 edits, paths must be relative and traversal-free
+(never absolute, never ..), string caps, fail-closed to {result:null,
+error}; a bigger-than-a-boom detector (edits>threshold or any
+followup:'delegate' → demote flag). Done: npm test whole (new
+test/studio-surgeon-drill.js covering both libs: resolver tier a/b/c over
+a fixture mini-project (create test/studio-fixtures/resolver-app/),
+determinism, caps; surgeon parse valid/hostile/oversized/traversal/
+absolute-path/7-edits, demote detector), CHANGELOG.md. NEW FILES ONLY plus
+the package.json test:studio line and CHANGELOG — zero edits to existing
+lib/renderer/main files.
+```
+
+## Slice F3 — the design-mode overlay template (parallel worktree, new files)
+
+```
+Read design/studio-v2.md (§ Wave F — the product contract, design mode).
+Implement SLICE F3 ONLY: the dev-only design-mode overlay that scaffolded
+apps ship, as a TEMPLATE ASSET — no Apex UI, no bus verbs, no scaffold
+writer (that is the coder persona's job, guided by the addendum; F2 wires
+the addendum). NEW extensions/studio/templates/design-mode.js: a single
+self-contained vanilla-JS file (zero deps, no imports, no external URLs —
+the A3 self-containment law applies to the template itself) that a
+scaffolded app includes in DEV builds only. It: reads design/tokens.json +
+design/components.json + design/manifest.json via fetch of SAME-ORIGIN
+relative paths (fail-soft: missing file = that panel disabled with an
+honest note); renders a floating toggleable panel (bottom-right, its own
+shadow-root so app CSS cannot break it and it cannot break the app);
+element picking (the A5 overlay pattern: fixed overlay box, hover
+highlight, click select, Esc cancel); for a picked element whose class
+matches a component name, shows variant/effect radio pickers + token-role
+info from the spines; a "copy change" action that writes the chosen
+variant change to the clipboard as a precise instruction (v1 of
+persistence — actual file writes need a dev server endpoint, out of
+scope, documented in the file header); and a component-tree tab (walk the
+DOM for [data-component] marks per contract-spines.md, else class-name
+match). NEW design/design-mode.md documenting: what the template does,
+how a scaffold includes it dev-only (script tag the coder adds behind an
+env/dev flag per stack), its honest v1 limits (read-only + clipboard),
+and the Apex-connected future (C/F2+). Add a drill
+(test/studio-designmode-drill.js) that statically validates the template:
+parses as JS (node --check via child spawn or new Function in a try),
+self-contained (the A3 external-URL vectors re-used — write the checks,
+do not import mockup.js), size cap, and contains required marker strings
+(shadow-root attach, Esc handler, fail-soft fetch guards). Done: npm test
+whole, CHANGELOG.md. NEW FILES ONLY plus the package.json test:studio
+line and CHANGELOG — zero edits to existing lib/renderer/main files.
+```
