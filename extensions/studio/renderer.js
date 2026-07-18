@@ -486,6 +486,14 @@ function mountProjects(el, hasBus) {
     teardownPickBridge();   // A5: only wireSee (SEE + annotate on) re-arms it
     renderRail();
     coUpdateVisibility();
+    renderStep();
+    // B2: the app frame tracks every repaint — a step change replaces .pjMain
+    // wholesale (no observer fires for a vanished placeholder), so the sync
+    // has to ride the render itself: show on a ready Lift-off, hide elsewhere.
+    scheduleFrameSync();
+  }
+
+  function renderStep() {
     if (state.step === 'ws') return renderWs();
     if (state.step === 'start') return renderStart();
     if (state.step === 'import') return renderImport();
@@ -1792,6 +1800,20 @@ function mountProjects(el, hasBus) {
           : '') +
       '</div>' +
 
+      // slice B2: the PREVIEW surface — the placeholder rectangle main's
+      // WebContentsView overlays while the B1 server is ready (Wave E renames
+      // this area). No iframe and no URL in this DOM: the frame is main-owned,
+      // and this card only stakes out the geometry the frame sync measures.
+      (srv.phase === 'ready' && srv.port
+        ? '<div class="pjCard">' +
+            '<div class="pjLabel">PREVIEW — YOUR APP ' +
+              '<span class="pjRunPhase" data-phase="ready">LOCALHOST:' + escapeHtml(String(srv.port)) + '</span></div>' +
+            '<div class="pjFramePlot" aria-label="Live app preview"></div>' +
+            '<div class="pjBtnRow"><button type="button" class="pjBtn pjFrameReloadBtn" ' +
+              'title="Reload the app frame (the dev server keeps running)">RELOAD</button></div>' +
+          '</div>'
+        : '') +
+
       '<div class="pjCard"><div class="pjBtnRow"><button type="button" class="pjBtn pjLiftBack">← BACK TO CREATE</button></div></div>';
 
     main.querySelector('.pjLiftRegisterBtn').addEventListener('click', () => {
@@ -1888,7 +1910,74 @@ function mountProjects(el, hasBus) {
       ApexBus.post('projectsServerStop', { projectId: p.projectId });
     });
 
+    // slice B2: same-URL navigate = reload — the one instrument the frame
+    // needs before Wave E's instrument bar (a dev server hiccup or broken HMR
+    // must not force a server restart).
+    const frameReloadBtn = main.querySelector('.pjFrameReloadBtn');
+    if (frameReloadBtn) frameReloadBtn.addEventListener('click', () => {
+      ApexBus.post('appFrameNavigate', { url: 'http://localhost:' + srv.port + '/' });
+    });
+
     main.querySelector('.pjLiftBack').addEventListener('click', () => goStep('create'));
+  }
+
+  // ---- slice B2: the app frame sync ---------------------------------------
+  // The real app renders in a MAIN-owned WebContentsView (main/appFrame.js);
+  // this half owns only geometry and visibility truth. One function
+  // (frameSyncNow) recomputes both from the live DOM, and every way the
+  // placeholder can move or vanish funnels into it: renders (the schedule in
+  // render()), element resizes (ResizeObserver — a hidden ancestor zeroes the
+  // rect, so a dock-tab/sub-tab/step hide lands here without the shell having
+  // to tell us), window resizes, and scrolls. Trailing-edge throttle so a
+  // drag posts a handful of bounds, not hundreds. Fail-soft by construction:
+  // on a core without appFrame.js the posts are unhandled-type warnings and
+  // the placeholder simply stays an empty card.
+  const frame = {
+    shown: false, timer: null, plotEl: null,
+    ro: typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => scheduleFrameSync()) : null,
+  };
+
+  function frameSyncNow() {
+    const p = state.createdProject;
+    const srv = state.server;
+    const plot = main.querySelector('.pjFramePlot');
+    // re-aim the observer only when the element CHANGED — re-observing the
+    // same node fires the initial-size callback and would loop the throttle
+    if (frame.ro && frame.plotEl !== plot) {
+      frame.ro.disconnect();
+      frame.plotEl = plot;
+      if (plot) frame.ro.observe(plot);
+    }
+    let bounds = null;
+    if (plot && p && srv.phase === 'ready' && srv.port) {
+      const r = plot.getBoundingClientRect();   // zero while any ancestor hides
+      if (r.width > 0 && r.height > 0)
+        bounds = { x: r.left, y: r.top, width: r.width, height: r.height };
+    }
+    if (bounds) {
+      frame.shown = true;
+      // show doubles as the bounds sync (main reloads only on a CHANGED url)
+      ApexBus.post('appFrameShow', {
+        projectId: p.projectId,
+        url: 'http://localhost:' + srv.port + '/',
+        bounds,
+      });
+    } else if (frame.shown) {
+      frame.shown = false;
+      ApexBus.post('appFrameHide', {});
+    }
+  }
+
+  function scheduleFrameSync() {
+    if (!hasBus || frame.timer) return;
+    frame.timer = setTimeout(() => { frame.timer = null; frameSyncNow(); }, 80);
+  }
+
+  if (hasBus && typeof window !== 'undefined') {
+    window.addEventListener('resize', scheduleFrameSync);
+    // capture: .pjMain (and any inner scroller) moves the placeholder without
+    // resizing it — the only signal ResizeObserver cannot see
+    el.addEventListener('scroll', scheduleFrameSync, true);
   }
 
   // ---- bus handlers -------------------------------------------------------
@@ -2243,6 +2332,18 @@ function mountProjects(el, hasBus) {
         logEl.textContent = srv.log.slice(-40).join('\n');
         logEl.scrollTop = logEl.scrollHeight;
       } else render();   // first line: the card has no <pre> yet
+    }
+  });
+
+  // slice B2: a frame refusal (URL wall, dead window) tells its story in the
+  // RUN drawer's existing error slot — per-window truth, postTo'd by main, so
+  // it can only ever describe THIS window's frame.
+  ApexBus.on('appFrameState', (m) => {
+    if (!m || m.ok || !m.error) return;
+    const srv = state.server;
+    if (srv.error !== m.error) {
+      srv.error = m.error;
+      if (state.step === 'liftoff') render();
     }
   });
 

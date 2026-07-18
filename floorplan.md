@@ -51,6 +51,15 @@ ApexShell/
 │   │                      and the bounds/reopen-preference persistence
 │   │                      (state/studio-window.json); Electron-free so the
 │   │                      multiwindow drill proves it
+│   ├── appFrame.js        the app frame (STUDIO v2 Wave B's one core touch):
+│   │                      one main-owned WebContentsView per host window for
+│   │                      the studio's living preview — localhost-only URL
+│   │                      wall, bounds sanitation, per-window show/hide/
+│   │                      navigate/destroy registry, appFrame* bus verbs
+│   │                      (per-window postTo replies); Electron-free with an
+│   │                      injectable view factory (main.js supplies the
+│   │                      sandboxed view + nav confinement) so
+│   │                      test/appframe-drill.js proves it headless
 │   ├── seats.js           seat lifecycle, presets, launch config, restore
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
 │   ├── tasks.js           the WORKFLOW LAYER: task board store + persona
@@ -391,7 +400,8 @@ Full spec: `design/consult-v1.md`.
 
 - ANY main/renderer logic change → `npm test` — the full hermetic drill suite
   (zero LLM spend) must pass whole. It runs three targets (audit M7): `test:core`
-  (launch-args, taskboard, audit, consult, skills, linkify — the Law-3-pure subset
+  (launch-args, multiwindow, appframe, taskboard, audit, consult, skills,
+  linkify — the Law-3-pure subset
   that needs NO `extensions/`, so it proves the core in isolation), `test:studio`
   (the STUDIO shell + `registerBuilder` seam), and `test:persona` (the personas
   EXTENSION's own drills). Keep new core drills in `test:core`; extension drills

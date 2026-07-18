@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave B slice B2 — the app frame** (`main/appFrame.js` NEW +
+  its `main/main.js` wiring — the wave's one core touch, narrow and argued;
+  `extensions/studio/{renderer.js,style.css}`; drill in
+  `test/appframe-drill.js` — 14 checks, wired into `test:core`). The user's
+  real app, hosted INSIDE the studio: a main-owned Electron `WebContentsView`
+  per host window (Law 2 — the renderer never gains node or webview powers),
+  attached to whichever shell window the posting renderer lives in
+  (`BrowserWindow.fromWebContents(ctx.sender)` — the S2 idiom; the docked
+  pane and the detached studio window host independently, both at once).
+  `appFrame.js` is Electron-free (the studioWindow.js precedent) and owns
+  every drillable decision: the URL wall (ONLY `http://localhost:<port>` /
+  `http://127.0.0.1:<port>`, explicit port required, credentials/userinfo
+  spoofs/IPv6/other loopback refused, WHATWG-normalized), bounds sanitation
+  (numbers-only, finite, negatives clamp to 0, capped, scaled by the
+  sender's webFrame zoom so CSS px land as DIPs), and the per-window
+  registry (show doubles as the bounds sync — only a CHANGED url reloads;
+  hide keeps view + url alive so a tab/step flip never restarts the app;
+  only a window's death destroys, via its `closed` hook, with a quit-time
+  `destroyAll` backstop). main.js supplies the thin shell: fully sandboxed
+  webPreferences (no preload, `sandbox:true`, `contextIsolation:true`, no
+  node), `setWindowOpenHandler` deny, and will-navigate/will-redirect
+  confined to the frame's own localhost origin through the registry's live
+  allowedUrl accessor. Bus verbs `appFrameShow {projectId, url, bounds}` /
+  `appFrameHide` / `appFrameNavigate {url}` answer per-window over
+  `bus.postTo` (`appFrameState`); senderless (smoke-injected) posts drop
+  silently, and on a core without the module the studio's posts land as the
+  bus's unhandled-type warning — fail-soft, no frame, nothing breaks.
+  Renderer: a PREVIEW card on Lift-off (Wave E renames it) stakes out a
+  placeholder rectangle while the B1 server is `ready`; one truth function
+  recomputes geometry + visibility from the live DOM on every render,
+  ResizeObserver fire (a hidden ancestor zeroes the rect — dock-tab,
+  sub-tab, and step hides all land there), window resize, and scroll,
+  throttled trailing-edge; RELOAD rides same-url `appFrameNavigate`. No
+  frame in smoke — nothing starts a server. Update & restart applies.
 - **STUDIO v2, Wave B slice B1 — the dev-server runner**
   (`extensions/studio/lib/servers.js` new, `extensions/studio/{main.js,
   renderer.js,style.css}`; drill in `test/studio-servers-drill.js`, wired into

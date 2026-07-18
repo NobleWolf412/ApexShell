@@ -3,13 +3,14 @@
 // Renderer is sandboxed; the preload contextBridge is the only door (plan §3).
 'use strict';
 
-const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, protocol, net, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 
 const bus = require('./bus');
 const studioWindow = require('./studioWindow');
+const appFrame = require('./appFrame');
 const theme = require('./theme');
 const monitors = require('./monitors');
 const seats = require('./seats');
@@ -338,6 +339,49 @@ bus.on('studioWindowToggle', () => studioWindow.toggle(createStudioWindow, postS
 // which is harmless — every window holds the same truth.
 bus.on('studioWindowGet', () => postStudioState(studioWindow.isOpen()));
 
+// STUDIO v2 Wave B (B2): the app frame — the user's real dev-server app in a
+// main-owned WebContentsView, one per host window, attached to whichever
+// shell window the posting renderer lives in (the S2 fromWebContents idiom —
+// docked and detached both host). Every drillable decision (the localhost
+// URL wall, bounds sanitation, the per-window show/hide/destroy registry)
+// lives in appFrame.js; this factory is the thin Electron shell: a fully
+// sandboxed view (no preload — the hosted app gets NO door into Apex),
+// window-open denied, and every navigation/redirect confined to the frame's
+// own localhost origin via the registry's live allowedUrl accessor.
+const appFrames = appFrame.register({
+  bus,
+  windowFor: (sender) => {
+    try { return sender && !sender.isDestroyed() ? BrowserWindow.fromWebContents(sender) : null; }
+    catch { return null; }
+  },
+  // CSS px → DIP: the renderer measures under its webFrame zoom (Ctrl+scroll)
+  zoomOf: (sender) => { try { return sender.getZoomFactor(); } catch { return 1; } },
+  createView: (win, allowedUrl) => {
+    const view = new WebContentsView({
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    const confine = (e, url) => {
+      if (!appFrame.sameFrameOrigin(allowedUrl(), url)) {
+        e.preventDefault();
+        lifeLog('appFrame blocked navigation to ' + url);
+      }
+    };
+    view.webContents.on('will-navigate', confine);
+    view.webContents.on('will-redirect', confine);
+    win.contentView.addChildView(view);
+    return {
+      loadURL: (u) => { view.webContents.loadURL(u).catch(() => { /* server died mid-load — the page shows its own error */ }); },
+      setBounds: (b) => view.setBounds(b),
+      setVisible: (v) => view.setVisible(v),
+      destroy: () => {
+        try { win.contentView.removeChildView(view); } catch { /* window teardown already detached it */ }
+        try { view.webContents.close(); } catch { /* already closed */ }
+      },
+    };
+  },
+});
+
 app.on('second-instance', () => {
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   else createWindow();   // lock held but window gone — relaunch INTO this instance
@@ -510,6 +554,8 @@ app.on('window-all-closed', () => {
   try { seats.dispose(); } catch (e) { console.error('seats.dispose:', e.message); }
   try { terminal.dispose(); } catch (e) { console.error('terminal.dispose:', e.message); }
   try { artifacts.dispose(); } catch (e) { console.error('artifacts.dispose:', e.message); }
+  // each frame already died on its window's 'closed' hook — this is the backstop
+  try { appFrames.destroyAll(); } catch (e) { console.error('appFrame.destroyAll:', e.message); }
   try { extensions.dispose(); } catch (e) { console.error('extensions.dispose:', e.message); }
   app.quit();
   // hard backstop: if anything (a wedged ConPTY child, a stray handle) keeps

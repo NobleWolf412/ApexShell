@@ -1,0 +1,194 @@
+// Apex — the app frame (STUDIO v2, Wave B slice B2): the user's real app,
+// hosted INSIDE the studio in a main-owned Electron WebContentsView (Law 2:
+// the renderer never gains node or webview powers — it only tells main WHERE
+// its placeholder rectangle sits and WHEN it is visible; main owns the view,
+// the URL wall, and the teardown).
+//
+// Electron-free on purpose (the studioWindow.js precedent): the URL allowlist,
+// bounds sanitation, the per-window registry, and the show/hide/navigate/
+// destroy semantics all live here so test/appframe-drill.js proves them
+// hermetically; main.js supplies the Electron shell as the `createView`
+// factory (WebContentsView + window-open deny + navigation confinement) and
+// the `windowFor`/`zoomOf` seams around ctx.sender.
+//
+// ONE view per host window, keyed by the BrowserWindow itself: the docked
+// shell and the detached studio window are independent hosts (S2 — both may
+// preview at once; each renderer's posts land on its own window via
+// BrowserWindow.fromWebContents(ctx.sender)). Hide keeps the view alive —
+// a hide is a tab/step flip, and reloading the user's app on every flip
+// would throw away its in-page state; only a window's death destroys.
+'use strict';
+
+const MAX_URL = 2048;         // a dev-server URL is short; anything huge is hostile
+const BOUNDS_CAP = 20000;     // px — beyond any real monitor wall; caps a hostile post
+
+// ---- the URL wall ----------------------------------------------------------
+// The frame loads ONLY http://localhost:<port> or http://127.0.0.1:<port>
+// (the port comes from the project's B1 server state, but the SEAM is the
+// authority — a renderer post naming any other origin refuses). WHATWG URL
+// does the parsing so userinfo spoofs (http://localhost:3000@evil.com puts
+// evil.com in .hostname) and case/percent tricks land normalized before the
+// checks. An explicit numeric port is REQUIRED: a dev server always has one,
+// and ":80 implied" shapes are exactly the ambiguity the wall exists to kill.
+function validateFrameUrl(url) {
+  if (typeof url !== 'string' || !url || url.length > MAX_URL) return null;
+  let u;
+  try { u = new URL(url); } catch { return null; }   // relative/garbage/oversized port
+  if (u.protocol !== 'http:') return null;
+  if (u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') return null;
+  if (!/^[0-9]+$/.test(u.port)) return null;         // empty (implied 80) refuses
+  const port = Number(u.port);
+  if (port < 1 || port > 65535) return null;
+  if (u.username || u.password) return null;         // credentials never belong here
+  return u.toString();                               // normalized — the string the view loads
+}
+
+// will-navigate confinement: a target is allowed only if it (a) passes the
+// wall itself and (b) shares the frame's current protocol+host+port — the
+// user's SPA may route freely, but a link off localhost (or to another
+// port's server) is denied at the seam.
+function sameFrameOrigin(allowedUrl, targetUrl) {
+  const a = validateFrameUrl(allowedUrl);
+  const t = validateFrameUrl(targetUrl);
+  if (!a || !t) return false;
+  const ua = new URL(a), ut = new URL(t);
+  return ua.protocol === ut.protocol && ua.hostname === ut.hostname && ua.port === ut.port;
+}
+
+// ---- bounds sanitation -----------------------------------------------------
+// The renderer measures its placeholder with getBoundingClientRect (CSS px);
+// setBounds wants integer DIPs. `zoom` is the sender's webFrame zoom factor
+// (Ctrl+scroll zoom, shell.js) — CSS px scale UP with it, so DIP = css × zoom.
+// Finite-or-refuse, negative clamps to 0 (a placeholder half-scrolled off the
+// top measures negative — clamp, don't drop the frame), capped both ways.
+function sanitizeBounds(bounds, zoom) {
+  if (!bounds || typeof bounds !== 'object') return null;
+  const factor = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const out = {};
+  for (const key of ['x', 'y', 'width', 'height']) {
+    const v = bounds[key];   // numbers or nothing — no string coercion at a seam
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+    out[key] = Math.min(BOUNDS_CAP, Math.max(0, Math.round(v * factor)));
+  }
+  if (!out.width || !out.height) return null;   // a zero box is a hide, not a show
+  return out;
+}
+
+// ---- the per-window registry -----------------------------------------------
+// createFrameRegistry({ createView }) → { show, hide, navigate, stateOf,
+// destroyFor, destroyAll }. `createView(win, allowedUrl)` returns an adapter
+// {loadURL, setBounds, setVisible, destroy} — Electron's WebContentsView in
+// production, a recording stub in the drill. `allowedUrl` is a live accessor
+// onto the entry's current URL: the shell's will-navigate guard reads it, so
+// confinement follows every navigate without the shell holding state.
+function createFrameRegistry({ createView }) {
+  const entries = new Map();   // win -> { view, url, visible, bounds, projectId }
+
+  const dead = (win) => !win || (typeof win.isDestroyed === 'function' && win.isDestroyed());
+  const refuse = (projectId, error) => ({ ok: false, projectId: projectId || null, error });
+
+  // show doubles as the bounds sync: the renderer re-posts appFrameShow with
+  // fresh bounds on every layout change, and only a CHANGED url reloads.
+  function show(win, msg, zoom) {
+    const m = msg || {};
+    if (dead(win)) return refuse(m.projectId, 'That window is gone.');
+    const url = validateFrameUrl(m.url);
+    if (!url) return refuse(m.projectId,
+      'The app frame only loads http://localhost:<port> or http://127.0.0.1:<port>.');
+    const bounds = sanitizeBounds(m.bounds, zoom);
+    if (!bounds) return refuse(m.projectId, 'The app frame needs a real on-screen rectangle.');
+    let e = entries.get(win);
+    if (!e) {
+      e = { view: null, url: null, visible: false, bounds: null, projectId: null };
+      e.view = createView(win, () => e.url);
+      entries.set(win, e);
+      // the window's death is the ONE destroy trigger (hide never tears down)
+      if (typeof win.once === 'function') win.once('closed', () => destroyFor(win));
+    }
+    e.projectId = m.projectId || null;
+    if (e.url !== url) { e.url = url; e.view.loadURL(url); }
+    e.bounds = bounds;
+    e.view.setBounds(bounds);
+    if (!e.visible) { e.visible = true; e.view.setVisible(true); }
+    return { ok: true, projectId: e.projectId, url: e.url, visible: true };
+  }
+
+  // hide = the step/pane/tab went away: view and URL survive so the next show
+  // is a reveal, not a reload. Hiding what was never shown is a quiet yes.
+  function hide(win) {
+    const e = entries.get(win);
+    if (!e) return { ok: true, projectId: null, visible: false };
+    if (e.visible) { e.visible = false; e.view.setVisible(false); }
+    return { ok: true, projectId: e.projectId, visible: false };
+  }
+
+  // navigate = reload/point the EXISTING frame (same-url navigate is the
+  // reload button); it never conjures a view — show owns creation, because
+  // only show carries bounds.
+  function navigate(win, msg) {
+    const m = msg || {};
+    if (dead(win)) return refuse(m.projectId, 'That window is gone.');
+    const e = entries.get(win);
+    if (!e) return refuse(m.projectId, 'Show the app frame before navigating it.');
+    const url = validateFrameUrl(m.url);
+    if (!url) return refuse(e.projectId,
+      'The app frame only loads http://localhost:<port> or http://127.0.0.1:<port>.');
+    e.url = url;
+    e.view.loadURL(url);
+    return { ok: true, projectId: e.projectId, url: e.url, visible: e.visible };
+  }
+
+  function destroyFor(win) {
+    const e = entries.get(win);
+    if (!e) return false;
+    entries.delete(win);
+    try { e.view.destroy(); } catch { /* window teardown already took it */ }
+    return true;
+  }
+
+  function destroyAll() { for (const win of [...entries.keys()]) destroyFor(win); }
+
+  // drill/debug introspection — never part of any bus payload
+  function stateOf(win) {
+    const e = entries.get(win);
+    return e
+      ? { present: true, url: e.url, visible: e.visible, bounds: e.bounds, projectId: e.projectId }
+      : { present: false };
+  }
+
+  return { show, hide, navigate, destroyFor, destroyAll, stateOf };
+}
+
+// ---- the bus verbs ---------------------------------------------------------
+// register({ bus, windowFor, zoomOf, createView }) wires appFrameShow/Hide/
+// Navigate. Replies ride bus.postTo (the S2 discipline): the answering truth
+// is per-window, and a broadcast would hand window A's frame state to window
+// B. A senderless post (bus.inject — smoke) has no host window and drops
+// silently: nothing to attach a view to, nothing to answer. That is also the
+// fail-soft contract with the studio extension: on a core without this
+// module the posts land as the bus's unhandled-type warning and the studio
+// simply never shows a frame.
+function register({ bus, windowFor, zoomOf, createView }) {
+  const registry = createFrameRegistry({ createView });
+  const host = (ctx) => windowFor(ctx && ctx.sender);
+
+  bus.on('appFrameShow', (m, ctx) => {
+    const win = host(ctx);
+    if (!win) return;
+    bus.postTo(win, 'appFrameState', registry.show(win, m, zoomOf ? zoomOf(ctx.sender) : 1));
+  });
+  bus.on('appFrameHide', (m, ctx) => {
+    const win = host(ctx);
+    if (!win) return;
+    bus.postTo(win, 'appFrameState', registry.hide(win));
+  });
+  bus.on('appFrameNavigate', (m, ctx) => {
+    const win = host(ctx);
+    if (!win) return;
+    bus.postTo(win, 'appFrameState', registry.navigate(win, m));
+  });
+
+  return registry;   // main.js holds it for the quit-time destroyAll backstop
+}
+
+module.exports = { validateFrameUrl, sameFrameOrigin, sanitizeBounds, createFrameRegistry, register };
