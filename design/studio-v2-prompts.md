@@ -183,3 +183,91 @@ stays `proposed` until the last wave lands.
 
 Same as v1: don't argue with a drifting seat — close it, tighten the
 prompt with what it got wrong, fresh seat. Bounce limit of 2.
+
+---
+
+# Wave B + parallel track — build prompts (added post-Wave-S)
+
+Wave B lands serially in the main tree (B1 → B2 → B3 → B4 sweep; B2/B3
+prompts get appended here when B1's realities are known). F1 and D1 are
+new-files-only lib slices, explicitly parallel-safe: they run in isolated
+worktrees alongside B1 and merge after it lands.
+
+## Slice B1 — the dev-server runner (main tree)
+
+```
+Read design/studio-v2.md (§ Wave B — the living preview). Implement SLICE
+B1 ONLY: the dev-server runner, extension-only. lib/servers.js: per-project
+launch config {command, args, cwd, port, readyRegex?} persisted machine-side
+in state/extensions/studio/servers.json (atomic write, schema-versioned,
+NEVER in the portable package — the A2/workspace.json discipline); a
+lifecycle state machine (stopped→starting→ready→stopped/failed) driven by
+an injectable spawner seam (child_process in production, a stub in drills);
+ready detection via readyRegex on stdout/stderr with a port-listen fallback
+timeout; a bounded log ring (last 400 lines); stop = tree-kill on Windows
+(taskkill /T — study main/engine/claudeSeat.js's Windows kill for the
+idiom, do NOT touch that file); every server dies on extension dispose and
+app quit (no orphans — drill the dispose path). Bus verbs (suggest-pass
+naming discipline): projectsServerConfigGet/Save, projectsServerStart/
+Stop, posts projectsServerState {projectId, phase, port, logTail} and
+projectsServerLog deltas. UI: a minimal RUN drawer on the Lift-off/BUILD
+step (config form, start/stop, log tail) — the full BUILD step is Wave E.
+Guards: cwd must be inside a registered workspace project or the projects
+workspace (containment, drilled); commands run with the project cwd, plain
+env, no shell string interpolation of user fields into a shell line (spawn
+with args array — drill that a hostile command string cannot smuggle a
+second command). Done: npm test whole (new drill: config round-trip,
+lifecycle transitions with stubbed spawner, ready-regex + fallback, log
+ring cap, dispose kills all, containment refusals, args-array
+no-injection), APEX_SMOKE=1 both variants exit 0, CHANGELOG.md. Extension
+code only — no main/, no engine. Update & restart applies — say so.
+```
+
+## Slice F1 — the product-contract spines (parallel worktree)
+
+```
+Read design/studio-v2.md (§ Wave F — the product contract). Implement
+SLICE F1 ONLY: the contract SCHEMAS as pure lib code + docs — no UI, no
+bus verbs, no main.js/liftoff wiring (F2 does that). New
+extensions/studio/lib/spines.js: (1) the component-library manifest schema
+(components.json v1: named components, each with variants[], effects[],
+token-role bindings — validate shape, cap counts/lengths, fail-closed);
+(2) the UI-manifest schema (manifest.json v1: screens[], each naming
+components + variants used — same discipline); (3) validators
+(validateComponents/validateManifest returning {valid, errors, warnings}
+in the contract.js voice — plain language, never throws); (4) a
+renderContractAddendum(tokens, components?, manifest?) producing the
+markdown addendum text a coder kickoff will carry (F2 wires it) — pure
+function, deterministic, states what exists and what the scaffold must
+create. New design/contract-spines.md documenting both schemas with
+examples (the file scaffold templates and coder personas will read). Done:
+npm test whole (new drill test/studio-spines-drill.js: valid/hostile/
+oversized shapes for both schemas, addendum determinism + content, never
+throws), CHANGELOG.md. NEW FILES ONLY plus the package.json test:studio
+chain line and CHANGELOG — zero edits to existing lib/renderer/main files.
+```
+
+## Slice D1 — the architecture-diagram contract (parallel worktree)
+
+```
+Read design/studio-v2.md (§ Wave D — the X-ray, planned view). Implement
+SLICE D1 ONLY: the mermaid-source contract as pure lib code — no UI, no
+bus verbs, no AI wiring (D2 does the disposable pass + the step). New
+extensions/studio/lib/xray.js: (1) buildDiagramPrompt(blueprint) — the
+prompt for a future one-turn diagram pass (blueprint architecture/platform
+digest in, mermaid flowchart out), deterministic; (2) the untrusted-reply
+contract: extract exactly one fenced mermaid block, validate against a
+STRICT allowlist subset (flowchart/graph directives, node/edge lines,
+subgraph/end, class/style lines — reject click/callback/href/%%{init}
+and ANY line not matching the allowlist grammar; size-capped; fail-closed
+to {source:null, error}); (3) provenance shape {canonicalHash,
+generatedAt} matching A3's sidecar idiom; (4) a deterministic FALLBACK
+diagram builder (no AI): parse the architecture area's prose for component
+nouns (the A2 keyword-table style) and emit a valid mermaid flowchart of
+them — always available, marked source:'derived'. Done: npm test whole
+(new drill test/studio-xray-drill.js: valid mermaid accepted, every
+forbidden directive rejected, non-mermaid/oversized/multi-block fail
+closed, fallback determinism + validity vs own allowlist, prompt shape),
+CHANGELOG.md. NEW FILES ONLY plus the package.json test:studio chain line
+and CHANGELOG — zero edits to existing lib/renderer/main files.
+```
