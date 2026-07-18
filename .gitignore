@@ -15,3 +15,9 @@ Thumbs.db
 
 # Tooling caches
 .serena/
+
+# Local worktrees for parallel builds (never tracked)
+.worktrees/
+
+# Bridge-session deletion staging (Cowork can move but not delete; empty me)
+_to_delete/
