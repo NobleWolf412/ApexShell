@@ -254,6 +254,16 @@ function mountProjects(el, hasBus) {
       delegateBusy: false, delegateResult: null,
       chatBusy: false, chatResult: null,
     },
+    // ---- slice B1: the RUN drawer (dev-server runner on Lift-off) ----
+    // `form` is the user's working copy of the config inputs — it survives
+    // re-renders (the liveAnswers rule) and is seeded from the saved config
+    // exactly once per project. `forProject` doubles as the fetch guard so
+    // opening Lift-off asks main for the config only once. Log deltas patch
+    // the <pre> directly (a full render per log line would eat the caret).
+    server: {
+      forProject: null, config: null, form: null,
+      phase: 'stopped', port: null, log: [], error: null, busy: false,
+    },
     // ---- slice 9: import/audit mode ----
     // Read-only inspection of an existing project folder; a mapping the user
     // reviews (and can retarget one row at a time — targeted revision) before
@@ -1674,6 +1684,26 @@ function mountProjects(el, hasBus) {
     const p = state.createdProject;
     const lift = state.liftoff;
 
+    // slice B1: first visit for this project asks main for the saved launch
+    // config (forProject is the guard — the reply re-renders, which must not
+    // re-ask).
+    if (state.server.forProject !== p.projectId) {
+      state.server = {
+        forProject: p.projectId, config: null, form: null,
+        phase: 'stopped', port: null, log: [], error: null, busy: false,
+      };
+      ApexBus.post('projectsServerConfigGet', { projectId: p.projectId });
+    }
+    const srv = state.server;
+    const form = srv.form || (srv.config ? {
+      command: srv.config.command || '',
+      argsText: (srv.config.args || []).join(' '),
+      cwd: srv.config.cwd || '',
+      port: srv.config.port != null ? String(srv.config.port) : '',
+      readyRegex: srv.config.readyRegex || '',
+    } : { command: '', argsText: '', cwd: '', port: '', readyRegex: '' });
+    const srvRunning = srv.phase === 'starting' || srv.phase === 'ready';
+
     main.innerHTML =
       '<h2 class="pjTitle">Lift-off — ' + escapeHtml(p.displayName || p.projectId) + '</h2>' +
       '<p class="pjLead">' + escapeHtml(p.projectDir) + '</p>' +
@@ -1730,6 +1760,38 @@ function mountProjects(el, hasBus) {
           : '') +
       '</div>' +
 
+      // slice B1: the RUN drawer — a minimal dev-server runner. The full BUILD
+      // step is Wave E; this is config + start/stop + a log tail.
+      '<div class="pjCard">' +
+        '<div class="pjLabel">RUN — DEV SERVER ' +
+          '<span class="pjRunPhase" data-phase="' + escapeHtml(srv.phase) + '">' +
+            escapeHtml(srv.phase.toUpperCase() + (srv.phase === 'ready' && srv.port ? ' :' + srv.port : '')) +
+          '</span></div>' +
+        '<div class="pjWsSub">Launches this project\'s dev server as a plain process (argv array — never a shell ' +
+          'line, so arguments are whitespace-split tokens with no quoting). The working folder must stay inside ' +
+          'the projects workspace or a registered workspace. Ready = the pattern matching a log line, or the ' +
+          'port answering.</div>' +
+        '<label class="pjLabel" for="pjRunCommand">COMMAND (EXECUTABLE ONLY)</label>' +
+        '<input class="pjName pjRunCommand" id="pjRunCommand" maxlength="200" placeholder="npm" value="' + escapeHtml(form.command) + '" />' +
+        '<label class="pjLabel" for="pjRunArgs">ARGUMENTS — SPACE-SEPARATED</label>' +
+        '<input class="pjName pjRunArgs" id="pjRunArgs" maxlength="400" placeholder="run dev" value="' + escapeHtml(form.argsText) + '" />' +
+        '<label class="pjLabel" for="pjRunCwd">WORKING FOLDER — EMPTY = THE PROJECT FOLDER</label>' +
+        '<input class="pjName pjRunCwd" id="pjRunCwd" maxlength="260" placeholder="' + escapeHtml(p.projectDir) + '" value="' + escapeHtml(form.cwd) + '" />' +
+        '<label class="pjLabel" for="pjRunPort">PORT (OPTIONAL)</label>' +
+        '<input class="pjName pjRunPort" id="pjRunPort" maxlength="5" placeholder="5173" value="' + escapeHtml(form.port) + '" />' +
+        '<label class="pjLabel" for="pjRunReady">READY PATTERN (OPTIONAL REGEX OVER LOG LINES)</label>' +
+        '<input class="pjName pjRunReady" id="pjRunReady" maxlength="200" placeholder="ready in|Local:" value="' + escapeHtml(form.readyRegex) + '" />' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjRunSaveBtn" ' + (srv.busy ? 'disabled' : '') + '>SAVE CONFIG</button>' +
+          '<button type="button" class="pjBtn primary pjRunStartBtn" ' + (srv.busy || srvRunning || !srv.config ? 'disabled' : '') + '>START</button>' +
+          '<button type="button" class="pjBtn pjRunStopBtn" ' + (srv.busy || !srvRunning ? 'disabled' : '') + '>STOP</button>' +
+        '</div>' +
+        (srv.error ? '<div class="pjErr" data-tone="warn">' + escapeHtml(srv.error) + '</div>' : '') +
+        (srv.log.length
+          ? '<pre class="pjRunLog">' + escapeHtml(srv.log.slice(-40).join('\n')) + '</pre>'
+          : '') +
+      '</div>' +
+
       '<div class="pjCard"><div class="pjBtnRow"><button type="button" class="pjBtn pjLiftBack">← BACK TO CREATE</button></div></div>';
 
     main.querySelector('.pjLiftRegisterBtn').addEventListener('click', () => {
@@ -1772,6 +1834,58 @@ function mountProjects(el, hasBus) {
       lift.chatResult = null;
       render();
       ApexBus.post('projectsLiftoffChat', { projectId: p.projectId });
+    });
+
+    // slice B1: the RUN drawer's wiring. Every keystroke lands in srv.form so
+    // a passive re-render (a state post for another card) never eats typing.
+    const readServerForm = () => {
+      srv.form = {
+        command: main.querySelector('.pjRunCommand').value,
+        argsText: main.querySelector('.pjRunArgs').value,
+        cwd: main.querySelector('.pjRunCwd').value,
+        port: main.querySelector('.pjRunPort').value,
+        readyRegex: main.querySelector('.pjRunReady').value,
+      };
+      return srv.form;
+    };
+    for (const cls of ['pjRunCommand', 'pjRunArgs', 'pjRunCwd', 'pjRunPort', 'pjRunReady'])
+      main.querySelector('.' + cls).addEventListener('input', readServerForm);
+
+    main.querySelector('.pjRunSaveBtn').addEventListener('click', () => {
+      if (srv.busy) return;
+      const f = readServerForm();
+      const portText = f.port.trim();
+      srv.busy = true;
+      srv.error = null;
+      render();
+      ApexBus.post('projectsServerConfigSave', {
+        projectId: p.projectId,
+        config: {
+          command: f.command.trim(),
+          // whitespace-split tokens, one argv entry each — there is no shell,
+          // so there is no quoting; that is the no-injection guarantee's price
+          args: f.argsText.split(/\s+/).filter(Boolean),
+          cwd: f.cwd.trim() || null,
+          port: portText === '' ? null : Number(portText),
+          readyRegex: f.readyRegex.trim() || null,
+        },
+      });
+    });
+
+    main.querySelector('.pjRunStartBtn').addEventListener('click', () => {
+      if (srv.busy || srvRunning || !srv.config) return;
+      srv.busy = true;
+      srv.error = null;
+      srv.log = [];
+      render();
+      ApexBus.post('projectsServerStart', { projectId: p.projectId });
+    });
+
+    main.querySelector('.pjRunStopBtn').addEventListener('click', () => {
+      if (srv.busy || !srvRunning) return;
+      srv.busy = true;
+      render();
+      ApexBus.post('projectsServerStop', { projectId: p.projectId });
     });
 
     main.querySelector('.pjLiftBack').addEventListener('click', () => goStep('create'));
@@ -2089,6 +2203,47 @@ function mountProjects(el, hasBus) {
     state.liftoff.chatBusy = false;
     state.liftoff.chatResult = m;
     if (state.step === 'liftoff') render();
+  });
+
+  // ---- slice B1: the RUN drawer (dev-server runner) ------------------------
+  const forRunProject = (m) => m && state.createdProject &&
+    m.projectId === state.createdProject.projectId;
+
+  ApexBus.on('projectsServerConfig', (m) => {
+    if (!forRunProject(m)) return;
+    const srv = state.server;
+    srv.busy = false;
+    srv.config = m.config || null;
+    srv.error = m.error || null;
+    // seed the working copy once (or adopt a save that just landed clean)
+    if (!srv.error) srv.form = null;
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsServerState', (m) => {
+    if (!forRunProject(m)) return;
+    const srv = state.server;
+    srv.busy = false;
+    srv.phase = m.phase || 'stopped';
+    if (m.port != null) srv.port = m.port;
+    if (Array.isArray(m.logTail) && m.logTail.length) srv.log = m.logTail.slice();
+    srv.error = m.error || null;
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsServerLog', (m) => {
+    if (!forRunProject(m) || !Array.isArray(m.lines)) return;
+    const srv = state.server;
+    srv.log.push(...m.lines);
+    if (srv.log.length > 400) srv.log.splice(0, srv.log.length - 400);
+    // patch the tail in place — a full render per log line would eat the caret
+    if (state.step === 'liftoff') {
+      const logEl = main.querySelector('.pjRunLog');
+      if (logEl) {
+        logEl.textContent = srv.log.slice(-40).join('\n');
+        logEl.scrollTop = logEl.scrollHeight;
+      } else render();   // first line: the card has no <pre> yet
+    }
   });
 
   // smoke eyes (A4): the SEE step must be REACHABLE in a smoke run with no

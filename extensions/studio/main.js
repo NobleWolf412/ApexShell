@@ -26,8 +26,14 @@ const packageCreator = require('./lib/creator');
 const design = require('./lib/design');
 const liftoff = require('./lib/liftoff');
 const importer = require('./lib/importer');
+const servers = require('./lib/servers');
 
 const CONFIG_FILE = 'workspace.json';
+
+// Slice B1: every dev-server manager any register() call created (drills
+// register several harnesses in one process) — dispose() must reach them all,
+// so no orphan survives extension dispose or app quit.
+const liveServerManagers = new Set();
 
 function configPath(stateDir) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir))
@@ -1295,10 +1301,116 @@ function register(ctx) {
       ctx.bus.post('projectsLiftoffChatResult', { ok: false, error: err.message });
     }
   });
+
+  // ---- the dev-server runner (slice B1, § Wave B) --------------------------
+  // lib/servers.js owns config persistence, the lifecycle machine, ready
+  // detection, the log ring, and the tree-kill; this block is bus plumbing +
+  // the guards. The spawner and timing are injectable seams (ctx.serverSpawner
+  // / ctx.serverTuning in drills — the same optionality pattern as ctx.serve),
+  // so the whole lifecycle drills with zero real processes; the real loader
+  // passes neither and gets child_process + production timings.
+  const serverManager = servers.createServerManager({
+    ...(ctx.serverTuning || {}),
+    spawner: ctx.serverSpawner || undefined,
+    onState: (state) => ctx.bus.post('projectsServerState', state),
+    onLog: (delta) => ctx.bus.post('projectsServerLog', delta),
+  });
+  liveServerManagers.add(serverManager);
+
+  // Containment roots beyond the projects workspace: the registered
+  // workspaces (seatconfig `_workspaces`). ctx.seats offers no workspace
+  // READER (registerWorkspace only writes), and B1 is extension-only — so the
+  // list is read straight off seatconfig.json, read-only and fail-soft, with
+  // the same absolute+exists validation main/seats.js's readWorkspaces
+  // applies. The day a core reader seam exists, it replaces this.
+  const seatconfigFile = ctx.seatconfigFile ||   // drill seam — a fixture file
+    path.resolve(__dirname, '..', '..', 'seatconfig.json');
+  const registeredWorkspaceRoots = () => {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(seatconfigFile, 'utf8'));
+      return (Array.isArray(cfg._workspaces) ? cfg._workspaces : [])
+        .filter((w) => w && typeof w.path === 'string' && path.isAbsolute(w.path) && fs.existsSync(w.path))
+        .map((w) => w.path);
+    } catch { return []; }   // no config = no extra roots, never a crash
+  };
+
+  const requireServerProject = (message) => {
+    const projectId = message && message.projectId;
+    if (!contract.isSafeProjectId(projectId)) throw new Error('That is not a valid project id.');
+    return projectId;
+  };
+
+  const postServerConfig = (projectId) => ctx.bus.post('projectsServerConfig', {
+    projectId, config: servers.readServerConfig(ctx.stateDir, projectId), error: null,
+  });
+
+  // Any refusal (bad config, containment, not running) rides the SAME state
+  // post the lifecycle uses, with the error attached — one shape for the
+  // renderer to render, and the current phase always travels with the story.
+  const postServerFailure = (projectId, err) => ctx.bus.post('projectsServerState', {
+    ...serverManager.state(typeof projectId === 'string' ? projectId : ''),
+    projectId, error: err.message,
+  });
+
+  ctx.bus.on('projectsServerConfigGet', (message) => {
+    try { postServerConfig(requireServerProject(message)); }
+    catch (err) {
+      ctx.bus.post('projectsServerConfig', {
+        projectId: message && message.projectId, config: null, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsServerConfigSave', (message) => {
+    try {
+      const projectId = requireServerProject(message);
+      servers.writeServerConfig(ctx.stateDir, projectId, message && message.config);
+      postServerConfig(projectId);
+    } catch (err) {
+      ctx.bus.post('projectsServerConfig', {
+        projectId: message && message.projectId,
+        config: servers.readServerConfig(ctx.stateDir, message && message.projectId),
+        error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsServerStart', (message) => {
+    try {
+      const projectId = requireServerProject(message);
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const paths = contract.projectPaths(workspace, projectId);
+      if (!fs.existsSync(paths.projectDir))
+        throw new Error('Create the project before running its dev server.');
+      const config = servers.readServerConfig(ctx.stateDir, projectId);
+      if (!config) throw new Error('Save a launch config first.');
+      serverManager.start({
+        projectId, config,
+        fallbackCwd: paths.projectDir,   // empty cwd = the project's own folder
+        allowedRoots: [workspace, ...registeredWorkspaceRoots()],
+      });
+    } catch (err) { postServerFailure(message && message.projectId, err); }
+  });
+
+  ctx.bus.on('projectsServerStop', (message) => {
+    try { serverManager.stop(requireServerProject(message)); }
+    catch (err) { postServerFailure(message && message.projectId, err); }
+  });
+}
+
+// Slice B1: every dev server dies with the extension — main/extensions.js
+// calls this on app quit (window-all-closed), the servers drill calls it
+// directly. Kills across every manager register() ever created.
+function dispose() {
+  for (const manager of liveServerManagers) {
+    try { manager.stopAll(); } catch { /* dying anyway */ }
+  }
+  liveServerManagers.clear();
 }
 
 module.exports = {
   register,
+  dispose,
   readWorkspaceConfig,
   writeWorkspaceConfig,
   workspaceStatus,
@@ -1313,3 +1425,4 @@ module.exports.codesigner = codesigner;
 module.exports.packageCreator = packageCreator;
 module.exports.liftoff = liftoff;
 module.exports.importer = importer;
+module.exports.servers = servers;

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave B slice B1 — the dev-server runner**
+  (`extensions/studio/lib/servers.js` new, `extensions/studio/{main.js,
+  renderer.js,style.css}`; drill in `test/studio-servers-drill.js`, wired into
+  `test:studio`; extension code only — zero main/engine edits). Per-project
+  launch config `{command, args, cwd, port, readyRegex}` persists machine-side
+  in `state/extensions/studio/servers.json` (schema 1, same-dir temp +
+  exclusive-flag atomic write — the workspace.json discipline; NEVER in the
+  portable package). A per-project lifecycle machine (stopped → starting →
+  ready → stopped/failed) runs through an injectable spawner seam
+  (child_process in production, a stub in drills — zero real processes in
+  `npm test`): ready = `readyRegex` matching a stdout/stderr line, else a
+  port-listen probe, else a hard fallback timeout that ASSUMES up with an
+  honest log note rather than killing a slow server; logs ride a bounded ring
+  (last 400 lines, per-line cap). Stop is a TREE kill — `taskkill /pid /T /F`
+  on Windows (the claudeSeat.js dispose idiom; that file untouched),
+  `kill(-pid)` on a detached POSIX group — and `extensions/studio/main.js` now
+  exports `dispose()`, called by main/extensions.js on app quit, so every
+  server dies with the extension (no orphans, drilled). Guards: the launch
+  cwd must sit inside the projects workspace or a registered workspace
+  (seatconfig `_workspaces`, read fail-soft — ctx.seats has no reader seam),
+  and commands spawn with an args ARRAY + `shell:false` — a hostile command
+  string stays one inert argv token (drilled). Bus verbs:
+  `projectsServerConfigGet/Save`, `projectsServerStart/Stop`; posts
+  `projectsServerState {projectId, phase, port, logTail, logSize, error}` and
+  `projectsServerLog {projectId, lines}` deltas. UI: a minimal RUN drawer on
+  the Lift-off step (config form with whitespace-split args — no shell, no
+  quoting; start/stop; phase chip; live log tail patched in place) — the full
+  BUILD step is Wave E. Update & restart applies.
+
 - **STUDIO v2, Wave S slice S2 — the studio boot mode, per-window captions,
   the ⧉ affordance, and the reopen preference** (`renderer/shell.js`,
   `renderer/styles/shell.css`, `main/main.js`, `main/bus.js`,
