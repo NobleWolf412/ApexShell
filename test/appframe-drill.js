@@ -6,6 +6,9 @@
 // bounds sanitation (finite, non-negative, capped, zoom-scaled), the
 // per-window registry's show/position/hide/navigate/destroy contract, the
 // destroyed-window cleanup, and the bus verbs' per-window postTo replies.
+// Slice B3 extends it: instrument-event shaping (two kinds, hard caps), the
+// per-frame rate gate (20/s, drop beyond, one honest summary per second),
+// reset-on-navigate, and the appFrameEvent postTo wiring.
 // Zero Electron, zero LLM spend. Run: node test/appframe-drill.js
 'use strict';
 
@@ -240,6 +243,114 @@ gate('destroyAll (the quit backstop) destroys every live frame once', () => {
   assert.equal(va.destroyed, 1);
 });
 
+// ---- instrument events (B3): shaping, the rate gate, reset-on-navigate -----
+
+gate('event shaping: two kinds only, text/url hard-capped, junk drops silently', () => {
+  assert.deepEqual(
+    appFrame.shapeFrameEvent({ kind: 'console', text: 'boom', url: 'http://localhost:5173/a.js' }),
+    { kind: 'console', text: 'boom', url: 'http://localhost:5173/a.js' });
+  assert.deepEqual(appFrame.shapeFrameEvent({ kind: 'net', text: 'ERR_CONNECTION_REFUSED (-102)' }),
+    { kind: 'net', text: 'ERR_CONNECTION_REFUSED (-102)' }, 'url is optional');
+  const long = appFrame.shapeFrameEvent({ kind: 'console', text: 'x'.repeat(900), url: 'u'.repeat(900) });
+  assert.equal(long.text.length, 300, 'text caps at 300');
+  assert.equal(long.url.length, 200, 'url caps at 200');
+  assert.equal(appFrame.shapeFrameEvent({ kind: 'console', text: 'ok', url: 42 }).url, undefined,
+    'a junk url drops off; the event survives');
+  const junk = [null, undefined, 42, 'boom', {}, [],
+    { kind: 'debugger', text: 'x' },          // only console|net exist on this wire
+    { kind: 'drop', text: 'spoof' },          // a page cannot forge the summary kind
+    { kind: 'console' },                      // no text
+    { kind: 'console', text: '' },
+    { kind: 'console', text: 42 }];
+  for (const raw of junk)
+    assert.equal(appFrame.shapeFrameEvent(raw), null, 'must drop: ' + JSON.stringify(raw));
+});
+
+// A rig owning time: createView hands the registry's onEvent inlet back out,
+// postEvent records what left, and `now` is the drill's clock.
+function instrumentRig() {
+  const rig = { t: 100000, posted: [], views: [] };
+  rig.reg = appFrame.createFrameRegistry({
+    createView: (win, allowedUrl, onEvent) => {
+      const v = stubView(allowedUrl); v.onEvent = onEvent; rig.views.push(v); return v;
+    },
+    postEvent: (win, msg) => rig.posted.push({ win, msg }),
+    now: () => rig.t,
+  });
+  return rig;
+}
+
+gate('events forward shaped, to the frame\'s own window; junk raw events never leave', () => {
+  const rig = instrumentRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  v.onEvent({ kind: 'console', text: 'a'.repeat(500), url: 'http://localhost:5173/x.js' });
+  assert.equal(rig.posted.length, 1);
+  assert.equal(rig.posted[0].win, win, 'the event lands on the hosting window alone');
+  assert.equal(rig.posted[0].msg.kind, 'console');
+  assert.equal(rig.posted[0].msg.text.length, 300, 'the cap holds through the registry');
+  v.onEvent({ kind: 'evil', text: 'x' });
+  v.onEvent(null);
+  assert.equal(rig.posted.length, 1, 'junk drops silently');
+});
+
+gate('the rate gate: 20/s forward, overflow drops, ONE honest summary opens the next second', () => {
+  const rig = instrumentRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err ' + i });
+  assert.equal(rig.posted.length, 20, 'the 21st..25th dropped inside the window');
+  rig.t += 1000;
+  v.onEvent({ kind: 'net', text: 'late one' });
+  assert.equal(rig.posted.length, 22, 'the boundary flushes the summary, then the event');
+  assert.equal(rig.posted[20].msg.kind, 'drop');
+  assert.match(rig.posted[20].msg.text, /dropped 5/, 'the count is honest');
+  assert.equal(rig.posted[21].msg.text, 'late one');
+  // a clean window emits no summary
+  rig.t += 1000;
+  v.onEvent({ kind: 'console', text: 'quiet second' });
+  assert.equal(rig.posted.length, 23);
+  assert.equal(rig.posted[22].msg.kind, 'console');
+});
+
+gate('reset-on-navigate: a fresh page gets a fresh budget and no stale drop count', () => {
+  const rig = instrumentRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err' });
+  assert.equal(rig.posted.length, 20, 'saturated, 5 pending drops');
+  rig.reg.navigate(win, { url: 'http://localhost:5173/' });   // the reload button
+  v.onEvent({ kind: 'console', text: 'fresh' });
+  assert.equal(rig.posted.length, 21, 'the budget reset — the event forwards');
+  assert.equal(rig.posted[20].msg.text, 'fresh', 'and NO stale summary preceded it');
+  // a changed-url show (reload path) resets the same way
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err' });
+  const before = rig.posted.length;
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:4000', bounds: goodBounds });
+  v.onEvent({ kind: 'net', text: 'new page' });
+  assert.equal(rig.posted[rig.posted.length - 1].msg.text, 'new page');
+  assert.equal(rig.posted.length, before + 1, 'no summary from the old page\'s drops');
+});
+
+gate('per-frame budgets are independent; a destroyed frame forwards nothing', () => {
+  const rig = instrumentRig();
+  const a = mockWindow(), b = mockWindow();
+  rig.reg.show(a, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  rig.reg.show(b, { projectId: 'p2', url: 'http://localhost:4000', bounds: goodBounds });
+  const va = rig.views[0], vb = rig.views[1];
+  for (let i = 0; i < 30; i++) va.onEvent({ kind: 'console', text: 'storm' });
+  assert.equal(rig.posted.length, 20, 'window A saturated');
+  vb.onEvent({ kind: 'console', text: 'b speaks' });
+  assert.equal(rig.posted.length, 21, 'window B\'s budget is its own');
+  assert.equal(rig.posted[20].win, b);
+  rig.reg.destroyFor(b);
+  vb.onEvent({ kind: 'console', text: 'ghost' });
+  assert.equal(rig.posted.length, 21, 'a straggler event after destroy is dead air');
+});
+
 // ---- the bus verbs: per-window postTo replies (the S2 discipline) ----------
 
 gate('appFrameShow/Hide/Navigate reply to the sender\'s window ALONE; senderless posts drop', () => {
@@ -285,6 +396,31 @@ gate('appFrameShow/Hide/Navigate reply to the sender\'s window ALONE; senderless
   handlers.get('appFrameHide')({ type: 'appFrameHide' }, undefined);
   handlers.get('appFrameNavigate')({ type: 'appFrameNavigate', url: 'http://localhost:5173' }, {});
   assert.equal(sent.length, before, 'senderless verbs neither reply nor create');
+});
+
+gate('register wires appFrameEvent onto bus.postTo at the hosting window', () => {
+  const handlers = new Map();
+  const sent = [];
+  const stubBus = {
+    on: (type, fn) => handlers.set(type, fn),
+    postTo: (win, type, msg) => sent.push({ win, type, msg }),
+  };
+  const win = mockWindow();
+  let onEv = null;
+  appFrame.register({
+    bus: stubBus,
+    windowFor: (sender) => (sender && sender.winIs) || null,
+    zoomOf: () => 1,
+    createView: (w, allowedUrl, onEvent) => { onEv = onEvent; return stubView(allowedUrl); },
+  });
+  handlers.get('appFrameShow')(
+    { type: 'appFrameShow', projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds },
+    { sender: { winIs: win } });
+  onEv({ kind: 'net', text: 'ERR_CONNECTION_REFUSED (-102)', url: 'http://localhost:5173/' });
+  const ev = sent.find((s) => s.type === 'appFrameEvent');
+  assert.ok(ev, 'the shaped event rides the appFrameEvent verb');
+  assert.equal(ev.win, win, 'postTo\'d at the hosting window, never broadcast');
+  assert.deepEqual(ev.msg, { kind: 'net', text: 'ERR_CONNECTION_REFUSED (-102)', url: 'http://localhost:5173/' });
 });
 
 console.log('\nAPPFRAME DRILL: ' + passed + '/' + (passed + failed) + ' passed');

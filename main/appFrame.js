@@ -17,10 +17,20 @@
 // BrowserWindow.fromWebContents(ctx.sender)). Hide keeps the view alive —
 // a hide is a tab/step flip, and reloading the user's app on every flip
 // would throw away its in-page state; only a window's death destroys.
+//
+// Slice B3 adds the instruments: the hosted page's error-level console lines
+// and failed loads forward to the renderer as capped, structured, RATE-BOUND
+// events. The same split holds — shaping, caps, the per-frame rate gate, and
+// reset-on-navigate are all pure logic here (drilled); main.js's factory
+// contributes exactly two thin webContents listeners feeding raw events in.
 'use strict';
 
 const MAX_URL = 2048;         // a dev-server URL is short; anything huge is hostile
 const BOUNDS_CAP = 20000;     // px — beyond any real monitor wall; caps a hostile post
+const MAX_EVENT_TEXT = 300;   // one console line tells its story in this much
+const MAX_EVENT_URL = 200;
+const EVENT_RATE = 20;        // forwarded events per frame per second — beyond is a storm
+const EVENT_WINDOW_MS = 1000;
 
 // ---- the URL wall ----------------------------------------------------------
 // The frame loads ONLY http://localhost:<port> or http://127.0.0.1:<port>
@@ -74,18 +84,62 @@ function sanitizeBounds(bounds, zoom) {
   return out;
 }
 
-// ---- the per-window registry -----------------------------------------------
-// createFrameRegistry({ createView }) → { show, hide, navigate, stateOf,
-// destroyFor, destroyAll }. `createView(win, allowedUrl)` returns an adapter
-// {loadURL, setBounds, setVisible, destroy} — Electron's WebContentsView in
-// production, a recording stub in the drill. `allowedUrl` is a live accessor
-// onto the entry's current URL: the shell's will-navigate guard reads it, so
-// confinement follows every navigate without the shell holding state.
-function createFrameRegistry({ createView }) {
-  const entries = new Map();   // win -> { view, url, visible, bounds, projectId }
+// ---- instrument events (B3) ------------------------------------------------
+// The hosted page is UNTRUSTED input on this wire too: only two kinds exist
+// ('console' = an error-level console line, 'net' = a failed load), text/url
+// are hard-capped, and any other shape drops silently — a hostile page must
+// not be able to smuggle arbitrary payloads at the studio through its own
+// error stream. Shaping lives here (Electron-free) so the drill proves the
+// caps; the listeners are two thin lines in main.js's createView factory.
+function shapeFrameEvent(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.kind !== 'console' && raw.kind !== 'net') return null;
+  if (typeof raw.text !== 'string' || !raw.text) return null;
+  const out = { kind: raw.kind, text: raw.text.slice(0, MAX_EVENT_TEXT) };
+  if (typeof raw.url === 'string' && raw.url) out.url = raw.url.slice(0, MAX_EVENT_URL);
+  return out;
+}
 
+// ---- the per-window registry -----------------------------------------------
+// createFrameRegistry({ createView, postEvent?, now? }) → { show, hide,
+// navigate, stateOf, destroyFor, destroyAll }. `createView(win, allowedUrl,
+// onEvent)` returns an adapter {loadURL, setBounds, setVisible, destroy} —
+// Electron's WebContentsView in production, a recording stub in the drill.
+// `allowedUrl` is a live accessor onto the entry's current URL: the shell's
+// will-navigate guard reads it, so confinement follows every navigate without
+// the shell holding state. `onEvent(raw)` (B3) is the raw instrument inlet:
+// the shell's two listeners call it, the gate below shapes and rate-bounds,
+// and survivors leave through `postEvent(win, shaped)`. `now` is the gate's
+// clock — injectable so the drill owns time.
+function createFrameRegistry({ createView, postEvent, now }) {
+  const entries = new Map();   // win -> { view, url, visible, bounds, projectId, ev }
+
+  const clock = typeof now === 'function' ? now : Date.now;
+  const say = typeof postEvent === 'function' ? postEvent : () => {};
   const dead = (win) => !win || (typeof win.isDestroyed === 'function' && win.isDestroyed());
   const refuse = (projectId, error) => ({ ok: false, projectId: projectId || null, error });
+
+  // the per-frame rate gate: at most EVENT_RATE forwarded per fixed one-second
+  // window; overflow counts silently and the FIRST event past the boundary
+  // flushes one honest '…dropped N' summary (kind:'drop' — never costumed as a
+  // console line) before the fresh window opens. Event-driven on purpose: no
+  // timers in an Electron-free module, so a storm that ends silently holds its
+  // tail count until the next event — or a navigate/reload wipes it with the
+  // chips (a stale count from the old page would lie about the new one).
+  const freshGate = () => ({ winStart: 0, sent: 0, dropped: 0 });
+  function deliver(win, e, raw) {
+    const shaped = shapeFrameEvent(raw);
+    if (!shaped || entries.get(win) !== e) return;   // junk, or the frame died under it
+    const t = clock();
+    if (t - e.ev.winStart >= EVENT_WINDOW_MS) {
+      if (e.ev.dropped > 0)
+        say(win, { kind: 'drop',
+          text: '…dropped ' + e.ev.dropped + ' frame events (max ' + EVENT_RATE + '/s)' });
+      e.ev = { winStart: t, sent: 0, dropped: 0 };
+    }
+    if (e.ev.sent < EVENT_RATE) { e.ev.sent++; say(win, shaped); }
+    else e.ev.dropped++;
+  }
 
   // show doubles as the bounds sync: the renderer re-posts appFrameShow with
   // fresh bounds on every layout change, and only a CHANGED url reloads.
@@ -99,14 +153,15 @@ function createFrameRegistry({ createView }) {
     if (!bounds) return refuse(m.projectId, 'The app frame needs a real on-screen rectangle.');
     let e = entries.get(win);
     if (!e) {
-      e = { view: null, url: null, visible: false, bounds: null, projectId: null };
-      e.view = createView(win, () => e.url);
+      e = { view: null, url: null, visible: false, bounds: null, projectId: null, ev: freshGate() };
+      e.view = createView(win, () => e.url, (raw) => deliver(win, e, raw));
       entries.set(win, e);
       // the window's death is the ONE destroy trigger (hide never tears down)
       if (typeof win.once === 'function') win.once('closed', () => destroyFor(win));
     }
     e.projectId = m.projectId || null;
-    if (e.url !== url) { e.url = url; e.view.loadURL(url); }
+    // a CHANGED url reloads — a fresh page earns a fresh event budget too
+    if (e.url !== url) { e.url = url; e.view.loadURL(url); e.ev = freshGate(); }
     e.bounds = bounds;
     e.view.setBounds(bounds);
     if (!e.visible) { e.visible = true; e.view.setVisible(true); }
@@ -135,6 +190,9 @@ function createFrameRegistry({ createView }) {
       'The app frame only loads http://localhost:<port> or http://127.0.0.1:<port>.');
     e.url = url;
     e.view.loadURL(url);
+    // reset-on-navigate: the renderer's chips clear at the same trigger, so a
+    // saturated budget or a pending drop count must not haunt the new page
+    e.ev = freshGate();
     return { ok: true, projectId: e.projectId, url: e.url, visible: e.visible };
   }
 
@@ -169,7 +227,12 @@ function createFrameRegistry({ createView }) {
 // module the posts land as the bus's unhandled-type warning and the studio
 // simply never shows a frame.
 function register({ bus, windowFor, zoomOf, createView }) {
-  const registry = createFrameRegistry({ createView });
+  const registry = createFrameRegistry({
+    createView,
+    // instrument events (B3) ride per-window postTo like every frame reply —
+    // the hosted page's noise belongs to the window that hosts it, alone
+    postEvent: (win, msg) => bus.postTo(win, 'appFrameEvent', msg),
+  });
   const host = (ctx) => windowFor(ctx && ctx.sender);
 
   bus.on('appFrameShow', (m, ctx) => {
@@ -191,4 +254,4 @@ function register({ bus, windowFor, zoomOf, createView }) {
   return registry;   // main.js holds it for the quit-time destroyAll backstop
 }
 
-module.exports = { validateFrameUrl, sameFrameOrigin, sanitizeBounds, createFrameRegistry, register };
+module.exports = { validateFrameUrl, sameFrameOrigin, sanitizeBounds, shapeFrameEvent, createFrameRegistry, register };

@@ -356,7 +356,7 @@ const appFrames = appFrame.register({
   },
   // CSS px → DIP: the renderer measures under its webFrame zoom (Ctrl+scroll)
   zoomOf: (sender) => { try { return sender.getZoomFactor(); } catch { return 1; } },
-  createView: (win, allowedUrl) => {
+  createView: (win, allowedUrl, onEvent) => {
     const view = new WebContentsView({
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
@@ -369,6 +369,21 @@ const appFrames = appFrame.register({
     };
     view.webContents.on('will-navigate', confine);
     view.webContents.on('will-redirect', confine);
+    // B3 instruments — LISTENERS ONLY (the debugger wire is Wave C's): the
+    // hosted page's error-level console lines and failed loads flow raw into
+    // the registry's shape/rate gate; every cap and bound lives there,
+    // drilled. Modern console-message shape: the event object itself carries
+    // level/message/sourceId (level is the string enum — only 'error' rides).
+    view.webContents.on('console-message', (e) => {
+      if (e && e.level === 'error')
+        onEvent({ kind: 'console', text: e.message, url: e.sourceId });
+    });
+    view.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+      if (code === -3) return;   // ERR_ABORTED — a navigate cancelled the load, not a failure
+      onEvent({ kind: 'net',
+        text: (desc || 'load failed') + ' (' + code + ')' + (isMainFrame ? '' : ' [subframe]'),
+        url: failedUrl });
+    });
     win.contentView.addChildView(view);
     return {
       loadURL: (u) => { view.webContents.loadURL(u).catch(() => { /* server died mid-load — the page shows its own error */ }); },

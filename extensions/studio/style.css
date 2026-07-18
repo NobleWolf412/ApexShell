@@ -205,8 +205,22 @@ body.studioMode .studioView[data-builder="projects"] .pjRoot { padding-left: 0; 
   white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 
 /* ---- the app frame (slice B2 — main's WebContentsView overlays this box) ---- */
+/* max-width guards the B3 width presets: a 768px preset in a narrower card
+   must shrink with it, or the frame would overlay the card's edge */
 .studioView[data-builder="projects"] .pjFramePlot { height: 440px; margin-top: 12px;
-  border: 1px dashed var(--edge); border-radius: 9px; background: var(--bg); }
+  max-width: 100%; border: 1px dashed var(--edge); border-radius: 9px; background: var(--bg); }
+
+/* ---- the instrument strip (slice B3 — chips over the app frame) ---- */
+.studioView[data-builder="projects"] .pjInstrStrip { display: flex; flex-wrap: wrap;
+  gap: 8px; align-items: center; margin-top: 12px; }
+.studioView[data-builder="projects"] .pjInstrChip[data-tone="warn"] { color: var(--warning);
+  border-color: var(--warning); }
+.studioView[data-builder="projects"] .pjInstrChip[data-on="true"] { border-color: var(--accent); }
+.studioView[data-builder="projects"] .pjInstrGap { flex: 1; }
+.studioView[data-builder="projects"] .pjInstrList { margin: 12px 0 0; padding: 10px 12px;
+  max-height: 160px; overflow: auto; border: 1px solid var(--edge); border-radius: 9px;
+  background: var(--bg); color: var(--dim); font: 11px/1.55 Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 
 /* ---- Blueprint Review + Canonical Draft (slice 4) ---- */
 .studioView[data-builder="projects"] .pjGapNote { margin-top: 10px; }

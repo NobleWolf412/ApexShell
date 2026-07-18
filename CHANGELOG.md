@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave B slice B3 — the instrument bar** (`main/appFrame.js` +
+  `main/main.js` — the B2 core extended minimally;
+  `extensions/studio/{renderer.js,style.css}`; `test/appframe-drill.js` grows
+  to 20 checks). Instruments over the app frame, listeners only — NO debugger
+  API this slice (C2 owns that wire). The split keeps B2's law: main.js's
+  createView factory contributes exactly two thin webContents listeners
+  (modern `console-message` object shape, level `'error'` only, and
+  `did-fail-load` with ERR_ABORTED filtered) feeding raw `{kind, text, url}`
+  into the registry's new `onEvent` inlet; every policy decision — shaping
+  (`shapeFrameEvent`: kinds `console`/`net` only, text ≤ 300, url ≤ 200,
+  anything else dropped silently — the hosted page is untrusted input on
+  this wire too), the per-frame rate gate (max 20 forwarded events per
+  second, overflow counted, ONE honest `…dropped N` summary event
+  (`kind:'drop'`) flushed at the next window boundary), and
+  reset-on-navigate (reload, new url, or changed-url show wipes the budget
+  AND any pending drop count — stale noise must not haunt the fresh page) —
+  is Electron-free, drilled, with an injectable clock. Survivors leave as
+  `appFrameEvent {kind, text, url?}` over per-window `bus.postTo` (the S2
+  discipline: the frame's noise belongs to its hosting window alone).
+  Renderer: the PREVIEW card gains the instrument strip — CONSOLE/NET count
+  chips (warn-toned when non-zero; click expands a capped list where drop
+  summaries ride through verbatim; CLEAR wipes), device-width presets
+  (MOBILE 390 / TABLET 768 / DESKTOP full, sizing the placeholder div — the
+  B2 bounds sync follows on its own), and RELOAD moved in from its lone
+  row (still same-url `appFrameNavigate`, now clearing the chips as main
+  resets its gate on the same navigate). Events patch chips/list in place
+  (the projectsServerLog precedent — a full render per event would eat the
+  RUN form's caret); the store caps at 100, the list shows the last 30.
+  Update & restart applies.
+
 - **STUDIO v2, Wave B slice B2 — the app frame** (`main/appFrame.js` NEW +
   its `main/main.js` wiring — the wave's one core touch, narrow and argued;
   `extensions/studio/{renderer.js,style.css}`; drill in

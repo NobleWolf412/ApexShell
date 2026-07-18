@@ -260,9 +260,13 @@ function mountProjects(el, hasBus) {
     // exactly once per project. `forProject` doubles as the fetch guard so
     // opening Lift-off asks main for the config only once. Log deltas patch
     // the <pre> directly (a full render per log line would eat the caret).
+    // B3 rides along: `events` is the instrument strip's store (main already
+    // shaped and rate-bounded them; capped at 100 here), `eventsOpen` the
+    // expanded list, `deviceWidth` the placeholder's width preset.
     server: {
       forProject: null, config: null, form: null,
       phase: 'stopped', port: null, log: [], error: null, busy: false,
+      events: [], eventsOpen: false, deviceWidth: 'desktop',
     },
     // ---- slice 9: import/audit mode ----
     // Read-only inspection of an existing project folder; a mapping the user
@@ -1130,6 +1134,21 @@ function mountProjects(el, hasBus) {
   // the mockup's own CSS answers the width like a real viewport would).
   const DEVICE_WIDTHS = { mobile: 390, tablet: 768, desktop: 1180 };
 
+  // B3: the app frame's presets — mobile/tablet match the SEE step's frame,
+  // but desktop means FULL: the live app fills whatever the card gives it
+  // (null = no inline width, the plot's own 100% rules).
+  const FRAME_WIDTHS = { mobile: 390, tablet: 768, desktop: null };
+
+  // B3: the expanded instrument list, newest last — the store caps at 100,
+  // the view shows the last 30. A 'drop' line is main's own honest summary
+  // of a rate-limited storm; it rides through verbatim.
+  function instrumentLines(srv) {
+    if (!srv.events.length) return 'No console errors or failed loads since the last reset.';
+    return srv.events.slice(-30).map((e) =>
+      e.kind === 'drop' ? e.text
+        : '[' + e.kind.toUpperCase() + '] ' + e.text + (e.url ? ' — ' + e.url : '')).join('\n');
+  }
+
   function renderSee() {
     const draft = state.draft;
     // Smoke-safe empty state (see the pjstep=see affordance at mount): the
@@ -1699,6 +1718,9 @@ function mountProjects(el, hasBus) {
       state.server = {
         forProject: p.projectId, config: null, form: null,
         phase: 'stopped', port: null, log: [], error: null, busy: false,
+        // B3: events belong to a project's frame; the width taste carries over
+        events: [], eventsOpen: false,
+        deviceWidth: state.server.deviceWidth || 'desktop',
       };
       ApexBus.post('projectsServerConfigGet', { projectId: p.projectId });
     }
@@ -1804,13 +1826,40 @@ function mountProjects(el, hasBus) {
       // WebContentsView overlays while the B1 server is ready (Wave E renames
       // this area). No iframe and no URL in this DOM: the frame is main-owned,
       // and this card only stakes out the geometry the frame sync measures.
+      // slice B3: the instrument strip rides over it — error chips counting
+      // main's shaped appFrameEvent stream (click = the capped list), width
+      // presets sizing the placeholder (the B2 bounds sync follows on its
+      // own), and RELOAD, moved in from its old lone row.
       (srv.phase === 'ready' && srv.port
         ? '<div class="pjCard">' +
             '<div class="pjLabel">PREVIEW — YOUR APP ' +
               '<span class="pjRunPhase" data-phase="ready">LOCALHOST:' + escapeHtml(String(srv.port)) + '</span></div>' +
-            '<div class="pjFramePlot" aria-label="Live app preview"></div>' +
-            '<div class="pjBtnRow"><button type="button" class="pjBtn pjFrameReloadBtn" ' +
-              'title="Reload the app frame (the dev server keeps running)">RELOAD</button></div>' +
+            '<div class="pjInstrStrip">' +
+              '<button type="button" class="pjChip pjInstrChip pjInstrToggle" data-kind="console"' +
+                ' data-on="' + (srv.eventsOpen ? 'true' : 'false') + '"' +
+                (srv.events.some((e) => e.kind === 'console') ? ' data-tone="warn"' : '') +
+                ' title="Console errors from your app — click for the list">CONSOLE ' +
+                srv.events.filter((e) => e.kind === 'console').length + '</button>' +
+              '<button type="button" class="pjChip pjInstrChip pjInstrToggle" data-kind="net"' +
+                ' data-on="' + (srv.eventsOpen ? 'true' : 'false') + '"' +
+                (srv.events.some((e) => e.kind === 'net') ? ' data-tone="warn"' : '') +
+                ' title="Failed loads in your app — click for the list">NET ' +
+                srv.events.filter((e) => e.kind === 'net').length + '</button>' +
+              '<button type="button" class="pjBtn pjInstrClear" title="Clear the counted events">CLEAR</button>' +
+              '<span class="pjInstrGap"></span>' +
+              ['mobile', 'tablet', 'desktop'].map((w) =>
+                '<button type="button" class="pjBtn pjFrameWidth' + (srv.deviceWidth === w ? ' primary' : '') +
+                  '" data-width="' + w + '">' + w.toUpperCase() +
+                  (FRAME_WIDTHS[w] ? ' ' + FRAME_WIDTHS[w] : ' FULL') + '</button>').join('') +
+              '<button type="button" class="pjBtn pjFrameReloadBtn" ' +
+                'title="Reload the app frame (the dev server keeps running)">RELOAD</button>' +
+            '</div>' +
+            (srv.eventsOpen
+              ? '<pre class="pjInstrList">' + escapeHtml(instrumentLines(srv)) + '</pre>'
+              : '') +
+            '<div class="pjFramePlot" aria-label="Live app preview"' +
+              (FRAME_WIDTHS[srv.deviceWidth]
+                ? ' style="width:' + FRAME_WIDTHS[srv.deviceWidth] + 'px"' : '') + '></div>' +
           '</div>'
         : '') +
 
@@ -1910,11 +1959,20 @@ function mountProjects(el, hasBus) {
       ApexBus.post('projectsServerStop', { projectId: p.projectId });
     });
 
-    // slice B2: same-URL navigate = reload — the one instrument the frame
-    // needs before Wave E's instrument bar (a dev server hiccup or broken HMR
-    // must not force a server restart).
+    // slice B3: the instrument strip's wiring (present only while the ready
+    // card is). RELOAD keeps B2's same-URL-navigate-is-the-reload-button
+    // contract and now also clears the chips — main resets its rate gate on
+    // the same navigate, so both halves start the fresh page clean.
+    for (const btn of main.querySelectorAll('.pjInstrToggle'))
+      btn.addEventListener('click', () => { srv.eventsOpen = !srv.eventsOpen; render(); });
+    const instrClear = main.querySelector('.pjInstrClear');
+    if (instrClear) instrClear.addEventListener('click', () => { srv.events = []; render(); });
+    for (const btn of main.querySelectorAll('.pjFrameWidth'))
+      btn.addEventListener('click', () => { srv.deviceWidth = btn.dataset.width; render(); });
     const frameReloadBtn = main.querySelector('.pjFrameReloadBtn');
     if (frameReloadBtn) frameReloadBtn.addEventListener('click', () => {
+      srv.events = [];
+      render();
       ApexBus.post('appFrameNavigate', { url: 'http://localhost:' + srv.port + '/' });
     });
 
@@ -1934,8 +1992,29 @@ function mountProjects(el, hasBus) {
   // the placeholder simply stays an empty card.
   const frame = {
     shown: false, timer: null, plotEl: null,
+    url: null,   // B3: the last synced target — a change resets the chips
     ro: typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => scheduleFrameSync()) : null,
   };
+
+  // B3: chips and the open list patch in place — a full render per event
+  // would eat the RUN form's caret (the projectsServerLog precedent). When
+  // the strip isn't on screen the store still counts; the next render shows.
+  function patchInstruments() {
+    const srv = state.server;
+    const chips = main.querySelectorAll('.pjInstrChip');
+    for (const chip of chips) {
+      const kind = chip.dataset.kind;
+      const n = srv.events.filter((e) => e.kind === kind).length;
+      chip.textContent = kind.toUpperCase() + ' ' + n;
+      if (n) chip.setAttribute('data-tone', 'warn');
+      else chip.removeAttribute('data-tone');
+    }
+    const list = main.querySelector('.pjInstrList');
+    if (list) {
+      list.textContent = instrumentLines(srv);
+      list.scrollTop = list.scrollHeight;
+    }
+  }
 
   function frameSyncNow() {
     const p = state.createdProject;
@@ -1955,13 +2034,14 @@ function mountProjects(el, hasBus) {
         bounds = { x: r.left, y: r.top, width: r.width, height: r.height };
     }
     if (bounds) {
+      const url = 'http://localhost:' + srv.port + '/';
+      // B3: a different target (port change → another server) means main
+      // reloads AND resets its gate — old-page noise would lie about the new
+      if (frame.url && frame.url !== url) { srv.events = []; patchInstruments(); }
+      frame.url = url;
       frame.shown = true;
       // show doubles as the bounds sync (main reloads only on a CHANGED url)
-      ApexBus.post('appFrameShow', {
-        projectId: p.projectId,
-        url: 'http://localhost:' + srv.port + '/',
-        bounds,
-      });
+      ApexBus.post('appFrameShow', { projectId: p.projectId, url, bounds });
     } else if (frame.shown) {
       frame.shown = false;
       ApexBus.post('appFrameHide', {});
@@ -2345,6 +2425,23 @@ function mountProjects(el, hasBus) {
       srv.error = m.error;
       if (state.step === 'liftoff') render();
     }
+  });
+
+  // slice B3: the instrument stream — per-window postTo'd by main (this
+  // window's frame alone), already shaped and rate-bounded there; this half
+  // only counts and shows. Three kinds ride the wire: console/net events and
+  // main's own '…dropped N' summary (kind:'drop'); anything else is noise.
+  ApexBus.on('appFrameEvent', (m) => {
+    if (!m || (m.kind !== 'console' && m.kind !== 'net' && m.kind !== 'drop')) return;
+    const srv = state.server;
+    srv.events.push({
+      kind: m.kind,
+      text: typeof m.text === 'string' ? m.text : '',
+      url: typeof m.url === 'string' ? m.url : null,
+    });
+    if (srv.events.length > 100) srv.events.splice(0, srv.events.length - 100);
+    // patch, never render — a full render per event would eat the RUN caret
+    if (state.step === 'liftoff') patchInstruments();
   });
 
   // smoke eyes (A4): the SEE step must be REACHABLE in a smoke run with no
