@@ -529,8 +529,10 @@ app.whenReady().then(() => {
   // exit 0 only if the renderer logged no console errors.
   if (process.env.APEX_SMOKE === '1') {
     let consoleErrors = 0;
-    win.webContents.on('console-message', (_e, level, message) => {
-      if (level >= 3) { consoleErrors++; console.error('[renderer error]', message); }
+    // Modern console-message shape (the appFrame factory's idiom above):
+    // the event object carries level (string enum) and message itself.
+    win.webContents.on('console-message', (e) => {
+      if (e && e.level === 'error') { consoleErrors++; console.error('[renderer error]', e.message); }
     });
     // APEX_SMOKE_PTY=1: also mount a real ConPTY terminal seat so xterm/CSP
     // regressions fail the smoke instead of waiting for a live click.
