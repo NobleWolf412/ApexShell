@@ -12,6 +12,12 @@ prompts (`design/app-builder-v1-prompts.md`) and the UX mockup
 (`design/mockups/studio-mockup.html`) are removed now that the implementation
 they guided has shipped — see git history (slice 10, the Sweep).
 
+Superseding note (STUDIO v2 Wave A, 2026-07-18): this spec's "six areas" /
+"schema 1" language describes v1 as it shipped. The builder now speaks
+blueprint schema 2 — a seventh `look` area, `design/tokens.json`, and the
+SEE mockup step — per `design/studio-v2.md` § Wave A; schema-1 packages
+import cleanly there.
+
 ## Outcome
 
 Apex Shell gains a **STUDIO** — one dock tab hosting both builders as

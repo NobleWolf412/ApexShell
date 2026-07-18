@@ -1,5 +1,11 @@
 # STUDIO v2, Wave A — build prompts
 
+> **Wave A is fully shipped** (A1-A6, 2026-07-18 — CHANGELOG § Unreleased).
+> Do not build from the sections below; they stay as the wave-protocol
+> record and the template Waves B-F will extend in place. One note at the
+> top rather than six per-slice edits, so the fenced prompts remain the
+> byte-exact record of what each seat was handed.
+
 ## One-line invocation (paste this, nothing else)
 
 Every fresh seat gets the SAME line — it finds its own slice:

@@ -1,6 +1,8 @@
 # STUDIO v2 — the one-stop app studio
 
-Status: proposed. Builds on `design/app-builder-v1.md` (implemented). This
+Status: proposed (Wave A shipped — see § Wave A; the file flips to
+implemented only when the last wave lands). Builds on
+`design/app-builder-v1.md` (implemented). This
 spec is the gap audit between what v1 ships and the operator's stated
 outcome — *"the 1-stop shop for app building… it can show you what you're
 going to build… load your project and edit the UI: click on something, type
@@ -122,7 +124,13 @@ stage offers (the golden path) and the depth that hides behind it:
 - **Waves of slices, fresh seat per slice, foreman-verified, sweep at the
   end.** The v1 build protocol is the build protocol.
 
-## Wave A — see it before you build it (mockups)
+## Wave A — see it before you build it (mockups) (shipped)
+
+Shipped 2026-07-18 (slices A1-A6; CHANGELOG § Unreleased). Divergences from
+the text below: the stepper step is named SEE (not PREVIEW), device widths
+shipped but the light/dark preview toggle did not (the mockup renders its
+own colors; a toggle would re-theme nothing), and A3's interim
+Canonical-step screen list was absorbed whole into the SEE step at A4.
 
 The blueprint gains a visual stage between Canonical and Create.
 
@@ -282,9 +290,11 @@ arbitrary code (that's a research problem). The right answer is a
   dependency, stripped at build. The contract files ship with the repo
   (they ARE the design system's source of truth).
 
-## Wave A — the slice cut (build-ready)
+## Wave A — the slice cut (build-ready) (shipped)
 
-Prompts live in `design/studio-v2-prompts.md` (same protocol as v1's file).
+Prompts live in `design/studio-v2-prompts.md` (same protocol as v1's file;
+kept after Wave A shipped because Waves B-F extend it — the v1 precedent of
+deleting a prompts file applied to a COMPLETE build).
 
 - **A1 — the Look card + schema v2.** Seventh interview area `look`
   (palette, type, density, tone, references — portable words, no binaries);
