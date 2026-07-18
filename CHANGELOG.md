@@ -12,6 +12,22 @@
   `priority` so the studio host initializes before its dependents (renderer
   scripts now inject `async=false` to honor it). New `test:studio` drill, chained
   into `npm test`. (App Builder v1, slice 1 of 9.)
+- **App Builder contract library** (`extensions/studio/lib/`): the pure,
+  Electron-free contract for portable project packages. `contract.js` carries the
+  blueprint schema constants (schema v1, the six areas `idea`/`users`/`scope`/
+  `platform`/`architecture`/`delivery`), safe project IDs, workspace-containment
+  path handling, PROJECT.md frontmatter parsing, sha256 canonical hashing, and the
+  deterministic `validateProjectPackage` rules — errors block (unsafe/mismatched
+  id, malformed frontmatter/JSON, unsupported schema, workspace escape,
+  would-overwrite, runtime-field leak), warnings review (incomplete area, hash
+  drift, no non-goals, no verification), suggestions advise (thin vision/MVP,
+  project overlap, orphan component). Validation never throws — it returns a
+  structured `{ valid, errors, warnings, suggestions }`. `render.js` renders the
+  canonical PROJECT.md from an approved shape with renameable headings behind
+  stable `app-builder:<section>` markers. No provider, model, credential, or
+  machine path may enter the package. New `test/studio-lib-drill.js` (with static
+  fixtures under `test/studio-fixtures/`) chained into `test:studio`; zero LLM
+  spend. No UI, no bus verbs. (App Builder v1, slice 2 of 9.)
 
 ## 0.2.0 — 2026-07-17
 

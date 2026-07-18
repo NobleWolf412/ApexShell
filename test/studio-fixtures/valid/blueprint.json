@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "canonical_hash": "01d055a470e902f7898bb143dd7b414eacc199a935086d7c2458f996b0b22a7f",
+  "idea": {
+    "pitch": "A lightweight kanban for solo makers who abandon heavyweight trackers; it turns a vague weekend idea into a single scannable board so momentum never dies between sessions.",
+    "why_now": "Trackers keep losing solo makers to overhead."
+  },
+  "users": {
+    "who": "Solo makers and indie hackers.",
+    "jobs": "Capture an idea and see the next action without ceremony."
+  },
+  "scope": {
+    "mvp": "The MVP ships a single board with drag-to-reorder cards, a one-line quick-add, and local-first persistence; it deliberately omits accounts, sharing, and any server sync in v1.",
+    "non_goals": [
+      "No accounts in v1",
+      "No server sync",
+      "No sharing"
+    ]
+  },
+  "platform": {
+    "targets": [
+      "web"
+    ],
+    "stack": "Node + vanilla renderer"
+  },
+  "architecture": {
+    "components": [
+      "renderer",
+      "engine"
+    ],
+    "notes": "Two owners: DOM and persistence."
+  },
+  "delivery": {
+    "milestones": [
+      "Renderer board",
+      "Engine persistence"
+    ],
+    "verification": "npm test green; a card survives reload.",
+    "risks": "Offline write ordering."
+  }
+}
