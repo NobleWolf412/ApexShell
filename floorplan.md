@@ -11,8 +11,9 @@ the same change-set — a stale map is worse than none.
 - **Lane guides** (`connect/`): one per seat lane — `claude.md`, `codex.md`,
   `local.md` (Ollama), `agy.md`. Wire-verified operational detail + traps.
 - **Architecture** (this file): where everything lives and plugs in.
-- **Design history** (`design/`): specs (persona-builder-v1, live-auditor-v1)
-  and `design/reviews/` (archival persona-builder slice reviews).
+- **Design history** (`design/`): one spec per wave (persona-builder-v1,
+  live-auditor-v1, app-builder-v1, consult-v1), the standing sweep protocol
+  (sweep-v1), and `design/reviews/` (archival persona-builder slice reviews).
 - **CHANGELOG.md**: version-stamped feature rollups.
 
 ## The three laws
