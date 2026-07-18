@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave D slice D1 — the X-ray diagram contract**
+  (`extensions/studio/lib/xray.js` new; drill in `test/studio-xray-drill.js`
+  — 17 checks; new files only, no UI, no bus verbs, no AI wiring — D2 adds
+  the disposable pass and the ARCHITECTURE step). The mermaid-source contract
+  as pure lib code: `buildDiagramPrompt(blueprint)` builds the deterministic
+  one-turn prompt (idea/platform/architecture digest in, one flowchart out);
+  `parseLlmReply` extracts exactly ONE ```mermaid fence and holds every LINE
+  of it to a strict allowlist grammar (flowchart/graph directive first and
+  once, node/edge lines, subgraph/end/direction, classDef/class/style —
+  click/callback/href and all %% lines including %%{init} rejected by name,
+  any unrecognized line fails the reply whole; 32 KB / 300-line / 300-char
+  caps; fail-closed to `{source:null, error}` — the mockup.js discipline on
+  diagram source). Provenance is the A3 sidecar idiom on a pure record:
+  `buildProvenance` → `{schema, source:'llm'|'derived', canonicalHash,
+  generatedAt, bytes}`, with `isDiagramStale` applying the mockup drift rule
+  (a badge, never a silent regeneration). `deriveFallbackDiagram` is the
+  no-AI, no-quota fallback: the architecture area's prose parsed through a
+  design.js-style keyword table into tiered components (user → interface →
+  services → stores), emitted as a valid flowchart marked source 'derived' —
+  the drill holds its output to the module's OWN validator, so the fallback
+  can never emit what the contract would refuse.
+
 - **STUDIO v2, Wave S slice S2 — the studio boot mode, per-window captions,
   the ⧉ affordance, and the reopen preference** (`renderer/shell.js`,
   `renderer/styles/shell.css`, `main/main.js`, `main/bus.js`,
