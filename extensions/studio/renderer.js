@@ -247,12 +247,14 @@ function mountProjects(el, hasBus) {
     // added/removed are the user's local edits over the deterministic proposal
     // (rename = remove + add); prepared/busy mirror the suggest block's
     // two-step gate; deviceWidth drives the preview frame's width preset.
+    // Preview/approval truth is read off state.draft directly (hasPreview(),
+    // approvalCurrent()) — never mirrored here, so it can't go stale (the A3
+    // mirrors died when A4 absorbed the surface; Sweep A6).
     mockups: {
-      forDraft: null, kind: null, proposed: [], generated: [], hasPreview: false,
+      forDraft: null, kind: null, proposed: [], generated: [],
       error: null, removed: [], added: [], selected: null,
-      prepared: null, busy: false, phase: null, resultError: null,
-      approval: null, approvalCurrent: false, deviceWidth: 'desktop',
-      approveMsg: null,
+      prepared: null, busy: false, resultError: null,
+      deviceWidth: 'desktop', approveMsg: null,
       // ---- slice A5: annotate mode. The picker only exists in the derived
       // .annotate.html, which is only iframed while annotate is on — so "the
       // picker never runs outside the SEE step" holds by construction.
@@ -1105,11 +1107,10 @@ function mountProjects(el, hasBus) {
     // stops the arriving payload's re-render from re-requesting in a loop.
     if (state.mockups.forDraft !== draft.id) {
       state.mockups = {
-        forDraft: draft.id, kind: null, proposed: [], generated: [], hasPreview: false,
+        forDraft: draft.id, kind: null, proposed: [], generated: [],
         error: null, removed: [], added: [], selected: null,
-        prepared: null, busy: false, phase: null, resultError: null,
-        approval: null, approvalCurrent: false, deviceWidth: state.mockups.deviceWidth || 'desktop',
-        approveMsg: null,
+        prepared: null, busy: false, resultError: null,
+        deviceWidth: state.mockups.deviceWidth || 'desktop', approveMsg: null,
         annotate: false, pendingPick: null, noteMsg: null,
       };
       ApexBus.post('projectsMockupList', { id: draft.id });
@@ -1370,6 +1371,10 @@ function mountProjects(el, hasBus) {
           render();
           return;
         }
+        // The whole validated pick is kept, bbox included: the shape is the
+        // drilled contract (lib/mockup.validatePickMessage), even though only
+        // selector/text ride the note today — see design/studio-v2.md § Wave C
+        // for where element geometry goes next.
         mk.pendingPick = { selector: valid.selector, text: valid.text, bbox: valid.bbox };
         renderNoteEntry(draft);
       };
@@ -1439,7 +1444,6 @@ function mountProjects(el, hasBus) {
     if (runBtn) runBtn.addEventListener('click', () => {
       if (runBtn.disabled || !mk.prepared) return;
       mk.busy = true;
-      mk.phase = 'running';
       ApexBus.post('projectsMockupRun', {
         id: mk.prepared.draftId, screen: mk.prepared.screen,
         expectedRevision: mk.prepared.revision, approved: true,
@@ -1898,9 +1902,9 @@ function mountProjects(el, hasBus) {
     mk.kind = m.kind;
     mk.proposed = m.proposed || [];
     mk.generated = m.generated || [];
-    mk.hasPreview = Boolean(m.hasPreview);
-    mk.approval = m.approval || null;
-    mk.approvalCurrent = Boolean(m.approvalCurrent);
+    // hasPreview/approval/approvalCurrent also ride this payload (the drilled
+    // main-side contract; headless drills assert on them) but are NOT mirrored
+    // into state: the step reads the draft itself, one source of truth.
     mk.error = m.error || null;
     if (mk.selected && !mockupScreensEffective().some((s) => s.id === mk.selected) &&
         !mk.generated.some((g) => g.screen.id === mk.selected))
@@ -1911,18 +1915,18 @@ function mountProjects(el, hasBus) {
 
   ApexBus.on('projectsMockupPrepared', (m) => {
     if (state.draft && m.draftId !== state.draft.id) return;
-    Object.assign(state.mockups, { prepared: m, busy: false, phase: 'prepared', resultError: null });
+    Object.assign(state.mockups, { prepared: m, busy: false, resultError: null });
     if (state.step === 'see') render();
   });
 
   ApexBus.on('projectsMockupStatus', (m) => {
     if (m.phase === 'error') {
-      Object.assign(state.mockups, { prepared: null, busy: false, phase: 'error', resultError: m.error });
+      Object.assign(state.mockups, { prepared: null, busy: false, resultError: m.error });
       if (state.step === 'see') render();
       return;
     }
     if (m.phase === 'stopped') {
-      Object.assign(state.mockups, { prepared: null, busy: false, phase: 'stopped' });
+      Object.assign(state.mockups, { prepared: null, busy: false });
       if (state.step === 'see') render();
     }
     // 'running' is already reflected client-side the instant RUN is clicked.
@@ -1932,7 +1936,6 @@ function mountProjects(el, hasBus) {
     if (state.draft && m.draftId !== state.draft.id) return;
     Object.assign(state.mockups, {
       prepared: null, busy: false,
-      phase: m.ok ? 'done' : 'error',
       resultError: m.ok ? null : m.error,
     });
     // A successful write is followed by a fresh projectsMockupScreens post
