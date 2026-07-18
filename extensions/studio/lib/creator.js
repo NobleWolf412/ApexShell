@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const contract = require('./contract');
+const design = require('./design');
 
 function regularDirectory(dir, label) {
   const stat = fs.lstatSync(dir);
@@ -38,13 +39,21 @@ function buildContextDigest(bundle) {
     '',
     '## Scope',
     contract.areaText(bundle.blueprint.scope) || '(not answered)',
+    '',
+    // What the tokens compiler made of the look answer (slice A2). This line
+    // is CREATE-time output about a compile, so it lives here and in
+    // tokens.json's own summary — never in the canonical, which is generated
+    // from approved answers only (the law). compileTokens is deterministic,
+    // so compiling again here always matches the staged tokens file.
+    '## Design',
+    design.compileTokens(bundle.blueprint.look).tokens.summary,
   ];
   return lines.join('\n') + '\n';
 }
 
 // Write the full package for a NEW project — PROJECT.md, blueprint.json,
-// project-context.md — atomically: stage every file in a same-directory temp
-// folder, then one fs.renameSync into the final project folder. A reader
+// project-context.md, design/tokens.json — atomically: stage every file in a
+// same-directory temp folder, then one fs.renameSync into the final project folder. A reader
 // therefore only ever sees the whole package or none of it. Reuses slice 2's
 // contract.js for every safety check (safe id, workspace containment,
 // would-overwrite) rather than re-deriving them: create mode validates BEFORE
@@ -88,12 +97,22 @@ function createProjectPackage(workspaceRoot, bundle) {
     writeNew(path.join(stage, 'PROJECT.md'), bundle.canonical);
     writeNew(path.join(stage, 'blueprint.json'), JSON.stringify(bundle.blueprint, null, 2) + '\n');
     writeNew(path.join(stage, 'project-context.md'), buildContextDigest(bundle));
+    // design/tokens.json (slice A2) — the look answer compiled through
+    // lib/design.js's deterministic tables. Staged INSIDE the same temp folder
+    // so the one atomic rename below commits the whole package, tokens
+    // included; there is never a second write after the rename.
+    const compiled = design.compileTokens(bundle.blueprint.look);
+    fs.mkdirSync(path.join(stage, 'design'));
+    writeNew(path.join(stage, 'design', 'tokens.json'), design.serializeTokens(compiled.tokens));
     fs.renameSync(stage, paths.projectDir);   // the atomic commit
     committed = true;
     const report = contract.validateProjectPackage(root, bundle.projectId, { mode: 'native' });
     if (!report.valid)
       throw new Error('Created package failed validation: ' + report.errors.map((f) => f.message).join(' · '));
-    return { projectId: bundle.projectId, projectDir: paths.projectDir, paths, report };
+    return {
+      projectId: bundle.projectId, projectDir: paths.projectDir, paths, report,
+      design: { summary: compiled.tokens.summary, warnings: compiled.warnings.slice() },
+    };
   } catch (err) {
     // Rollback-on-partial-failure: before the rename, only `stage` can exist;
     // after it, only `paths.projectDir` does (rename is atomic — never both,

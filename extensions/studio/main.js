@@ -22,6 +22,7 @@ const modelPicker = require('./lib/modelPicker');
 const suggest = require('./lib/suggest');
 const codesigner = require('./lib/codesigner');
 const packageCreator = require('./lib/creator');
+const design = require('./lib/design');
 const liftoff = require('./lib/liftoff');
 const importer = require('./lib/importer');
 
@@ -124,6 +125,12 @@ function validateBundleReport(bundle) {
     fs.mkdirSync(dir);
     fs.writeFileSync(path.join(dir, 'PROJECT.md'), bundle.canonical, 'utf8');
     fs.writeFileSync(path.join(dir, 'blueprint.json'), JSON.stringify(bundle.blueprint, null, 2), 'utf8');
+    // Stage the tokens exactly as Create will write them (slice A2), so the
+    // review report validates the package-to-be — not a bogus "tokens.json is
+    // missing" warning about a file Create hasn't had its chance to write yet.
+    fs.mkdirSync(path.join(dir, 'design'));
+    fs.writeFileSync(path.join(dir, 'design', 'tokens.json'),
+      design.serializeTokens(design.compileTokens(bundle.blueprint.look).tokens), 'utf8');
     const report = contract.validateProjectPackage(tmp, bundle.projectId);
     // The staged paths are ephemeral; never leak them back to the renderer.
     const strip = (finding) => ({ code: finding.code, message: finding.message });

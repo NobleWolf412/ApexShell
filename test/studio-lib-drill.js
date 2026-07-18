@@ -24,12 +24,12 @@ function gate(name, fn) {
 
 // Stage a fixture folder into a fresh workspace under its own project id, so
 // each check is isolated and nothing is read from or written to the repo tree.
+// Recursive copy: schema-2 fixtures carry a design/ subfolder (slice A2).
 function stage(fixture, projectId) {
   const workspace = fs.mkdtempSync(path.join(scratch, 'ws-'));
   const dir = path.join(workspace, projectId);
   fs.mkdirSync(dir, { recursive: true });
-  for (const file of fs.readdirSync(path.join(FIXTURES, fixture)))
-    fs.copyFileSync(path.join(FIXTURES, fixture, file), path.join(dir, file));
+  fs.cpSync(path.join(FIXTURES, fixture), dir, { recursive: true });
   return { workspace, dir };
 }
 

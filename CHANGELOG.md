@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave A slice A2 — the tokens compiler**
+  (`extensions/studio/lib/design.js` new; `lib/contract.js`, `lib/creator.js`,
+  `extensions/studio/main.js`): the blueprint's `look` answer now compiles
+  into `design/tokens.json` — the first Wave F contract artifact — through a
+  DETERMINISTIC, AI-free keyword compiler: same look words in, same bytes out
+  (a canonical fixed-key-order serializer, no Date/random/locale anywhere).
+  Documented tables map palette leanings (dark/light + fourteen hue words) to
+  the seven color roles (bg/surface/text/dim/accent/good/warning), type feel
+  (technical/editorial/friendly) to a family + modular size scale, density
+  (dense/airy) to spacing and radii, and tone (calm/bold) to shadows and
+  motion. Degradation is honest: unparseable or absent look input falls back
+  to the documented house style (dark, blue accent, plain type, regular
+  density, even tone) with a WARNING — never a block — and a per-group
+  `source` ledger plus "(house default)" summary markers so a default is
+  never presented as chosen. Create stages `design/tokens.json` inside the
+  SAME atomic rename as the rest of the package, and the create-time
+  `project-context.md` gains a `## Design` summary line; the canonical
+  PROJECT.md stays generated from approved answers only (the compiled summary
+  lives in the tokens file and digest, never spliced into the canonical).
+  `validateProjectPackage` learns the file: malformed tokens.json (bad JSON,
+  wrong schema, missing roles) is an ERROR, absence is a plain-language
+  warning on schema-2 packages and silent on schema-1 (which predates the
+  contract), and tokens.json is deliberately NOT drift-checked against the
+  blueprint — Wave F's design mode edits it as ordinary file writes. New
+  drill `test/studio-design-drill.js` (byte-for-byte determinism, canonical
+  serializer, mapping tables, defaults + degradation warnings, atomic
+  package round-trip, malformed/absent severities, schema-1 silence); the
+  `valid` fixture gains its compiled `design/tokens.json`.
+
 - **STUDIO v2, Wave A slice A1 — the Look card + blueprint schema 2**
   (`extensions/studio/lib/*`, `extensions/studio/renderer.js`,
   `extensions/studio/main.js`): the interview gains a seventh area, `look`

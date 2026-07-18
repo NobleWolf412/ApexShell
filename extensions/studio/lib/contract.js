@@ -9,6 +9,9 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+// The tokens compiler (slice A2) — one-way dependency: design.js never
+// requires contract.js, so validateTokens/compileTokens are safe to use here.
+const design = require('./design');
 
 // Schema 2 (STUDIO v2, Wave A slice A1) adds the `look` area. The builder only
 // AUTHORS schema 2 now; schema 1 is not garbage — it is the same package minus
@@ -98,6 +101,8 @@ function projectPaths(workspaceRoot, projectId) {
     blueprint: resolveInside(projectDir, 'blueprint.json'),
     context: resolveInside(projectDir, 'project-context.md'),
     notesDir: resolveInside(projectDir, 'notes'),
+    designDir: resolveInside(projectDir, 'design'),
+    tokens: resolveInside(projectDir, 'design', 'tokens.json'),
   };
 }
 
@@ -344,6 +349,16 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
           warnings.push(finding('incomplete-area', `The "${area}" area has no answer recorded yet.`, paths.blueprint));
       }
 
+      // A look answer may exist yet carry no words the token compiler's tables
+      // recognize — the compile then degrades to the documented house defaults,
+      // and that degradation must be SAID (§ A2: honest degradation), never
+      // silent. compileTokens is deterministic and total, so re-running it here
+      // costs nothing and reads nothing off disk.
+      if (blueprint.look && areaText(blueprint.look)) {
+        for (const message of design.compileTokens(blueprint.look).warnings)
+          warnings.push(finding('unparsed-look', message, paths.blueprint));
+      }
+
       // Hash drift — the blueprint records a hash of the PROJECT.md it produced;
       // an external edit surfaces as review, never a silent regeneration.
       if (!blueprint.canonical_hash)
@@ -398,6 +413,31 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
           suggestions.push(finding('project-overlap', `This looks like it overlaps an existing project (${sibling.id}) — shared terms: ${shared.slice(0, 5).join(', ')}`, paths.blueprint));
       }
     }
+  }
+
+  // design/tokens.json — the compiled Wave F contract artifact (slice A2).
+  // Malformed is an ERROR (a broken token file would poison every scaffold
+  // read); ABSENT is a warning only on a schema-2 package (Create writes it
+  // now — regenerating the package restores it) and stays SILENT on schema 1,
+  // which simply predates the contract. Note tokens.json is NOT drift-checked
+  // against the blueprint: design mode (§ Wave F) edits it as ordinary file
+  // writes, so a hand-tuned token file is a feature, not a finding.
+  if (fs.existsSync(paths.tokens)) {
+    if (!realPathInside(workspaceRoot, paths.tokens)) {
+      errors.push(finding('workspace-escape', 'design/tokens.json resolves outside the configured workspace.', paths.tokens));
+    } else {
+      const tokens = readJson(paths.tokens, errors);
+      if (tokens) {
+        for (const problem of design.validateTokens(tokens))
+          errors.push(finding('invalid-tokens',
+            `design/tokens.json is not a usable token file: ${problem}. Regenerate the package to restore it, or fix the field by hand.`,
+            paths.tokens));
+      }
+    }
+  } else if (blueprint && blueprint.schema_version === SCHEMA_VERSION) {
+    warnings.push(finding('missing-tokens',
+      'This project has no design/tokens.json yet — run Create again (regenerating the package) to add the compiled design tokens.',
+      paths.tokens));
   }
 
   // The digest other tools read is optional here, but if present it must stay
