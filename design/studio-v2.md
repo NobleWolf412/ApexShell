@@ -47,6 +47,67 @@ own quota, the workflow layer with bounce-limited review, blueprints that
 outlive any provider. v2 adds the missing sensory organs: eyes (preview),
 hands (boom-change), and X-ray (architecture).
 
+## The journey — launch to living app, one pane
+
+The waves are the construction plan; THIS is the experience they add up to.
+One project's life, stage by stage, with the single primary action each
+stage offers (the golden path) and the depth that hides behind it:
+
+1. **START** — open STUDIO → PROJECTS. One button: NEW PROJECT (or IMPORT).
+   Name + pitch. *(shipped in v1)*
+2. **SHAPE** — the interview: six cards + the new **Look** card. Golden
+   path: answer in your own words, SAVE & NEXT. Depth on demand: heuristic
+   chips, Help-me-decide, the AI suggest pass, the co-designer arguing from
+   your draft. *(v1 + Wave A)*
+3. **SEE** — the PREVIEW step: STUDIO generates clickable mockups of the
+   screens your blueprint implies, styled by your Look card. Golden path:
+   look at it, feel it, APPROVE. Depth: click any element, pin a note,
+   regenerate that screen; switch device widths; light/dark. Nothing
+   proceeds until your eyes have signed off. *(Wave A)*
+4. **CREATE** — one click writes the portable package: PROJECT.md,
+   blueprint.json, the approved mockups, and `design/tokens.json` compiled
+   from the Look card — the design system's DNA, born before any code.
+   *(v1 + Waves A/F)*
+5. **BUILD** — Lift-off, now a living BUILD step: delegate to the
+   Architect with a kickoff that carries the blueprint AND the product
+   contract (tokens + component + manifest rules), so the Coder builds on
+   the spines by construction. Milestones from your delivery card appear as
+   a track; each chain's progress lands here, not just on the TODO board.
+   *(v1 + Waves E/F)*
+6. **OPERATE** — the moment the scaffold runs: STUDIO starts the dev
+   server, and your actual app appears INSIDE the pane. Console errors and
+   failed requests surface as chips. Click any element — pickers for taste
+   (variant/effect/palette, deterministic, no quota), the Surgeon for
+   structure ("make this card collapse on mobile" → minimal diff →
+   REVERT-able ledger card). The same design mode travels with the app when
+   it leaves home. *(Waves B/C/F)*
+7. **EVOLVE** — the X-ray keeps planned vs actual honest; drift becomes a
+   review prompt that amends the blueprint through normal authority; the
+   next milestone's delegate button sits pre-armed with the updated
+   PROJECT.md. Ship, sweep, repeat. *(Waves D/E)*
+
+## Versatile, easy, featureful, scalable — the tensions, resolved
+
+- **Easy**: every stage has ONE primary action that always works with zero
+  configuration (progressive disclosure is the law of this UI — v1's
+  interview already obeys it; every new surface must too). A user who only
+  ever clicks the big button still gets blueprint → mockup → app.
+- **Versatile**: the mockup pass adapts to the platform card — web/desktop
+  get screen mockups, a CLI gets a terminal-frame storyboard, an API gets
+  an endpoint map. Import (v1) remains the door for existing work: foreign
+  projects get preview, boom-change, and the X-ray; contract-born projects
+  additionally get pickers. The contract spines are plain JSON — per-stack
+  scaffold templates implement them, starting with the stacks the operator
+  actually uses.
+- **Featureful**: the waves, each opt-in, none blocking the golden path.
+- **Scalable**: per-project isolation end to end (drafts, servers, ledgers,
+  manifests keyed by project id); the workspace already lists many
+  projects; the board already groups by repo. STUDIO's code stays
+  extension-shaped — the only core touches across six waves are the
+  WebContentsView seam (B) and the served-file allowlist registration (A),
+  both narrow and argued. Growth lives in `extensions/studio/lib/` modules
+  with hermetic drills, exactly like v1's nine slices.
+
 ## Design principles (inherited, non-negotiable)
 
 - **The three laws hold.** Engine stays Electron-free; the renderer keeps
@@ -220,6 +281,42 @@ arbitrary code (that's a research problem). The right answer is a
 - **What ships.** Production builds carry none of it — design mode is a dev
   dependency, stripped at build. The contract files ship with the repo
   (they ARE the design system's source of truth).
+
+## Wave A — the slice cut (build-ready)
+
+Prompts live in `design/studio-v2-prompts.md` (same protocol as v1's file).
+
+- **A1 — the Look card + schema v2.** Seventh interview area `look`
+  (palette, type, density, tone, references — portable words, no binaries);
+  blueprint schema 2 with v1 packages importing cleanly (`look` reports as
+  a gap); canonical section "Design Language"; contract/render/interview
+  lib updates + drills. Extension-only.
+- **A2 — the tokens compiler.** `lib/design.js`: Look answers →
+  `design/tokens.json` (deterministic compile, no AI — same input, same
+  tokens); Create writes it into the package; validation rules (malformed
+  Look degrades to defaults with a warning, never a block). Drills:
+  compile determinism, defaults, round-trip.
+- **A3 — the mockup pass.** `lib/mockup.js`: prompt builder (blueprint
+  digest + Look + platform adaptation) and the untrusted-reply contract —
+  ONE self-contained HTML document, no external URL of any kind, size-capped,
+  fail-closed parsing (the v1 suggest/codesigner discipline). Preflight +
+  approval + TTL + backstop, on the model picker. Output:
+  `<project-draft>/mockups/<screen>.html` + provenance sidecar carrying the
+  generating canonical hash (drift = stale badge, never silent regen).
+  Drills: hostile replies, external-URL rejection, provenance/staleness.
+- **A4 — the PREVIEW step.** Stepper gains SEE between Canonical and
+  Create: sandboxed `<iframe>` (sandbox, no same-origin) fed through the
+  `apex://` served-file gate — the wave's ONE core touch is registering the
+  draft mockups dir with that allowlist (artifacts.js seam, narrow,
+  argued). Screen switcher, device widths, stale banner, APPROVE (records
+  approval hash on the draft). Smoke + drills for the allowlist
+  registration.
+- **A5 — annotate → regenerate.** A picker script INSIDE the sandboxed
+  mockup (injected at serve time) speaking a strict postMessage contract
+  (allowlisted message shapes, capped payloads, fail-closed — drilled like
+  every other untrusted boundary); note chips pinned per element; batched
+  notes drive one regen turn per screen through A3's machinery.
+- **A6 — the wave sweep** (`design/sweep-v1.md`, scope = Wave A commits).
 
 ## Build order
 
