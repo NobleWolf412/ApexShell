@@ -373,11 +373,6 @@ function register(ctx) {
     }
   });
 
-  ctx.bus.on('projectsImportCancel', () => {
-    activeImport = null;
-    ctx.bus.post('projectsImportResult', { ok: true, action: 'cancelled' });
-  });
-
   // ---- Blueprint Review + Canonical Draft (slice 4) -----------------------
   // Everything is a preview on the draft: no package is written to the workspace
   // (slice 8). Each verb mutates the persisted preview under the revision gate and
@@ -804,6 +799,12 @@ function register(ctx) {
   // Archive-based removal — a SEPARATE explicit action from draft deletion
   // (projectsDraftDelete, above): removing a created project never touches a
   // draft, and deleting a draft never touches a written package.
+  // KEEP (Sweep v1, slice 10): this verb has no renderer poster yet — no
+  // "remove project" affordance exists in the PROJECTS UI. Not dead: it is
+  // spec'd (design/app-builder-v1.md § Write safety: "removal archives...
+  // rather than deletes, like personas") and proven by
+  // test/studio-liftoff-drill.js's "projectsRemove archives the created
+  // project" case. The UI trigger is a follow-up, not sweep scope.
   ctx.bus.on('projectsRemove', (message) => {
     try {
       if (!message || message.confirmed !== true)

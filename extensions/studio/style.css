@@ -31,9 +31,6 @@
 .studioViews { position: relative; flex: 1; min-height: 0; overflow: auto; }
 .studioView { display: block; }
 .studioView[hidden] { display: none; }
-.studioPlaceholder { max-width: 440px; margin: clamp(48px, 9vh, 110px) auto;
-  padding: 0 34px; color: var(--dim); font-size: 13px; line-height: 1.7;
-  text-align: center; }
 
 /* A re-homed builder pane keeps its own DOM/classes (zero behavior change):
    the STUDIO sheet is now its frame, so drop the old dock-pane chrome

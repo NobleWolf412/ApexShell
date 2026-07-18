@@ -31,7 +31,7 @@
     '<div class="paneBody studioBody">' +
       '<div class="studioHeader">' +
         '<div class="studioTabs" role="tablist"></div>' +
-        '<div class="studioModelPicker" title="One model choice drives both AI levels once a builder offers them (haiku for quick suggest passes, sonnet+ for a longer co-designer conversation). No effect yet — nothing in STUDIO calls a disposable.">' +
+        '<div class="studioModelPicker" title="One model choice drives both AI levels: the per-card AI suggest pass and the co-designer panel both launch their disposable with this pick (haiku for quick suggest passes, sonnet+ for a longer co-designer conversation).">' +
           '<select class="studioModelSelect" aria-label="STUDIO model">' +
             '<option value="">Model: default</option>' +
             '<option value="haiku">haiku</option>' +
