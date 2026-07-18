@@ -9,6 +9,7 @@ const fs = require('fs');
 const { pathToFileURL } = require('url');
 
 const bus = require('./bus');
+const studioWindow = require('./studioWindow');
 const theme = require('./theme');
 const monitors = require('./monitors');
 const seats = require('./seats');
@@ -66,6 +67,32 @@ function findIcon() {
   return fs.existsSync(ico) ? ico : undefined;
 }
 
+// Lifecycle log — GUI launches have no visible console; a window that
+// never appears must leave a trail (2026-07-12: process alive, no window).
+// Module-scoped since Wave S: both shell windows write the same trail.
+const logDir = path.join(__dirname, '..', 'state', 'logs');
+try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* exists */ }
+const lifeLog = (line) => {
+  try {
+    fs.appendFileSync(path.join(logDir, 'main-' + new Date().toISOString().slice(0, 10) + '.log'),
+      new Date().toISOString().slice(11, 19) + ' ' + line + '\n');
+  } catch { /* never block on logging */ }
+};
+
+// Navigation lock (external audit H1): every shell window's top frame carries
+// preload.js, so nothing may navigate it off the initial loadFile — CSP does
+// not stop navigation. A drop-in extension's renderer script (vetted only by
+// CSP 'self') could otherwise point the webContents at a remote origin.
+// Module-scoped since Wave S: the studio window carries the same preload and
+// gets the exact same lock.
+const guardNav = (e, url) => {
+  // the app's own index.html (initial + reloads), and our confined+CSP-locked
+  // apex:// artifact protocol — everything else is denied
+  if (/^(file|apex):\/\//i.test(url)) return;
+  e.preventDefault();
+  lifeLog(`blocked navigation to ${url}`);
+};
+
 function clearCloseRequest() {
   clearTimeout(closeTimer);
   closeTimer = null;
@@ -110,7 +137,7 @@ function createWindow() {
     }
   });
 
-  bus.init(win);
+  bus.addWindow(win);
   theme.register();
   monitors.register();
   seats.register();
@@ -139,31 +166,11 @@ function createWindow() {
     if (url) shell.openExternal(url).catch(() => {});
   });
 
-  // Lifecycle log — GUI launches have no visible console; a window that
-  // never appears must leave a trail (2026-07-12: process alive, no window).
-  const logDir = path.join(__dirname, '..', 'state', 'logs');
-  try { fs.mkdirSync(logDir, { recursive: true }); } catch { /* exists */ }
-  const lifeLog = (line) => {
-    try {
-      fs.appendFileSync(path.join(logDir, 'main-' + new Date().toISOString().slice(0, 10) + '.log'),
-        new Date().toISOString().slice(11, 19) + ' ' + line + '\n');
-    } catch { /* never block on logging */ }
-  };
   lifeLog('createWindow');
-  // Navigation lock (external audit H1): the top frame carries preload.js, so
-  // nothing may navigate it off the initial loadFile — CSP does not stop
-  // navigation. A drop-in extension's renderer script (vetted only by CSP
-  // 'self') could otherwise point the webContents at a remote origin. Deny new
-  // windows outright; allow ONLY the initial file:// load, block every other
-  // navigation. External links still open via externalUrl.js (shell.openExternal).
+  // Navigation lock (module-scoped guardNav above): deny new windows outright;
+  // allow ONLY the initial file:// load, block every other navigation.
+  // External links still open via externalUrl.js (shell.openExternal).
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  const guardNav = (e, url) => {
-    // the app's own index.html (initial + reloads), and our confined+CSP-locked
-    // apex:// artifact protocol — everything else is denied
-    if (/^(file|apex):\/\//i.test(url)) return;
-    e.preventDefault();
-    lifeLog(`blocked navigation to ${url}`);
-  };
   win.webContents.on('will-navigate', guardNav);
   win.webContents.on('will-redirect', guardNav);
   win.webContents.on('did-fail-load', (_e, code, desc, url) =>
@@ -226,6 +233,77 @@ bus.on('ready', () => {
   if (win && !win.isDestroyed())
     bus.post('winState', { maximized: win.isMaximized(), fullscreen: win.isFullScreen() });
 });
+
+// STUDIO v2 Wave S (S1): the detached studio window — same preload, same
+// webPreferences, same renderer as the main window; '#apexWindow=studio' is
+// the boot flag S2's layout will read (S1: rides through unused, the window
+// boots as a full shell). Never auto-opened — only the toggle verb below.
+// main.js keeps no bounds persistence for the main window (it just
+// maximizes), so the studio stays S1-minimal: save normal bounds on close,
+// restore on open — second-monitor placement sticks.
+const STUDIO_BOUNDS_FILE = path.join(__dirname, '..', 'state', 'studio-window.json');
+
+function createStudioWindow() {
+  let saved = null;
+  try { saved = JSON.parse(fs.readFileSync(STUDIO_BOUNDS_FILE, 'utf8')); } catch { /* first open */ }
+  const sized = saved && Number.isFinite(saved.width) && Number.isFinite(saved.height);
+  const opts = {
+    width: sized ? saved.width : 1280,
+    height: sized ? saved.height : 860,
+    minWidth: 640,
+    minHeight: 400,
+    frame: false,                 // we own every pixel — our own title bar
+    backgroundColor: theme.load().bg,
+    icon: findIcon(),
+    show: false,
+    webPreferences: {             // EXACTLY the main window's — one door, same locks
+      preload: path.join(__dirname, '..', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false
+    }
+  };
+  // x may be negative (a monitor left of the primary) — Number.isFinite is the test
+  if (sized && Number.isFinite(saved.x) && Number.isFinite(saved.y)) { opts.x = saved.x; opts.y = saved.y; }
+  const sw = new BrowserWindow(opts);
+  bus.addWindow(sw);              // the bus's destroyed-hook unregisters it on close
+  lifeLog('createStudioWindow');
+  sw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  sw.webContents.on('will-navigate', guardNav);
+  sw.webContents.on('will-redirect', guardNav);
+  sw.webContents.on('did-fail-load', (_e, code, desc, url) =>
+    lifeLog(`studio did-fail-load ${code} ${desc} ${url}`));
+  sw.webContents.on('render-process-gone', (_e, details) =>
+    lifeLog(`studio render-process-gone ${details.reason} exitCode=${details.exitCode}`));
+  sw.webContents.on('did-finish-load', () => lifeLog('studio did-finish-load'));
+  sw.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { hash: 'apexWindow=studio' });
+  sw.once('ready-to-show', () => { lifeLog('studio ready-to-show'); sw.show(); });
+  // same backstop as the main window (2026-07-12: ready-to-show stopped
+  // firing on this box entirely) — a studio window must never sit invisible
+  setTimeout(() => {
+    if (!sw.isDestroyed() && !sw.isVisible()) {
+      lifeLog('BACKSTOP show (studio ready-to-show never fired)');
+      sw.show();
+    }
+  }, 1500);
+  // No close gate here: closing the detached studio is just closing a window
+  // (the seat-aware quit handshake belongs to the main window alone).
+  sw.on('close', () => {
+    try {
+      fs.mkdirSync(path.dirname(STUDIO_BOUNDS_FILE), { recursive: true });
+      fs.writeFileSync(STUDIO_BOUNDS_FILE, JSON.stringify(sw.getNormalBounds()));
+    } catch { /* a failed bounds save must never block closing */ }
+  });
+  // the bus already dropped this window via its destroyed hook, so this
+  // broadcast reaches only the survivors — renderers update their affordances
+  sw.on('closed', () => bus.post('studioWindowClosed', {}));
+  return sw;
+}
+
+// renderer→main: open the detached studio if closed, focus it if open
+// (studioWindow.js owns the drilled open-or-focus truth).
+bus.on('studioWindowToggle', () => studioWindow.toggle(createStudioWindow));
 
 app.on('second-instance', () => {
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }

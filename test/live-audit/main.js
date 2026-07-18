@@ -25,9 +25,9 @@ app.whenReady().then(() => {
   const audit = require('../../main/engine/audit');
 
   const onMain = {};
-  const fakeWin = { webContents: { isDestroyed: () => false,
+  const fakeWin = { webContents: { isDestroyed: () => false, once: () => {},
     send: (_ch, msg) => { if (msg && onMain[msg.type]) onMain[msg.type](msg); } } };
-  bus.init(fakeWin);
+  bus.addWindow(fakeWin);
   seats.register();
   auditWatch.register();
 

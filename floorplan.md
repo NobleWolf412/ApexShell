@@ -38,8 +38,14 @@ the same change-set — a stale map is worse than none.
 ```
 ApexShell/
 ├── main/                  Electron main process
-│   ├── main.js            window lifecycle + module registration ONLY
-│   ├── bus.js             typed message bus (renderer⇄main), register('type', fn)
+│   ├── main.js            window lifecycle + module registration ONLY (the
+│   │                      main window + the detached studio window, Wave S)
+│   ├── bus.js             typed message bus (renderer⇄main), register('type', fn);
+│   │                      multi-window: post() broadcasts to every registered
+│   │                      live window — except a 'ready' dispatch, whose
+│   │                      re-posts target the readying window alone
+│   ├── studioWindow.js    detached-studio toggle truth (open-or-focus),
+│   │                      Electron-free so the multiwindow drill proves it
 │   ├── seats.js           seat lifecycle, presets, launch config, restore
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
 │   ├── tasks.js           the WORKFLOW LAYER: task board store + persona

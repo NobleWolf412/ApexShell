@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave S slice S1 — the multi-window bus + the detached studio
+  window** (`main/bus.js`, `main/main.js`, `main/studioWindow.js` new; drill
+  in `test/multiwindow-drill.js`; zero renderer changes): `bus.post()` now
+  broadcasts to every registered live window — a Set of webContents, added by
+  `bus.addWindow(win)` (was `init(win)`; main.js is the only caller), removed
+  by the webContents' own `destroyed` hook, with an `isDestroyed()` guard in
+  the post loop so a dying window can never crash a broadcast. The ONE
+  exception is `'ready'`: its synchronous re-posts target the readying window
+  alone (every ready handler audited — all re-post state synchronously), so a
+  second window's boot rebuilds ITS projection without replaying
+  seatNew/permission events at windows that already hold them; an injected
+  ready (the smoke path) has no sender and still broadcasts.
+  `createStudioWindow()` opens a second BrowserWindow with the SAME preload,
+  the SAME webPreferences (sandbox, contextIsolation, no node), the SAME
+  navigation lock (audit H1, now module-scoped), loading the same
+  renderer/index.html with `#apexWindow=studio` — the boot flag rides through
+  unused until S2's studio layout, so the window boots as a full second shell.
+  Bounds persist machine-side (`state/studio-window.json`, saved on close,
+  restored on open — second-monitor placement sticks). The bus verb
+  `studioWindowToggle` opens it if closed / focuses (and un-minimizes) it if
+  open — the open-or-focus truth lives in Electron-free `main/studioWindow.js`
+  so the drill proves it hermetically; `studioWindowClosed` broadcasts to the
+  survivors when it dies. Never auto-opened: with one window the shell behaves
+  exactly as before, and nothing sends the toggle verb yet (S2 adds the ⧉
+  affordance).
+
 - **STUDIO v2, Wave A slice A5 — annotate → regenerate**
   (`extensions/studio/lib/{mockup,drafts}.js`, `extensions/studio/main.js`,
   `extensions/studio/renderer.js`, `extensions/studio/style.css`; drills in

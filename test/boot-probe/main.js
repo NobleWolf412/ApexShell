@@ -36,7 +36,7 @@ app.whenReady().then(() => {
   const win = step('BrowserWindow', () => new BrowserWindow({ show: false,
     webPreferences: { preload: 'C:/Users/macca/ApexShell/preload.js',
       contextIsolation: true, nodeIntegration: false, sandbox: true } }));
-  step('bus.init', () => bus.init(win));
+  step('bus.addWindow', () => bus.addWindow(win));
   step('theme.register', () => theme.register());
   step('monitors.register', () => monitors.register());
   step('seats.register', () => seats.register());
