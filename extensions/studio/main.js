@@ -21,6 +21,8 @@ const blueprint = require('./lib/blueprint');
 const modelPicker = require('./lib/modelPicker');
 const suggest = require('./lib/suggest');
 const codesigner = require('./lib/codesigner');
+const packageCreator = require('./lib/creator');
+const liftoff = require('./lib/liftoff');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -653,6 +655,170 @@ function register(ctx) {
     activeCodesigner.patches.splice(idx, 1);
     ctx.bus.post('codesignerPatches', { draftId: activeCodesigner.draftId, patches: activeCodesigner.patches.slice() });
   });
+
+  // ---- Create Project + Lift-off (slice 8) ---------------------------------
+  // Create writes the atomic package (lib/creator.js), reusing slice 2's
+  // contract.js for every safety check. Everything past Create reads the
+  // package straight off disk by projectId — never from the in-memory draft
+  // preview — so Lift-off works the same whether it runs the instant after
+  // Create or after a reload.
+  ctx.bus.on('projectsCreate', (message) => {
+    try {
+      if (!message || message.confirmed !== true)
+        throw new Error('Creating the project package requires explicit confirmation.');
+      const draft = currentWorkspaceDraft(message.id);
+      if (!draft.preview) throw new Error('Generate and approve a canonical preview first.');
+      if (message.expectedRevision !== draft.revision)
+        throw new Error('The draft changed; reopen it before creating the project.');
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const created = packageCreator.createProjectPackage(workspace, draft.preview);
+      ctx.bus.post('projectsCreateResult', {
+        ok: true,
+        projectId: created.projectId,
+        projectDir: created.projectDir,
+        displayName: draft.preview.displayName,
+        warnings: created.report.warnings,
+        suggestions: created.report.suggestions,
+      });
+    } catch (err) {
+      ctx.bus.post('projectsCreateResult', { ok: false, error: err.message });
+      ctx.bus.post('toast', { text: 'Project was not created: ' + err.message });
+    }
+  });
+
+  // Archive-based removal — a SEPARATE explicit action from draft deletion
+  // (projectsDraftDelete, above): removing a created project never touches a
+  // draft, and deleting a draft never touches a written package.
+  ctx.bus.on('projectsRemove', (message) => {
+    try {
+      if (!message || message.confirmed !== true)
+        throw new Error('Removing a project requires explicit confirmation.');
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const dest = packageCreator.archiveProject(workspace, message.projectId);
+      ctx.bus.post('projectsRemoveResult', { ok: true, projectId: message.projectId, archivedTo: dest });
+      ctx.bus.post('toast', {
+        text: 'Project archived — recover it from ' + path.basename(workspace) +
+          '/.archive/' + path.basename(dest) + ' if needed.',
+      });
+    } catch (err) {
+      ctx.bus.post('projectsRemoveResult', { ok: false, error: err.message });
+      ctx.bus.post('toast', { text: 'Project was not removed: ' + err.message });
+    }
+  });
+
+  // Reads a created project's canonical frontmatter straight off disk — every
+  // Lift-off action keys off projectId, not the in-memory draft/preview.
+  const projectFrontmatter = (projectDir, canonicalPath) =>
+    fs.existsSync(canonicalPath)
+      ? contract.parseFrontmatter(fs.readFileSync(canonicalPath, 'utf8')).attributes
+      : {};
+
+  // Lift-off (a): register the project's folder into seatconfig.json's
+  // `_workspaces`. The actual write is ctx.seats.registerWorkspace — a plain
+  // synchronous ctx.seats method, not a bus verb (see its comment in
+  // main/seats.js for why): collision-warns-never-clobbers, every other
+  // seatconfig key untouched.
+  ctx.bus.on('projectsLiftoffRegisterWorkspace', (message) => {
+    try {
+      const projectId = message && message.projectId;
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const paths = contract.projectPaths(workspace, projectId);
+      if (!fs.existsSync(paths.projectDir))
+        throw new Error('Create the project before registering its workspace.');
+      if (!ctx.seats || typeof ctx.seats.registerWorkspace !== 'function')
+        throw new Error('Workspace registration service is unavailable.');
+      const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
+      const name = (message && typeof message.name === 'string' && message.name.trim())
+        || frontmatter.display_name || projectId;
+      const result = ctx.seats.registerWorkspace({ name, path: paths.projectDir });
+      ctx.bus.post('projectsLiftoffRegisterResult', result);
+      if (!result.ok) ctx.bus.post('toast', { text: 'Workspace was not registered: ' + result.error });
+    } catch (err) {
+      ctx.bus.post('projectsLiftoffRegisterResult', { ok: false, error: err.message });
+    }
+  });
+
+  // Lift-off (b): delegate to the Architect — the workflow layer's OWN
+  // taskCreate (+ taskRouteSave when the user accepts the route as a
+  // template) via ctx.bus.inject: main/tasks.js registers those verbs on the
+  // SAME bus singleton ctx.bus is, and inject() is "the same code path a
+  // renderer post takes past ipc" (main/bus.js) — the sanctioned way for one
+  // main-side module to drive another's bus verb in-process, since post()
+  // only reaches the renderer and can never hand a return value back to a
+  // calling extension. No route ever reaches taskCreate unless every step in
+  // it is a currently-registered preset; no Architect-shaped preset at all
+  // means the whole action explains itself instead of failing opaquely.
+  ctx.bus.on('projectsLiftoffDelegate', (message) => {
+    try {
+      const projectId = message && message.projectId;
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const paths = contract.projectPaths(workspace, projectId);
+      if (!fs.existsSync(paths.canonical))
+        throw new Error('Create the project before delegating.');
+      if (!ctx.seats || typeof ctx.seats.presetNames !== 'function')
+        throw new Error('Live persona presets are unavailable.');
+      const liveNames = ctx.seats.presetNames();
+      const architect = liftoff.findArchitectPreset(liveNames);
+      if (!architect) {
+        ctx.bus.post('projectsLiftoffDelegateResult', {
+          ok: false, noArchitect: true,
+          error: 'No Architect-shaped persona is registered yet — create one in the ' +
+            'PERSONAS sub-tab, then delegate.',
+        });
+        return;
+      }
+      const route = liftoff.normalizeRouteInput(message && message.route, architect);
+      const plan = liftoff.planDelegateRoute({ presetNames: liveNames, route });
+      if (!plan.ok) {
+        ctx.bus.post('projectsLiftoffDelegateResult', {
+          ok: false,
+          unknownPresets: plan.unknownPresets,
+          error: plan.error || ('This route names personas that are not currently registered: ' +
+            plan.unknownPresets.join(', ')),
+        });
+        return;
+      }
+      if (typeof ctx.bus.inject !== 'function')
+        throw new Error('Delegation requires the bus injection seam.');
+      const canonicalText = fs.readFileSync(paths.canonical, 'utf8');
+      const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
+      const title = 'Delegate: ' + (frontmatter.display_name || projectId);
+      ctx.bus.inject({
+        type: 'taskCreate', title, cwd: paths.projectDir,
+        route, brief: canonicalText, auto: false, start: true,
+      });
+      if (message && message.saveAsTemplate) {
+        const templateName = (typeof message.templateName === 'string' && message.templateName.trim())
+          || ('App Builder: ' + route.join(' → '));
+        ctx.bus.inject({ type: 'taskRouteSave', name: templateName, steps: route });
+      }
+      ctx.bus.post('projectsLiftoffDelegateResult', { ok: true, route, title, cwd: paths.projectDir });
+    } catch (err) {
+      ctx.bus.post('projectsLiftoffDelegateResult', { ok: false, error: err.message });
+    }
+  });
+
+  // Lift-off (c): open a chat here — one bare seat in the project cwd, no
+  // route, no task. seatCreate is main/seats.js's own normal "open a rail
+  // seat" verb (the same one a click on a rail button posts); same
+  // in-process dispatch reasoning as taskCreate above.
+  ctx.bus.on('projectsLiftoffChat', (message) => {
+    try {
+      const projectId = message && message.projectId;
+      const workspace = selectedWorkspace(ctx.stateDir);
+      const paths = contract.projectPaths(workspace, projectId);
+      if (!fs.existsSync(paths.projectDir))
+        throw new Error('Create the project before opening a chat.');
+      if (typeof ctx.bus.inject !== 'function')
+        throw new Error('Opening a chat requires the bus injection seam.');
+      const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
+      const title = 'Chat — ' + (frontmatter.display_name || projectId);
+      ctx.bus.inject({ type: 'seatCreate', persona: '', cwd: paths.projectDir, title });
+      ctx.bus.post('projectsLiftoffChatResult', { ok: true, cwd: paths.projectDir, title });
+    } catch (err) {
+      ctx.bus.post('projectsLiftoffChatResult', { ok: false, error: err.message });
+    }
+  });
 }
 
 module.exports = {
@@ -667,3 +833,5 @@ module.exports = {
 module.exports.modelPicker = modelPicker;
 module.exports.suggest = suggest;
 module.exports.codesigner = codesigner;
+module.exports.packageCreator = packageCreator;
+module.exports.liftoff = liftoff;

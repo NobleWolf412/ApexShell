@@ -177,6 +177,46 @@
   wiring) — driven through a stubbed `ctx.seats.startDisposable`, zero LLM
   spend, chained into `test:studio`. Renderer edits apply on Reload; the
   `main.js` change needs Update & restart. (App Builder v1, slice 7 of 9.)
+- **Create Project + Lift-off** (`extensions/studio/`): the explicit action that
+  finally writes a portable package to disk, and the payoff screen after it.
+  `lib/creator.js` (`createProjectPackage`) writes PROJECT.md, blueprint.json,
+  and project-context.md atomically — same-directory temp-folder-plus-rename,
+  lock-file-guarded, reusing slice 2's `contract.js` (`isSafeProjectId`,
+  `validateProjectPackage({mode:'create'})`) for id safety, traversal rejection,
+  and would-overwrite detection *before* any lock/stage exists, so a collision or
+  a bad id leaves zero stray files; `archiveProject` moves a project under
+  `.archive/` instead of deleting it — a separate explicit action from draft
+  deletion. Lift-off offers three independent actions: **(a) Register
+  workspace** — a new `ctx.seats.registerWorkspace({name, path})` (main/seats.js;
+  a plain synchronous method beside the existing `checkPresetNames`/
+  `replacePresetGroup`, not a bus verb — the bus's `post()`/`on()` are
+  main→renderer/renderer→main only, so a synchronous result can never reach a
+  calling main-side extension any other way) adds `{name, path}` to
+  `_workspaces`, collision (same name OR path) warns and never clobbers the
+  existing entry, every other `seatconfig.json` key is untouched. **(b) Delegate
+  to the Architect** — dispatches the workflow layer's own `taskCreate` (+
+  `taskRouteSave` when the user accepts the route as a template) via
+  `ctx.bus.inject` (the same in-process dispatch `main/main.js`'s own smoke code
+  and `test/live-chain` use — `post()` cannot hand a return value back to a
+  main-side caller, `inject()` is "the same code path a renderer post takes past
+  ipc"); the route defaults to the first live Architect-shaped preset alone
+  (`lib/liftoff.js`), is user-editable, and is checked against
+  `ctx.seats.presetNames()` (new read-only method beside `registerWorkspace`)
+  before ever calling `taskCreate` — an unknown preset warns instead of
+  creating a task, and no Architect-shaped preset at all explains itself and
+  points at the PERSONAS sub-tab instead of failing opaquely. `main/tasks.js`
+  gained one small additive field for this: `taskCreate`'s optional `brief`
+  rides step 0's kickoff only (`composeTaskBody`) as the verbatim PROJECT.md
+  text, never a summary — absent for every existing caller, byte-identical
+  behavior when omitted. **(c) Open a chat here** — one bare `seatCreate` seat
+  in the project's folder, no route, no task. New `test/studio-liftoff-drill.js`
+  (atomic write + rollback-on-collision + traversal-rejection + validator
+  round-trip, archive-not-delete, the three Lift-off actions' decision logic
+  against a stubbed `ctx.seats`/fake bus, and `main/tasks.js`'s `brief` field
+  against the real module) chained into `test:studio`, zero LLM spend, no real
+  seat/task ever launches. Renderer edits apply on Reload; the `main.js`/
+  `main/seats.js`/`main/tasks.js` changes need Update & restart. (App Builder
+  v1, slice 8 of 9.)
 
 ## 0.2.0 — 2026-07-17
 

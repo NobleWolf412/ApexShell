@@ -208,6 +208,16 @@ function mountProjects(el, hasBus) {
     confirmOverwrite: false,
     validation: null,      // last projectsValidationStatus report
     suggestedProjectId: '',
+    // ---- slice 8: Create Project + Lift-off ----
+    createBusy: false,
+    createError: null,
+    createdProject: null,   // { projectId, projectDir, displayName } once Create succeeds
+    liftoff: {
+      registerBusy: false, registerName: '', registerResult: null,
+      routeText: '', saveAsTemplate: false, templateName: '',
+      delegateBusy: false, delegateResult: null,
+      chatBusy: false, chatResult: null,
+    },
     // ---- slice 6: per-card AI suggest pass (opt-in, one disposable turn) ----
     // Keyed to a single card at a time; switching cards drops any stale
     // prepared/result state rather than carrying it to the wrong question.
@@ -249,6 +259,8 @@ function mountProjects(el, hasBus) {
       ...state.cards.map((c, i) => ({ id: c.key, label: (i + 1) + ' · ' + c.title, sub: null, card: true })),
       { id: 'review', label: 'Review', sub: 'answers + gaps' },
       { id: 'canonical', label: 'Canonical', sub: 'PROJECT.md + validate' },
+      { id: 'create', label: 'Create', sub: 'write the package' },
+      { id: 'liftoff', label: 'Lift-off', sub: 'register · delegate · chat' },
     ];
   }
 
@@ -259,6 +271,8 @@ function mountProjects(el, hasBus) {
     if (id === 'start') return Boolean(state.draft);
     if (id === 'review') return hasPreview();
     if (id === 'canonical') return hasPreview() && !state.draft.preview.canonicalDrift;
+    if (id === 'create') return Boolean(state.createdProject);
+    if (id === 'liftoff') return false;
     return Boolean(state.draft && (state.draft.answers[id] || '').trim());
   };
   const stepReachable = (id) => {
@@ -266,6 +280,8 @@ function mountProjects(el, hasBus) {
     if (id === 'start') return Boolean(state.ws && state.ws.configured);
     if (id === 'review') return Boolean(state.draft);       // review needs a started draft
     if (id === 'canonical') return hasPreview();             // canonical needs a preview
+    if (id === 'create') return hasPreview();                 // Create needs an approved canonical
+    if (id === 'liftoff') return Boolean(state.createdProject); // offered right after Create succeeds
     return Boolean(state.draft);   // cards need a started draft
   };
 
@@ -322,6 +338,8 @@ function mountProjects(el, hasBus) {
     if (state.step === 'start') return renderStart();
     if (state.step === 'review') return renderReview();
     if (state.step === 'canonical') return renderCanonicalView();
+    if (state.step === 'create') return renderCreate();
+    if (state.step === 'liftoff') return renderLiftoff();
     if (isCardStep(state.step)) return renderCard(findCard(state.step));
     state.step = 'ws';
     renderWs();
@@ -943,6 +961,158 @@ function mountProjects(el, hasBus) {
     });
   }
 
+  // ---- Create Project (slice 8): the explicit action that writes the atomic
+  // package. Everything before this is a draft; nothing on disk exists yet.
+  function renderCreate() {
+    const draft = state.draft;
+    if (!draft || !draft.preview) { state.step = 'canonical'; return renderCanonicalView(); }
+    const bundle = draft.preview;
+    const already = state.createdProject && state.createdProject.projectId === bundle.projectId;
+    main.innerHTML =
+      '<h2 class="pjTitle">Create project</h2>' +
+      '<p class="pjLead">Writes ' + escapeHtml(bundle.projectId) + '/ into the projects workspace — PROJECT.md, ' +
+        'blueprint.json, project-context.md — atomically. This never overwrites an existing project; ' +
+        'a collision is a clean error, not a partial write.</p>' +
+      '<div class="pjCard">' +
+        (bundle.canonicalDrift
+          ? '<div class="pjErr" data-tone="warn">The canonical has unresolved drift — resolve it on the Canonical Draft step first.</div>'
+          : '') +
+        (already
+          ? '<div class="pjWsSub" data-tone="good">Created at ' + escapeHtml(state.createdProject.projectDir) + '</div>'
+          : '<div class="pjBtnRow">' +
+              '<button type="button" class="pjBtn primary pjCreateBtn" ' +
+                (state.createBusy || bundle.canonicalDrift ? 'disabled' : '') + '>CREATE PROJECT</button>' +
+            '</div>') +
+        (state.createError ? '<div class="pjErr" data-tone="warn">Not created — ' + escapeHtml(state.createError) + '</div>' : '') +
+        (already ? '<div class="pjBtnRow"><button type="button" class="pjBtn primary pjToLiftoff">LIFT-OFF →</button></div>' : '') +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<div class="pjBtnRow"><button type="button" class="pjBtn pjCreateBack">← BACK TO CANONICAL</button></div>' +
+      '</div>';
+
+    const createBtn = main.querySelector('.pjCreateBtn');
+    if (createBtn) createBtn.addEventListener('click', () => {
+      if (state.createBusy) return;
+      state.createBusy = true;
+      state.createError = null;
+      render();
+      ApexBus.post('projectsCreate', { id: draft.id, expectedRevision: draft.revision, confirmed: true });
+    });
+    const toLiftoff = main.querySelector('.pjToLiftoff');
+    if (toLiftoff) toLiftoff.addEventListener('click', () => goStep('liftoff'));
+    main.querySelector('.pjCreateBack').addEventListener('click', () => goStep('canonical'));
+  }
+
+  // ---- Lift-off (slice 8): the payoff screen, offered right after Create
+  // succeeds. Three independent actions — none of them chains into another.
+  function renderLiftoff() {
+    if (!state.createdProject) { state.step = 'create'; return renderCreate(); }
+    const p = state.createdProject;
+    const lift = state.liftoff;
+
+    main.innerHTML =
+      '<h2 class="pjTitle">Lift-off — ' + escapeHtml(p.displayName || p.projectId) + '</h2>' +
+      '<p class="pjLead">' + escapeHtml(p.projectDir) + '</p>' +
+
+      '<div class="pjCard">' +
+        '<div class="pjLabel">REGISTER WORKSPACE</div>' +
+        '<div class="pjWsSub">Adds this project to every seat/workspace picker in Apex. A name or path already ' +
+          'registered WARNS and is never overwritten.</div>' +
+        '<input class="pjName pjLiftRegisterName" maxlength="80" placeholder="' + escapeHtml(p.displayName || p.projectId) + '" />' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn primary pjLiftRegisterBtn" ' + (lift.registerBusy ? 'disabled' : '') + '>REGISTER</button>' +
+        '</div>' +
+        (lift.registerResult
+          ? '<div class="pjErr" data-tone="' + (lift.registerResult.ok ? 'good' : 'warn') + '">' +
+              escapeHtml(lift.registerResult.ok
+                ? 'Registered as "' + lift.registerResult.name + '".'
+                : (lift.registerResult.warning ? lift.registerResult.error : 'Not registered — ' + lift.registerResult.error)) +
+            '</div>'
+          : '') +
+      '</div>' +
+
+      '<div class="pjCard">' +
+        '<div class="pjLabel">DELEGATE TO THE ARCHITECT</div>' +
+        '<div class="pjWsSub">Creates a board task in this project\'s folder and hands PROJECT.md to the route\'s ' +
+          'first step. Leave the route blank to default to the Architect alone; edit it before delegating.</div>' +
+        '<label class="pjLabel" for="pjLiftRoute">ROUTE — COMMA-SEPARATED PERSONA NAMES</label>' +
+        '<input class="pjName pjLiftRoute" id="pjLiftRoute" maxlength="400" placeholder="Architect" value="' + escapeHtml(lift.routeText) + '" />' +
+        '<label class="pjBtnRow"><input type="checkbox" class="pjLiftSaveTemplate" ' + (lift.saveAsTemplate ? 'checked' : '') + ' /> ' +
+          'save this route as a template</label>' +
+        '<input class="pjName pjLiftTemplateName" maxlength="60" placeholder="Template name" ' +
+          (lift.saveAsTemplate ? '' : 'hidden') + ' value="' + escapeHtml(lift.templateName) + '" />' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn primary pjLiftDelegateBtn" ' + (lift.delegateBusy ? 'disabled' : '') + '>DELEGATE →</button>' +
+        '</div>' +
+        (lift.delegateResult
+          ? '<div class="pjErr" data-tone="' + (lift.delegateResult.ok ? 'good' : 'warn') + '">' +
+              escapeHtml(lift.delegateResult.ok
+                ? 'Delegated on the route: ' + lift.delegateResult.route.join(' → ')
+                : 'Not delegated — ' + lift.delegateResult.error) +
+            '</div>'
+          : '') +
+      '</div>' +
+
+      '<div class="pjCard">' +
+        '<div class="pjLabel">OPEN A CHAT HERE</div>' +
+        '<div class="pjWsSub">One plain chat seat in this project\'s folder — no route, no task.</div>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjLiftChatBtn" ' + (lift.chatBusy ? 'disabled' : '') + '>OPEN CHAT</button>' +
+        '</div>' +
+        (lift.chatResult
+          ? '<div class="pjErr" data-tone="' + (lift.chatResult.ok ? 'good' : 'warn') + '">' +
+              escapeHtml(lift.chatResult.ok ? 'Opened.' : 'Not opened — ' + lift.chatResult.error) +
+            '</div>'
+          : '') +
+      '</div>' +
+
+      '<div class="pjCard"><div class="pjBtnRow"><button type="button" class="pjBtn pjLiftBack">← BACK TO CREATE</button></div></div>';
+
+    main.querySelector('.pjLiftRegisterBtn').addEventListener('click', () => {
+      if (lift.registerBusy) return;
+      lift.registerBusy = true;
+      lift.registerResult = null;
+      const nameEl = main.querySelector('.pjLiftRegisterName');
+      render();
+      ApexBus.post('projectsLiftoffRegisterWorkspace', {
+        projectId: p.projectId, name: (nameEl && nameEl.value.trim()) || undefined,
+      });
+    });
+
+    const saveTplBox = main.querySelector('.pjLiftSaveTemplate');
+    saveTplBox.addEventListener('change', () => {
+      lift.saveAsTemplate = saveTplBox.checked;
+      render();
+    });
+    main.querySelector('.pjLiftRoute').addEventListener('input', (ev) => { lift.routeText = ev.target.value; });
+    const tplNameEl = main.querySelector('.pjLiftTemplateName');
+    if (tplNameEl) tplNameEl.addEventListener('input', (ev) => { lift.templateName = ev.target.value; });
+
+    main.querySelector('.pjLiftDelegateBtn').addEventListener('click', () => {
+      if (lift.delegateBusy) return;
+      lift.delegateBusy = true;
+      lift.delegateResult = null;
+      const route = lift.routeText.split(',').map((s) => s.trim()).filter(Boolean);
+      render();
+      ApexBus.post('projectsLiftoffDelegate', {
+        projectId: p.projectId,
+        route: route.length ? route : undefined,
+        saveAsTemplate: lift.saveAsTemplate,
+        templateName: lift.templateName,
+      });
+    });
+
+    main.querySelector('.pjLiftChatBtn').addEventListener('click', () => {
+      if (lift.chatBusy) return;
+      lift.chatBusy = true;
+      lift.chatResult = null;
+      render();
+      ApexBus.post('projectsLiftoffChat', { projectId: p.projectId });
+    });
+
+    main.querySelector('.pjLiftBack').addEventListener('click', () => goStep('create'));
+  }
+
   // ---- bus handlers -------------------------------------------------------
   ApexBus.on('projectsWorkspaceStatus', (m) => {
     state.ws = m;
@@ -1105,6 +1275,40 @@ function mountProjects(el, hasBus) {
     if (!state.draft || m.draftId !== state.draft.id) return;
     state.codesigner.patches = m.patches || [];
     if (isCardStep(state.step)) renderCard(findCard(state.step));
+  });
+
+  // ---- slice 8: Create Project + Lift-off ----------------------------------
+  ApexBus.on('projectsCreateResult', (m) => {
+    state.createBusy = false;
+    if (m.ok) {
+      state.createError = null;
+      state.createdProject = { projectId: m.projectId, projectDir: m.projectDir, displayName: m.displayName };
+      state.liftoff = { registerBusy: false, registerName: '', registerResult: null,
+        routeText: '', saveAsTemplate: false, templateName: '',
+        delegateBusy: false, delegateResult: null, chatBusy: false, chatResult: null };
+      state.step = 'liftoff';
+    } else {
+      state.createError = m.error;
+    }
+    render();
+  });
+
+  ApexBus.on('projectsLiftoffRegisterResult', (m) => {
+    state.liftoff.registerBusy = false;
+    state.liftoff.registerResult = m;
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsLiftoffDelegateResult', (m) => {
+    state.liftoff.delegateBusy = false;
+    state.liftoff.delegateResult = m;
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsLiftoffChatResult', (m) => {
+    state.liftoff.chatBusy = false;
+    state.liftoff.chatResult = m;
+    if (state.step === 'liftoff') render();
   });
 
   render();

@@ -1,0 +1,344 @@
+// App Builder — headless drill for slice 8 (Create Project + Lift-off):
+// lib/creator.js's atomic package write + archive-based removal, lib/liftoff.js's
+// pure route/preset decision logic, and the main.js bus wiring for
+// projectsCreate/projectsRemove/projectsLiftoff* — driven with a fake bus
+// (including a fake .inject, the same seam main/main.js's own smoke code and
+// test/live-chain use to call another module's bus verb in-process) and a
+// stubbed ctx.seats, exactly like test/studio-codesigner-drill.js drives
+// ctx.seats.startDisposable. Zero real seat/task ever launches; zero LLM spend.
+// A separate section drills main/tasks.js's own `brief` addition (the step-0
+// kickoff carrying PROJECT.md verbatim) against the REAL tasks.js module,
+// mirroring test/taskboard-drill.js's own stub-seats harness.
+// Run: node test/studio-liftoff-drill.js
+'use strict';
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const creator = require('../extensions/studio/lib/creator');
+const liftoff = require('../extensions/studio/lib/liftoff');
+const contract = require('../extensions/studio/lib/contract');
+const studio = require('../extensions/studio/main');
+const drafts = require('../extensions/studio/lib/drafts');
+const blueprint = require('../extensions/studio/lib/blueprint');
+const { CARDS } = require('../extensions/studio/lib/interview');
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-studio-liftoff-'));
+let passed = 0, failed = 0;
+
+function gate(name, fn) {
+  try { fn(); passed++; console.log('PASS  ' + name); }
+  catch (err) { failed++; console.error('FAIL  ' + name + ' — ' + err.stack); }
+}
+
+function fullDraft(name) {
+  const d = { name, pitch: 'Scores entries.', answers: {} };
+  for (const c of CARDS) d.answers[c.key] = c.key + ' answer '.repeat(20);
+  return d;
+}
+
+// ==========================================================================
+// lib/creator.js — atomic package write + archive-based removal
+// ==========================================================================
+
+gate('a minimal valid project writes atomically and round-trips through validateProjectPackage', () => {
+  const ws = fs.mkdtempSync(path.join(scratch, 'ws1-'));
+  const bundle = blueprint.buildBundle(fullDraft('SniperSight'), 'snipersight');
+  const created = creator.createProjectPackage(ws, bundle);
+  assert.equal(created.projectId, 'snipersight');
+  assert.ok(fs.existsSync(path.join(created.projectDir, 'PROJECT.md')));
+  assert.ok(fs.existsSync(path.join(created.projectDir, 'blueprint.json')));
+  assert.ok(fs.existsSync(path.join(created.projectDir, 'project-context.md')));
+  const report = contract.validateProjectPackage(ws, 'snipersight');
+  assert.equal(report.valid, true, report.errors.map((f) => f.message).join(' · '));
+});
+
+gate('a project-id collision is rejected with NO partial write', () => {
+  const ws = fs.mkdtempSync(path.join(scratch, 'ws2-'));
+  const bundle = blueprint.buildBundle(fullDraft('SniperSight'), 'snipersight');
+  creator.createProjectPackage(ws, bundle);
+  const before = fs.readdirSync(ws).sort();
+  assert.throws(() => creator.createProjectPackage(ws, bundle), /already exists/);
+  const after = fs.readdirSync(ws).sort();
+  assert.deepEqual(after, before, 'no stray temp/partial files after a rejected collision');
+  assert.ok(!after.some((n) => n.includes('.creating-') || n.includes('.create.lock')));
+});
+
+gate('path traversal in the project id is rejected before any write', () => {
+  const ws = fs.mkdtempSync(path.join(scratch, 'ws3-'));
+  const bundle = blueprint.buildBundle(fullDraft('Evil'), 'evil');
+  bundle.projectId = '../../evil-escape';
+  bundle.blueprint.canonical_hash = bundle.generatedCanonicalHash;   // keep the hash gate happy
+  assert.throws(() => creator.createProjectPackage(ws, bundle), /Generate and approve|invalid project id/);
+  assert.deepEqual(fs.readdirSync(ws), []);
+});
+
+gate('archiving a project moves it under .archive/ and does not delete it', () => {
+  const ws = fs.mkdtempSync(path.join(scratch, 'ws4-'));
+  const bundle = blueprint.buildBundle(fullDraft('SniperSight'), 'snipersight');
+  const created = creator.createProjectPackage(ws, bundle);
+  const dest = creator.archiveProject(ws, 'snipersight');
+  assert.ok(dest.startsWith(path.join(ws, '.archive')));
+  assert.ok(fs.existsSync(path.join(dest, 'PROJECT.md')), 'the package survives the move, nothing deleted');
+  assert.ok(!fs.existsSync(created.projectDir), 'the live project folder is gone from its original slot');
+});
+
+// ==========================================================================
+// lib/liftoff.js — pure route/preset decision logic
+// ==========================================================================
+
+gate('findArchitectPreset: exact match wins, then substring, then null', () => {
+  assert.equal(liftoff.findArchitectPreset(['Auditor', 'Architect', 'Coder']), 'Architect');
+  assert.equal(liftoff.findArchitectPreset(['Auditor', 'Chief Architect']), 'Chief Architect');
+  assert.equal(liftoff.findArchitectPreset(['Auditor', 'Coder']), null);
+  assert.equal(liftoff.findArchitectPreset([]), null);
+});
+
+gate('planDelegateRoute: known route ok; unknown preset warns without ok', () => {
+  const known = ['Architect', 'Auditor'];
+  assert.equal(liftoff.planDelegateRoute({ presetNames: known, route: ['Architect'] }).ok, true);
+  const bad = liftoff.planDelegateRoute({ presetNames: known, route: ['Architect', 'Ghost'] });
+  assert.equal(bad.ok, false);
+  assert.deepEqual(bad.unknownPresets, ['Ghost']);
+  const empty = liftoff.planDelegateRoute({ presetNames: known, route: [] });
+  assert.equal(empty.ok, false);
+  assert.ok(empty.error);
+});
+
+// ==========================================================================
+// main.js bus wiring — projectsCreate / projectsRemove / Lift-off
+// ==========================================================================
+
+function fakeBus() {
+  const handlers = new Map();
+  const posts = [];
+  const injected = [];
+  return {
+    handlers, posts, injected,
+    on(type, fn) { handlers.set(type, fn); },
+    post(type, payload) { posts.push({ type, payload }); },
+    inject(msg) { injected.push(msg); },
+  };
+}
+
+function freshHarness(tag, { presets = ['Architect', 'Auditor'], registerResult } = {}) {
+  const stateDir = path.join(scratch, tag + '-state');
+  const workspace = path.join(scratch, tag + '-workspace');
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.mkdirSync(workspace, { recursive: true });
+  studio.writeWorkspaceConfig(stateDir, workspace);
+
+  const draft = drafts.createDraft(stateDir, workspace, { name: 'SniperSight', pitch: 'Scores entries.' });
+  const withAnswers = drafts.updateDraft(stateDir, draft.id, draft.revision, {
+    answers: Object.fromEntries(CARDS.map((c) => [c.key, c.key + ' answer '.repeat(20)])),
+  });
+
+  const bus = fakeBus();
+  const registerCalls = [];
+  studio.register({
+    bus, stateDir,
+    async pickDirectory() { return null; },
+    seats: {
+      presetNames() { return presets; },
+      registerWorkspace(args) {
+        registerCalls.push(args);
+        return registerResult || { ok: true, name: args.name, path: args.path };
+      },
+    },
+  });
+  return { stateDir, workspace, bus, registerCalls, draftId: withAnswers.id, revision: withAnswers.revision };
+}
+
+function createdProject(h) {
+  h.bus.handlers.get('projectsPreviewGenerate')({
+    id: h.draftId, expectedRevision: h.revision, projectId: 'snipersight',
+  });
+  const status = h.bus.posts.filter((p) => p.type === 'projectsPreviewResult').at(-1);
+  assert.equal(status.payload.ok, true, status.payload.error);
+  const draft = drafts.readDraft(h.stateDir, h.draftId);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsCreate')({ id: h.draftId, expectedRevision: draft.revision, confirmed: true });
+  const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult');
+  assert.equal(result.payload.ok, true, result.payload.error);
+  return result.payload;
+}
+
+gate('projectsCreate writes the package and reports the project dir', () => {
+  const h = freshHarness('create-ok');
+  const created = createdProject(h);
+  assert.equal(created.projectId, 'snipersight');
+  assert.ok(fs.existsSync(path.join(created.projectDir, 'PROJECT.md')));
+});
+
+gate('projectsCreate refuses without explicit confirmation', () => {
+  const h = freshHarness('create-noconfirm');
+  h.bus.handlers.get('projectsPreviewGenerate')({ id: h.draftId, expectedRevision: h.revision, projectId: 'snipersight' });
+  const draft = drafts.readDraft(h.stateDir, h.draftId);
+  h.bus.handlers.get('projectsCreate')({ id: h.draftId, expectedRevision: draft.revision, confirmed: false });
+  const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult');
+  assert.equal(result.payload.ok, false);
+  assert.ok(!fs.existsSync(path.join(h.workspace, 'snipersight')));
+});
+
+gate('projectsRemove archives the created project (separate from draft deletion)', () => {
+  const h = freshHarness('remove-ok');
+  const created = createdProject(h);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsRemove')({ projectId: created.projectId, confirmed: true });
+  const result = h.bus.posts.find((p) => p.type === 'projectsRemoveResult');
+  assert.equal(result.payload.ok, true);
+  assert.ok(!fs.existsSync(created.projectDir));
+  // the draft itself is untouched — draft deletion is a distinct action
+  assert.doesNotThrow(() => drafts.readDraft(h.stateDir, h.draftId));
+});
+
+gate('Lift-off (a): register workspace calls ctx.seats.registerWorkspace with the project path', () => {
+  const h = freshHarness('lift-register');
+  const created = createdProject(h);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsLiftoffRegisterWorkspace')({ projectId: created.projectId, name: 'Sniper' });
+  assert.equal(h.registerCalls.length, 1);
+  assert.equal(h.registerCalls[0].name, 'Sniper');
+  assert.equal(path.resolve(h.registerCalls[0].path), path.resolve(created.projectDir));
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffRegisterResult');
+  assert.equal(result.payload.ok, true);
+});
+
+gate('Lift-off (a): a collision from ctx.seats.registerWorkspace surfaces as a warning, not a crash', () => {
+  const h = freshHarness('lift-register-collide', {
+    registerResult: { ok: false, warning: true, error: 'A workspace already uses this name: Sniper' },
+  });
+  const created = createdProject(h);
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsLiftoffRegisterWorkspace')({ projectId: created.projectId, name: 'Sniper' });
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffRegisterResult');
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.warning, true);
+});
+
+gate('Lift-off (b): with a live Architect preset, delegate injects taskCreate with the route and the verbatim PROJECT.md', () => {
+  const h = freshHarness('lift-delegate-ok');
+  const created = createdProject(h);
+  const canonical = fs.readFileSync(path.join(created.projectDir, 'PROJECT.md'), 'utf8');
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  const taskCreateCall = h.bus.injected.find((m) => m.type === 'taskCreate');
+  assert.ok(taskCreateCall, 'taskCreate was injected');
+  assert.deepEqual(taskCreateCall.route, ['Architect']);
+  assert.equal(taskCreateCall.cwd, created.projectDir);
+  assert.equal(taskCreateCall.brief, canonical, 'the brief is the PROJECT.md text verbatim, not a summary');
+  assert.equal(taskCreateCall.start, true);
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffDelegateResult');
+  assert.equal(result.payload.ok, true);
+  assert.ok(!h.bus.injected.some((m) => m.type === 'taskRouteSave'), 'no template save unless requested');
+});
+
+gate('Lift-off (b): an unknown preset in the route warns instead of creating a task', () => {
+  const h = freshHarness('lift-delegate-unknown');
+  const created = createdProject(h);
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId, route: ['Architect', 'Ghost'] });
+  assert.ok(!h.bus.injected.some((m) => m.type === 'taskCreate'), 'taskCreate was never fired');
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffDelegateResult');
+  assert.equal(result.payload.ok, false);
+  assert.deepEqual(result.payload.unknownPresets, ['Ghost']);
+});
+
+gate('Lift-off (b): no Architect-shaped preset explains itself instead of creating a task', () => {
+  const h = freshHarness('lift-delegate-noarch', { presets: ['Auditor', 'Coder'] });
+  const created = createdProject(h);
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({ projectId: created.projectId });
+  assert.ok(!h.bus.injected.some((m) => m.type === 'taskCreate'));
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffDelegateResult');
+  assert.equal(result.payload.ok, false);
+  assert.equal(result.payload.noArchitect, true);
+  assert.match(result.payload.error, /PERSONAS/);
+});
+
+gate('Lift-off (b): an accepted route saves as a template via taskRouteSave', () => {
+  const h = freshHarness('lift-delegate-template');
+  const created = createdProject(h);
+  h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffDelegate')({
+    projectId: created.projectId, route: ['Architect', 'Auditor'],
+    saveAsTemplate: true, templateName: 'Ship it',
+  });
+  const saved = h.bus.injected.find((m) => m.type === 'taskRouteSave');
+  assert.ok(saved, 'taskRouteSave was injected');
+  assert.equal(saved.name, 'Ship it');
+  assert.deepEqual(saved.steps, ['Architect', 'Auditor']);
+});
+
+gate('Lift-off (c): open a chat here starts exactly one bare seat, no task/route at all', () => {
+  const h = freshHarness('lift-chat');
+  const created = createdProject(h);
+  h.bus.posts.length = 0; h.bus.injected.length = 0;
+  h.bus.handlers.get('projectsLiftoffChat')({ projectId: created.projectId });
+  assert.equal(h.bus.injected.length, 1);
+  assert.equal(h.bus.injected[0].type, 'seatCreate');
+  assert.equal(h.bus.injected[0].cwd, created.projectDir);
+  assert.ok(!h.bus.injected.some((m) => m.type === 'taskCreate' || m.type === 'taskStart'),
+    'no taskCreate/taskStart ever fired for the plain-chat path');
+  const result = h.bus.posts.find((p) => p.type === 'projectsLiftoffChatResult');
+  assert.equal(result.payload.ok, true);
+});
+
+// ==========================================================================
+// main/tasks.js — the `brief` field rides step 0's kickoff only, verbatim
+// ==========================================================================
+{
+  const tasks = require('../main/tasks');
+  const PRESETS = { Architect: { name: 'Architect', cwd: null, kickoff: 'You are Architect.' },
+                    Auditor: { name: 'Auditor', cwd: null, kickoff: 'You are Auditor.' } };
+  const taskBus = (() => {
+    const handlers = new Map();
+    const posts = [];
+    return {
+      handlers, posts,
+      on(t, fn) { handlers.set(t, fn); },
+      post(t, m) { posts.push({ type: t, m }); },
+      lastList() { const hits = posts.filter((p) => p.type === 'taskList'); return hits[hits.length - 1].m.tasks; },
+    };
+  })();
+  const taskSeats = {
+    observeSeats() { return () => {}; },
+    createTaskSeat(opts) { return 'seat-' + Math.random(); },
+    presetInfo: (name) => PRESETS[name] || null,
+    presetNames: () => Object.keys(PRESETS),
+    seatCommand() {},
+    seatEntry() { return null; },
+    listSeats() { return []; },
+    closeSeat() {},
+  };
+  const taskStateDir = fs.mkdtempSync(path.join(scratch, 'tasks-state-'));
+  const repo = fs.mkdtempSync(path.join(scratch, 'tasks-repo-'));
+  tasks.register({ bus: taskBus, seats: taskSeats, stateDir: taskStateDir });
+
+  gate('taskCreate\'s optional brief rides step 0\'s kickoff verbatim, and only step 0\'s', () => {
+    taskBus.handlers.get('taskCreate')({
+      title: 'delegate test', cwd: repo, route: ['Architect', 'Auditor'],
+      brief: '# PROJECT.md\n\nThe real canonical text.', start: false,
+    });
+    const t = taskBus.lastList()[0];
+    const kickoff0 = tasks._test.composeKickoff(t, 0);
+    assert.ok(kickoff0.includes('The real canonical text.'), 'step 0 kickoff carries the brief verbatim');
+    assert.ok(kickoff0.includes('BEGIN PROJECT.md'));
+    const kickoff1 = tasks._test.composeKickoff(t, 1);
+    assert.ok(!kickoff1.includes('The real canonical text.'), 'later steps do not repeat the brief');
+  });
+
+  gate('a taskCreate without brief behaves exactly as before (no PROJECT BRIEF block at all)', () => {
+    taskBus.handlers.get('taskCreate')({
+      title: 'no brief', cwd: repo, route: ['Architect'], start: false,
+    });
+    const t = taskBus.lastList()[0];
+    const kickoff0 = tasks._test.composeKickoff(t, 0);
+    assert.ok(!kickoff0.includes('PROJECT BRIEF'));
+  });
+}
+
+console.log('\nSTUDIO LIFTOFF DRILL: ' + passed + '/' + (passed + failed) + ' passed');
+process.exit(failed ? 1 : 0);

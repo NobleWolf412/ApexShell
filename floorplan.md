@@ -151,6 +151,15 @@ first. When no extension sets `priority`, order is alphabetical as before.
     none); `cwd` overrides the workspace for that seat.
   - `setDefaultCwd(dir)` — where blank seats/terminals spawn.
   - `setWrapPrompt(text)` — replaces the generic End-Session close-out.
+  - `presetNames()` / `registerWorkspace({name, path})` — added for the App
+    Builder's Lift-off (slice 8): a read-only live-preset list (the
+    Delegate-to-Architect gate) and a `_workspaces` registration that WARNS
+    on a name/path collision instead of clobbering (unlike the picker's own
+    `workspaceAdd` bus verb, which last-writer-wins). Plain synchronous
+    `ctx.seats` methods, not bus verbs — `bus.post()`/`bus.on()` are
+    main→renderer/renderer→main only, so a synchronous return value can never
+    reach another main-side module through the bus; this is why
+    `checkPresetNames`/`replacePresetGroup` already lived here too.
 
 What each half can contribute:
 
@@ -230,7 +239,13 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   `[seat-launch]` + the persona's own kickoff + an `<apex-task>` block
   carrying the repo cwd, the PERSONA HOME (absolute — task cwd overrides
   the preset cwd, so relative memory paths would otherwise orphan), the
-  previous step's packet, and the completion contract.
+  previous step's packet, and the completion contract. `taskCreate` accepts
+  one more optional field, `brief` — a verbatim text block (capped 20 KB)
+  that rides STEP 0's kickoff only, never later steps. It exists for the App
+  Builder's Lift-off "Delegate to the Architect" (`extensions/studio/`,
+  slice 8): the canonical PROJECT.md text needs to reach the first seat
+  verbatim, not as a rumor of it, and no other channel into `composeTaskBody`
+  existed. Omitted, a task behaves exactly as before this addition.
 - A step signals completion by ending its final message with one fenced
   ```apex-handoff``` JSON block: `status done | needs-decision | bounce`,
   plus summary/findings/decision/artifacts. The content is UNTRUSTED —
