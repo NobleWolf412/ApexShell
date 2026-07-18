@@ -363,8 +363,12 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         // directly — so no [seat-launch] sniff is needed here. transcripts.js
         // still filters the marker on backfill, where kickoffs DO appear.)
         if (!entry.autoTitled) {
-          const snip = msg.text.replace(/\s+/g, ' ').trim().slice(0, 30);
-          entry.title = entry.persona + ' — ' + snip + (msg.text.length > 30 ? '…' : '');
+          // an image-only first turn has no msg.text (the images branch never
+          // sets it) — `.replace` on undefined threw inside this ipc handler
+          // (external audit M8, 2026-07-18). Coerce, and title the visual turn.
+          const t = msg.text || (msg.images && msg.images.length ? '(image)' : '');
+          const snip = t.replace(/\s+/g, ' ').trim().slice(0, 30);
+          entry.title = entry.persona + ' — ' + snip + (t.length > 30 ? '…' : '');
           entry.autoTitled = true;
           post({ type: 'seatTitle', id: msg.id, title: entry.title });
           if (entry.sessionId && record && !entry.local)
