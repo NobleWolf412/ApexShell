@@ -1,7 +1,7 @@
 # STUDIO v2 — the one-stop app studio
 
-Status: proposed (Wave A shipped — see § Wave A; the file flips to
-implemented only when the last wave lands). Builds on
+Status: proposed (Waves A and S shipped — see § Wave A / § Wave S; the file
+flips to implemented only when the last wave lands). Builds on
 `design/app-builder-v1.md` (implemented). This
 spec is the gap audit between what v1 ships and the operator's stated
 outcome — *"the 1-stop shop for app building… it can show you what you're
@@ -158,7 +158,18 @@ Verification: hermetic drills for the mockup contract (self-containment
 check: no external URLs; provenance/hash; stale detection), served-path
 allowlist tests, smoke with the PREVIEW step open.
 
-## Wave S — the detached studio (its own window, second monitor)
+## Wave S — the detached studio (its own window, second monitor) (shipped)
+
+Shipped 2026-07-18 (slices S1-S2, sweep folded into S2; CHANGELOG
+§ Unreleased). Divergences from the text below: "the chat center … hide[s]"
+is realized as studio-mode CSS plus a no-dock-machinery boot in shell.js
+(the modules all still load — the mode is layout, exactly as specified);
+the docked pane's "also open in its own window" mark is a header chip
+beside the model picker, not a mark on the folder tab itself; the
+open/closed affordance truth is ONE verb, `studioWindowState {open}`
+(S1's interim `studioWindowClosed` was migrated into it — it never had a
+listener); and the reopen preference lives as an `open` boolean beside the
+bounds in `state/studio-window.json`, guarded off under APEX_SMOKE.
 
 Operator requirement (2026-07-18, post-Wave-A): *"when you launch Apex
 Studio it would be perfect if it opened up in its own window and you could

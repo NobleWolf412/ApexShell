@@ -9,13 +9,32 @@
 // State: localStorage (this module's own concern; nothing else reads it).
 'use strict';
 (function () {
+  // ---------- studio boot mode (STUDIO v2, Wave S S2) ----------
+  // The detached studio window loads THIS renderer with '#apexWindow=studio'
+  // (set by main's createStudioWindow). The mode is layout, not a fork: the
+  // docked chrome (tracker blind, dock tabs, AI rail) hides via
+  // body.studioMode CSS, the STUDIO pane mounts open and full-bleed (see
+  // registerDockPane), and shell state is neither read nor persisted —
+  // localStorage is shared across windows, so a studio boot writing
+  // apex.shell.v1 would clobber the docked shell's layout.
+  const bootParams = new URLSearchParams(location.hash.slice(1));
+  const studioMode = bootParams.get('apexWindow') === 'studio';
+  if (studioMode) {
+    document.body.classList.add('studioMode');
+    document.title = 'APEX STUDIO';
+    document.querySelector('#titlebar .brand').textContent = 'APEX STUDIO';
+  }
+
   // ---------- persisted shell state ----------
   let store;
-  try { store = JSON.parse(localStorage.getItem('apex.shell.v1')) || {}; } catch { store = {}; }
+  if (studioMode) store = {};
+  else try { store = JSON.parse(localStorage.getItem('apex.shell.v1')) || {}; } catch { store = {}; }
   store = Object.assign(
     { top: 'collapsed', right: 'collapsed', tabs: {}, zsq: [], memRight: null, memLeft: null },
     store);
-  const persist = () => localStorage.setItem('apex.shell.v1', JSON.stringify(store));
+  const persist = () => {
+    if (!studioMode) localStorage.setItem('apex.shell.v1', JSON.stringify(store));
+  };
 
   const BAR = 40, TITLE = 34;
   // usable height = below our title bar (the blind's coordinate space)
@@ -98,7 +117,7 @@
   });
   // smoke eyes (#top=quarter|full): open the blind on load so screenshots
   // can capture the pulldown content
-  const hashTop = new URLSearchParams(location.hash.slice(1)).get('top');
+  const hashTop = bootParams.get('top');
   if (hashTop === 'quarter' || hashTop === 'full') store.top = hashTop;
   setTop(store.top, true);
 
@@ -113,7 +132,7 @@
   // smoke eyes: `#dock=<tab>` opens that pane at quarter on load (main sets it
   // from APEX_SMOKE_DOCK) — a fresh smoke profile starts all-collapsed, so a
   // screenshot could never show pane CONTENT without this
-  const hashDock = new URLSearchParams(location.hash.slice(1)).get('dock');
+  const hashDock = bootParams.get('dock');
 
   const anyDockFull = () => tabIds.some((id) => store.tabs[id] === 'full');
 
@@ -222,6 +241,16 @@
     const id = el.dataset.tab;
     if (!id || dockEls[id]) return;   // no id / duplicate — refuse quietly
     if (!el.parentElement) document.querySelector('.sideWrap').insertBefore(el, aiPane);
+    // Studio boot mode: NO dock machinery at all. The STUDIO pane sits at its
+    // natural position — full-bleed, since only JS ever slides a sidePane off
+    // screen — pinned open and not collapsible ('open' keeps the re-homed
+    // builder bodies visible; body.studioMode CSS hides its tab and every
+    // other pane). Nothing enters dockEls/tabIds, so Esc, Ctrl+1..9, and
+    // openDock have no hidden targets to move.
+    if (studioMode) {
+      if (id === 'studio') el.classList.add('open');
+      return;
+    }
     dockEls[id] = el;
     tabIds.push(id);
     const orders = Object.values(dockOrder);
@@ -499,8 +528,12 @@
 
   // OS closes originate in main. The renderer answers immediately if it is
   // alive; main's timeout is only for the crashed/hung/not-yet-loaded case.
-  ApexBus.on('closeRequested', (m) =>
-    apex.win.closeDecision(m.requestId, safeGate('quit')));
+  // The studio window NEVER answers (S2): the seat-aware close gate belongs
+  // to the docked shell alone — closeRequested broadcasts, and a second
+  // responder would race the real one's decision with its own safeGate.
+  if (!studioMode)
+    ApexBus.on('closeRequested', (m) =>
+      apex.win.closeDecision(m.requestId, safeGate('quit')));
 
   ApexBus.on('codeChanged', (m) => {
     codeChangeKind = m.kind === 'restart' || m.kind === 'renderer' ? m.kind : '';
@@ -530,6 +563,7 @@
     if (e.key === 'Escape') {
       if (document.querySelector('.apxPrompt')) return;   // the prompt owns its own Esc
       if (!helpOverlay.hidden) { helpOverlay.hidden = true; return; }
+      if (studioMode) return;   // no dock/rail/blind chrome to collapse
       const rm = document.getElementById('railMenu');     // an open menu closes FIRST —
       if (rm && !rm.hidden) { ApexChat.hideRailMenu(); return; }   // one Esc, one layer
       tabIds.forEach((id) => { if (store.tabs[id] !== 'collapsed') setDockTab(id, 'collapsed', false); });
@@ -540,6 +574,9 @@
     if (!e.ctrlKey) return;
     // never hijack keys the user is typing into a field or a live terminal
     if (e.target.closest('textarea, input, [contenteditable], .termMount, .xterm')) return;
+    // studio mode: dock-tab toggles and new-chat aim at hidden chrome — a
+    // Ctrl+T here would seat an invisible chat. Zoom (its own handler) stays.
+    if (studioMode) return;
     if (e.key >= '1' && e.key <= '9') {
       const sorted = [...tabIds].sort((a, b) => dockOrder[a] - dockOrder[b]);
       const id = sorted[Number(e.key) - 1];

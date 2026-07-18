@@ -31,6 +31,13 @@
     '<div class="paneBody studioBody">' +
       '<div class="studioHeader">' +
         '<div class="studioTabs" role="tablist"></div>' +
+        // Wave S S2 — the detached-window affordances, docked shell only:
+        // the chip marks "the studio is ALSO open in its own window" (both
+        // views share the same live state — every post broadcasts), and ⧉
+        // opens-or-focuses that window (main's studioWindowToggle verb).
+        // In the detached window itself both hide: a pop-out button inside
+        // the pop-out would be an escher stair.
+        '<span class="studioWinChip" hidden title="The detached STUDIO window is open — this pane and that window are two live views of the same state">&#x29C9; also open in its own window</span>' +
         '<div class="studioModelPicker" title="One model choice drives both AI levels: the per-card AI suggest pass and the co-designer panel both launch their disposable with this pick (haiku for quick suggest passes, sonnet+ for a longer co-designer conversation).">' +
           '<select class="studioModelSelect" aria-label="STUDIO model">' +
             '<option value="">Model: default</option>' +
@@ -48,6 +55,7 @@
             '<option value="max">max</option>' +
           '</select>' +
         '</div>' +
+        '<button type="button" class="studioPopBtn" title="Open STUDIO in its own window (put it on the second monitor) — focuses the window if it is already open">&#x29C9;</button>' +
       '</div>' +
       '<div class="studioViews"></div>' +
     '</div>' +
@@ -145,6 +153,23 @@
       effortSelectEl.value = m.effort || '';
     });
     ApexBus.post('studioModelGet', {});
+  }
+
+  // Wave S S2 — pop-out wiring. `detached` reads the same '#apexWindow=studio'
+  // boot flag shell.js's studio mode reads (guarded: the headless studio-drill
+  // has no `location`, and its pane mock returns null for these selectors —
+  // the skeleton still builds, the wiring simply doesn't attach).
+  const popBtn = pane.querySelector('.studioPopBtn');
+  const winChip = pane.querySelector('.studioWinChip');
+  const detached = typeof location !== 'undefined' &&
+    new URLSearchParams((location.hash || '').slice(1)).get('apexWindow') === 'studio';
+  if (detached && popBtn) popBtn.hidden = true;
+  if (hasBus && !detached && popBtn && winChip) {
+    popBtn.addEventListener('click', () => ApexBus.post('studioWindowToggle', {}));
+    ApexBus.on('studioWindowState', (m) => { winChip.hidden = !(m && m.open); });
+    // this script loads after the shell's 'ready' replies landed, so ask for
+    // the current truth instead of hoping to have caught the open/close post
+    ApexBus.post('studioWindowGet', {});
   }
 
   ApexShell.registerDockPane(pane, { order: 20 });

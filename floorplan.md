@@ -43,9 +43,14 @@ ApexShell/
 │   ├── bus.js             typed message bus (renderer⇄main), register('type', fn);
 │   │                      multi-window: post() broadcasts to every registered
 │   │                      live window — except a 'ready' dispatch, whose
-│   │                      re-posts target the readying window alone
-│   ├── studioWindow.js    detached-studio toggle truth (open-or-focus),
-│   │                      Electron-free so the multiwindow drill proves it
+│   │                      re-posts target the readying window alone; postTo()
+│   │                      targets ONE window (per-window winState); handlers
+│   │                      get ctx.sender (undefined on injected smoke posts)
+│   ├── studioWindow.js    detached-studio toggle truth (open-or-focus) +
+│   │                      open/closed notify, the main-closed close() cascade,
+│   │                      and the bounds/reopen-preference persistence
+│   │                      (state/studio-window.json); Electron-free so the
+│   │                      multiwindow drill proves it
 │   ├── seats.js           seat lifecycle, presets, launch config, restore
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
 │   ├── tasks.js           the WORKFLOW LAYER: task board store + persona
@@ -101,7 +106,10 @@ ApexShell/
 │   │                      AI rail (+ button only), tracker blind, script list
 │   ├── shell.js           blinds/tabs geometry, dock registration, menu,
 │   │                      zoom, close gates, keyboard shortcuts + ? overlay,
-│   │                      clickable tracker chips (jump to a pane)
+│   │                      clickable tracker chips (jump to a pane); studio
+│   │                      boot mode ('#apexWindow=studio'): docked chrome
+│   │                      hides, STUDIO pinned open full-bleed, no state
+│   │                      read/persist (localStorage is cross-window)
 │   ├── chatView.js        the chat center: seats UI, rail menu, defaults panel,
 │   │                      the Consult → picker + in-chat consult card
 │   ├── taskBoard.js       the TODO dock pane (workflow-layer projection)

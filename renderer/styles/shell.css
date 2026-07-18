@@ -265,3 +265,17 @@
            cursor: pointer; line-height: 1; }
 .railBtn:hover { border-color: var(--accent);
                  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* ---------- STUDIO BOOT MODE (STUDIO v2, Wave S S2) ----------
+   body.studioMode is set by shell.js when '#apexWindow=studio' boots this
+   renderer (the detached studio window). Layout only, no module forks: the
+   docked shell's chrome hides, and the STUDIO pane — which shell.js leaves
+   untransformed and pinned .open in this mode — fills everything below the
+   title bar. The title bar itself stays: caption buttons, ☰, and ? all work. */
+body.studioMode .trackerWrap,
+body.studioMode #aiPane,
+body.studioMode .dockPane:not(#dock-studio) { display: none; }
+body.studioMode .sideWrap { top: var(--title-h); }   /* no tracker bar to sit under */
+body.studioMode #dock-studio .dockTab { display: none; }   /* full-bleed: no tab, no pull */
+body.studioMode #dock-studio .paneBody { visibility: visible;
+  box-shadow: none; border-right: 0; }

@@ -9,10 +9,35 @@
    not a second bar (a builder's view keeps 100% of the vertical space). */
 .studioHeader { flex: none; display: flex; align-items: flex-end;
   justify-content: space-between; border-bottom: 1px solid var(--edge); }
-.studioTabs { flex: none; display: flex; gap: 4px; align-items: flex-end;
+/* tabs take the free width (S2): the window chip, model picker, and pop-out
+   button read as one right-aligned group whether or not the chip shows. The
+   chip and the picker SHRINK (min-width 0) before anything clips — at a
+   quarter-width sheet the fixed-size picker used to push the ⧉ button past
+   the pane edge (caught by the S2 smoke screenshot). */
+.studioTabs { flex: 1 1 auto; display: flex; gap: 4px; align-items: flex-end;
   padding: 12px 16px 0 56px; }
-.studioModelPicker { flex: none; display: flex; gap: 6px; align-items: center;
-  padding: 0 16px 8px 8px; }
+.studioModelPicker { flex: 0 1 auto; min-width: 0; display: flex; gap: 6px;
+  align-items: center; padding: 0 8px 8px 8px; }
+.studioModelPicker select { flex: 0 1 auto; min-width: 0; }
+/* Wave S S2 — the detached-window affordances (docked shell only; both are
+   hidden in the studio window itself). The ⧉ button never shrinks: it is the
+   affordance, so the chip and picker give way first. */
+.studioWinChip { flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; align-self: center; margin-bottom: 4px;
+  padding: 2px 8px; border: 1px solid var(--edge); border-radius: 9px;
+  color: var(--dim); font-size: 10px; white-space: nowrap; }
+.studioWinChip[hidden] { display: none; }
+.studioPopBtn { flex: none; align-self: center; margin: 0 16px 8px 0;
+  background: var(--surface); color: var(--dim); border: 1px solid var(--edge);
+  border-radius: 6px; padding: 3px 8px; font-size: 12px; line-height: 1;
+  cursor: pointer; }
+.studioPopBtn:hover { color: var(--accent); border-color: var(--accent); }
+.studioPopBtn[hidden] { display: none; }
+/* Studio boot mode (S2): the detached window has no floating dock tabs to
+   clear, so the docked-shell gutters (the 56px sub-tab indent, pjRoot's 52px)
+   are dead margin there — reclaim them. */
+body.studioMode .studioTabs { padding-left: 16px; }
+body.studioMode .studioView[data-builder="projects"] .pjRoot { padding-left: 0; }
 .studioModelPicker select { background: var(--surface); color: var(--dim);
   border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px;
   font-size: 10.5px; cursor: pointer; }

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave S slice S2 — the studio boot mode, per-window captions,
+  the ⧉ affordance, and the reopen preference** (`renderer/shell.js`,
+  `renderer/styles/shell.css`, `main/main.js`, `main/bus.js`,
+  `main/studioWindow.js`, `extensions/studio/{renderer.js,style.css}`; drill
+  extended in `test/multiwindow-drill.js` — 18 checks). The detached window
+  now boots in STUDIO MODE: shell.js reads `#apexWindow=studio` and flips
+  `body.studioMode` — the tracker blind, AI rail, and every dock pane except
+  STUDIO hide (CSS), the STUDIO pane mounts open and full-bleed with no tab
+  and no pull, the title reads APEX STUDIO, and shell state is neither read
+  nor persisted (localStorage is shared across windows). Dock/chat shortcuts
+  (Ctrl+1..9, Ctrl+T, Esc-collapse) and the closeRequested answerer are
+  studio-mode-gated; the ? overlay, menu, zoom, and code badge keep working.
+  Caption ipc (`win:minimize/maximize/close/fullscreen/reload`) is
+  sender-aware via `BrowserWindow.fromWebContents` — the studio window's
+  buttons drive the studio window (before: always the main one); `winState`
+  posts per-window over the new `bus.postTo`, and the ready reply reports the
+  READYING window's state via the new `ctx.sender`. Lifecycle decided: the
+  studio is a companion surface — when the main window truly closes (after
+  its seat-aware gate), the studio follows and the app quits. The docked
+  STUDIO header gains the ⧉ pop-out button (docked shell only) posting
+  `studioWindowToggle`, plus an "also open in its own window" chip driven by
+  the new `studioWindowState {open}` post (S1's one-sided
+  `studioWindowClosed` — which had no listener — is migrated into it whole;
+  `studioWindowGet` asks for the current truth at extension load). The
+  reopen preference rides beside the S1 bounds in `state/studio-window.json`
+  (`open: true` on open, `false` on a user close, kept `true` when the app
+  takes the window down with it) — read at launch after the main window
+  exists, never in smoke (`shouldReopen` guards `APEX_SMOKE`, drilled).
+  Persistence moved into Electron-free `main/studioWindow.js`
+  (loadState/saveState/shouldReopen + isOpen/close), all drilled. With no
+  studio window and no flag, the docked shell's behavior is unchanged.
+
 - **STUDIO v2, Wave S slice S1 — the multi-window bus + the detached studio
   window** (`main/bus.js`, `main/main.js`, `main/studioWindow.js` new; drill
   in `test/multiwindow-drill.js`; zero renderer changes): `bus.post()` now

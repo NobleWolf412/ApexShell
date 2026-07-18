@@ -46,6 +46,10 @@ let quitting = false;
 let closeApproved = false;
 let closePending = 0;
 let closeTimer = null;
+// S2 lifecycle: set the instant the MAIN window has truly closed, before the
+// studio cascade-closes — the studio's close-time preference write reads it
+// to record "open at quit" instead of "user closed me".
+let studioFollowsQuit = false;
 
 app.on('before-quit', () => {
   // app.quit() is already an explicit main-process decision (smoke, restart,
@@ -92,6 +96,20 @@ const guardNav = (e, url) => {
   e.preventDefault();
   lifeLog(`blocked navigation to ${url}`);
 };
+
+// Keep a renderer's window controls truthful whichever side changes state
+// (drag-to-top maximize, F11-class fullscreen, our own buttons). Per-window
+// since Wave S S2: each window's own maximize/fullscreen events post to that
+// window ALONE (bus.postTo) — a broadcast would flip the OTHER window's
+// caption glyphs to a state it isn't in.
+function postWinState(w) {
+  if (!w || w.isDestroyed()) return;
+  bus.postTo(w, 'winState', { maximized: w.isMaximized(), fullscreen: w.isFullScreen() });
+}
+function bindWinState(w) {
+  for (const evt of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'])
+    w.on(evt, () => postWinState(w));
+}
 
 function clearCloseRequest() {
   clearTimeout(closeTimer);
@@ -212,41 +230,43 @@ function createWindow() {
     clearCloseRequest();
     closeApproved = false;
     win = null;
+    // LIFECYCLE DECISION (Wave S S2, argued): when the MAIN window truly
+    // closes, the app quits — so an open studio window must follow it down.
+    // The studio is a companion surface, not a standalone app: the seats it
+    // could still reach live in main-process state that the MAIN window's
+    // seat-aware close gate guards, and by this line that gate has already
+    // said yes (or failed open). A surviving headless studio would keep the
+    // app alive with the gate's protected state and no gate — closing it
+    // here lets window-all-closed fire and quit exactly as it always did.
+    studioFollowsQuit = true;
+    studioWindow.close();
   });
 
-  // Keep the renderer's window controls truthful whichever side changes state
-  // (drag-to-top maximize, F11-class fullscreen, our own buttons).
-  const postWinState = () => {
-    if (!win || win.isDestroyed()) return;
-    bus.post('winState', { maximized: win.isMaximized(), fullscreen: win.isFullScreen() });
-  };
-  win.on('maximize', postWinState);
-  win.on('unmaximize', postWinState);
-  win.on('enter-full-screen', postWinState);
-  win.on('leave-full-screen', postWinState);
+  bindWinState(win);
 }
 
 // A freshly (re)loaded renderer starts with the default glyphs — hand it the
 // real state (the window opens maximized, so the button lied until the first
-// toggle; the operator, 2026-07-14).
-bus.on('ready', () => {
-  if (win && !win.isDestroyed())
-    bus.post('winState', { maximized: win.isMaximized(), fullscreen: win.isFullScreen() });
+// toggle; the operator, 2026-07-14). Sender-aware since S2: each readying
+// window gets ITS OWN truth (the ready dispatch already scopes bus.post to
+// the readying window); an injected ready (smoke — no sender) falls back to
+// the main window and broadcasts, which single-window smoke can't tell apart.
+bus.on('ready', (m, ctx) => {
+  const w = (ctx && ctx.sender && BrowserWindow.fromWebContents(ctx.sender)) || win;
+  if (w && !w.isDestroyed())
+    bus.post('winState', { maximized: w.isMaximized(), fullscreen: w.isFullScreen() });
 });
 
-// STUDIO v2 Wave S (S1): the detached studio window — same preload, same
+// STUDIO v2 Wave S: the detached studio window — same preload, same
 // webPreferences, same renderer as the main window; '#apexWindow=studio' is
-// the boot flag S2's layout will read (S1: rides through unused, the window
-// boots as a full shell). Never auto-opened — only the toggle verb below.
-// main.js keeps no bounds persistence for the main window (it just
-// maximizes), so the studio stays S1-minimal: save normal bounds on close,
-// restore on open — second-monitor placement sticks.
-const STUDIO_BOUNDS_FILE = path.join(__dirname, '..', 'state', 'studio-window.json');
-
+// the boot flag renderer/shell.js reads for studio mode (S2). Opened by the
+// toggle verb below or the persisted reopen preference — never by smoke.
+// Bounds + the open-at-quit flag persist through studioWindow.loadState/
+// saveState (state/studio-window.json): save normal bounds on close, restore
+// on open — second-monitor placement sticks.
 function createStudioWindow() {
-  let saved = null;
-  try { saved = JSON.parse(fs.readFileSync(STUDIO_BOUNDS_FILE, 'utf8')); } catch { /* first open */ }
-  const sized = saved && Number.isFinite(saved.width) && Number.isFinite(saved.height);
+  const saved = studioWindow.loadState();
+  const sized = Number.isFinite(saved.width) && Number.isFinite(saved.height);
   const opts = {
     width: sized ? saved.width : 1280,
     height: sized ? saved.height : 860,
@@ -266,7 +286,11 @@ function createStudioWindow() {
   };
   // x may be negative (a monitor left of the primary) — Number.isFinite is the test
   if (sized && Number.isFinite(saved.x) && Number.isFinite(saved.y)) { opts.x = saved.x; opts.y = saved.y; }
+  opts.title = 'APEX STUDIO';   // pre-load taskbar identity; shell.js re-asserts it
   const sw = new BrowserWindow(opts);
+  // the reopen preference (S2): open is recorded the moment the window
+  // exists, cleared on a USER close (see the 'close' handler below)
+  studioWindow.saveState({ open: true });
   bus.addWindow(sw);              // the bus's destroyed-hook unregisters it on close
   lifeLog('createStudioWindow');
   sw.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -277,6 +301,7 @@ function createStudioWindow() {
   sw.webContents.on('render-process-gone', (_e, details) =>
     lifeLog(`studio render-process-gone ${details.reason} exitCode=${details.exitCode}`));
   sw.webContents.on('did-finish-load', () => lifeLog('studio did-finish-load'));
+  bindWinState(sw);   // per-window caption glyph truth (S2)
   sw.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'), { hash: 'apexWindow=studio' });
   sw.once('ready-to-show', () => { lifeLog('studio ready-to-show'); sw.show(); });
   // same backstop as the main window (2026-07-12: ready-to-show stopped
@@ -289,21 +314,29 @@ function createStudioWindow() {
   }, 1500);
   // No close gate here: closing the detached studio is just closing a window
   // (the seat-aware quit handshake belongs to the main window alone).
+  // The close-time write records bounds AND the reopen preference: a USER
+  // close means "don't come back" (open:false); a close because the app is
+  // going down (before-quit, or the main-closed cascade) keeps open:true so
+  // the next launch restores the two-monitor arrangement.
   sw.on('close', () => {
-    try {
-      fs.mkdirSync(path.dirname(STUDIO_BOUNDS_FILE), { recursive: true });
-      fs.writeFileSync(STUDIO_BOUNDS_FILE, JSON.stringify(sw.getNormalBounds()));
-    } catch { /* a failed bounds save must never block closing */ }
+    studioWindow.saveState(Object.assign(sw.getNormalBounds(),
+      { open: quitting || studioFollowsQuit }));
   });
-  // the bus already dropped this window via its destroyed hook, so this
-  // broadcast reaches only the survivors — renderers update their affordances
-  sw.on('closed', () => bus.post('studioWindowClosed', {}));
   return sw;
 }
 
+// The studioWindowState truth: one notifier, fed to every toggle() call, so
+// open/closed both broadcast the same verb — the bus already dropped a dying
+// window via its destroyed hook, so the closed post reaches only survivors.
+const postStudioState = (open) => bus.post('studioWindowState', { open });
+
 // renderer→main: open the detached studio if closed, focus it if open
 // (studioWindow.js owns the drilled open-or-focus truth).
-bus.on('studioWindowToggle', () => studioWindow.toggle(createStudioWindow));
+bus.on('studioWindowToggle', () => studioWindow.toggle(createStudioWindow, postStudioState));
+// A late-registering renderer (the studio extension loads after 'ready'
+// replies land) asks for the current affordance state; the answer broadcasts,
+// which is harmless — every window holds the same truth.
+bus.on('studioWindowGet', () => postStudioState(studioWindow.isOpen()));
 
 app.on('second-instance', () => {
   if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
@@ -348,21 +381,30 @@ ipcMain.handle('attachment:pick', async (_e, seatId) => {
 });
 
 // Window caption controls — plain ipc, not bus verbs (they exist pre-boot).
-ipcMain.on('win:minimize', () => win && win.minimize());
-ipcMain.on('win:maximize', () => {
-  if (!win) return;
-  win.isMaximized() ? win.unmaximize() : win.maximize();
+// Sender-aware since Wave S S2: both shell windows carry the same preload, so
+// each caption button must drive the window it lives in — before this, the
+// studio's ✕ closed the MAIN window. win:close stays gate-correct for free:
+// closing the main window routes through its 'close' handler (the seat-aware
+// gate); the studio window has no gate and just closes.
+const senderWin = (e) => BrowserWindow.fromWebContents(e.sender);
+ipcMain.on('win:minimize', (e) => { const w = senderWin(e); if (w) w.minimize(); });
+ipcMain.on('win:maximize', (e) => {
+  const w = senderWin(e);
+  if (!w) return;
+  w.isMaximized() ? w.unmaximize() : w.maximize();
 });
-ipcMain.on('win:close', () => win && win.close());
+ipcMain.on('win:close', (e) => { const w = senderWin(e); if (w) w.close(); });
 // Borderless fullscreen — covers the taskbar; our in-page title bar stays,
 // so the menu (and the way back out) is never lost.
-ipcMain.on('win:fullscreen', () => win && win.setFullScreen(!win.isFullScreen()));
+ipcMain.on('win:fullscreen', (e) => { const w = senderWin(e); if (w) w.setFullScreen(!w.isFullScreen()); });
+// The close-decision handshake is main-window-only by construction: only the
+// docked shell registers the closeRequested answerer (studio mode skips it).
 ipcMain.on('win:close-decision', (_e, requestId, allow) => {
   if (!closePending || requestId !== closePending) return;
   clearCloseRequest();
   if (allow) closeForReal();
 });
-ipcMain.on('win:reload', () => liveUpdate.reload(win));
+ipcMain.on('win:reload', (e) => liveUpdate.reload(senderWin(e) || win));
 
 app.whenReady().then(() => {
   // apex://local/<encodeURIComponent(absolute path)> → that file, read-only.
@@ -412,6 +454,13 @@ app.whenReady().then(() => {
     app.exit(1);
     return;
   }
+  // The reopen preference (S2): a studio window open at quit comes back on
+  // launch — read AFTER the main window exists (it anchors the bus and the
+  // close gate; the studio is its companion, never the first window). The
+  // smoke guard lives inside shouldReopen: state/ is shared with real
+  // installs, so a smoke run must ignore even a true flag.
+  if (studioWindow.shouldReopen(studioWindow.loadState(), process.env))
+    studioWindow.toggle(createStudioWindow, postStudioState);
   // Smoke-test hook: APEX_SMOKE=1 opens the window, then quits after 3s —
   // exit 0 only if the renderer logged no console errors.
   if (process.env.APEX_SMOKE === '1') {

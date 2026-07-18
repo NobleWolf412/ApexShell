@@ -27,7 +27,11 @@ function route(msg, sender) {
   const fns = handlers.get(msg && msg.type);
   if (!fns || !fns.length) { console.warn('[bus] unhandled message type:', msg && msg.type); return; }
   replyTo = (msg.type === 'ready' && sender && !sender.isDestroyed()) ? sender : null;
-  try { fns.forEach((fn) => fn(msg, { post })); }
+  // ctx carries the sending webContents (S2): handlers that answer with a
+  // WINDOW's truth (the ready winState re-post) need to know which window
+  // asked. Additive — every pre-S2 handler ignores it. Injected messages
+  // (smoke) have no sender; handlers must tolerate ctx.sender === undefined.
+  try { fns.forEach((fn) => fn(msg, { post, sender })); }
   finally { replyTo = null; }
 }
 
@@ -68,10 +72,22 @@ function post(type, payload) {
   for (const wc of windows) if (!wc.isDestroyed()) wc.send('apex:msg', msg);
 }
 
+// postTo(win, 'winState', {...}) — main -> ONE window, outside any dispatch
+// scope. For per-window cosmetic state (each window's caption glyphs reflect
+// ITS OWN maximize/fullscreen) where a broadcast would be a lie to every
+// other window. Deliberately takes the window, not its webContents: callers
+// hold BrowserWindows, and the one-channel knowledge stays in here.
+function postTo(win, type, payload) {
+  try {
+    const wc = win && win.webContents;
+    if (wc && !wc.isDestroyed()) wc.send('apex:msg', Object.assign({ type }, payload));
+  } catch { /* destroyed window — the getter throws; nothing to tell it */ }
+}
+
 // TEST AFFORDANCE (smoke only): drive a message through the exact routing a
 // renderer post would take — proves main-side handling without a renderer.
 // No sender, so even an injected 'ready' broadcasts (single-window smoke:
 // identical behavior).
 function inject(msg) { route(msg); }
 
-module.exports = { addWindow, removeWindow, on, post, inject };
+module.exports = { addWindow, removeWindow, on, post, postTo, inject };
