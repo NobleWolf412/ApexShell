@@ -121,7 +121,7 @@ function mountProjects(el, hasBus) {
     .replace(/"/g, '&quot;');
 
   const state = {
-    step: 'ws',            // 'ws' | 'start' | <cardKey>
+    step: 'ws',            // 'ws' | 'start' | <cardKey> | 'review' | 'canonical'
     ws: null,              // last projectsWorkspaceStatus
     cards: [],             // interview card copy, shipped from main
     draft: null,           // current draft (from main)
@@ -132,7 +132,28 @@ function mountProjects(el, hasBus) {
     pendingStep: null,     // where to go once the in-flight save returns
     deleteArmedId: null,
     helpOpen: false,
+    // ---- slice 4: Blueprint Review + Canonical Draft ----
+    bundle: null,          // current preview bundle (= draft.preview)
+    stale: false,          // interview answers changed after this preview
+    projectId: '',         // the review's chosen project id
+    canonicalDirty: false, // the canonical textarea diverges from the saved bundle
+    confirmOverwrite: false,
+    validation: null,      // last projectsValidationStatus report
+    suggestedProjectId: '',
   };
+
+  // The six canonical sections — key + default heading — mirrored from
+  // lib/render.js SECTIONS (the renderer can't require node libs; this static
+  // copy drives the per-section regen picker and the gap labels only).
+  const SECTIONS = [
+    { key: 'vision', heading: 'Vision and Users' },
+    { key: 'scope', heading: 'Scope and MVP Cut' },
+    { key: 'platform', heading: 'Platform and Stack' },
+    { key: 'architecture', heading: 'Architecture Sketch' },
+    { key: 'delivery', heading: 'Milestones and Delivery' },
+    { key: 'risks', heading: 'Risks and Open Questions' },
+  ];
+  const sectionHeading = (key) => (SECTIONS.find((s) => s.key === key) || {}).heading || key;
 
   const cardKeys = () => state.cards.map((c) => c.key);
   const isCardStep = (id) => cardKeys().includes(id);
@@ -144,17 +165,25 @@ function mountProjects(el, hasBus) {
       { id: 'ws', label: 'Workspace', sub: 'where projects live' },
       { id: 'start', label: 'Start', sub: 'name + pitch' },
       ...state.cards.map((c, i) => ({ id: c.key, label: (i + 1) + ' · ' + c.title, sub: null, card: true })),
+      { id: 'review', label: 'Review', sub: 'answers + gaps' },
+      { id: 'canonical', label: 'Canonical', sub: 'PROJECT.md + validate' },
     ];
   }
+
+  const hasPreview = () => Boolean(state.draft && state.draft.preview);
 
   const stepDone = (id) => {
     if (id === 'ws') return Boolean(state.ws && state.ws.configured);
     if (id === 'start') return Boolean(state.draft);
+    if (id === 'review') return hasPreview();
+    if (id === 'canonical') return hasPreview() && !state.draft.preview.canonicalDrift;
     return Boolean(state.draft && (state.draft.answers[id] || '').trim());
   };
   const stepReachable = (id) => {
     if (id === 'ws') return true;
     if (id === 'start') return Boolean(state.ws && state.ws.configured);
+    if (id === 'review') return Boolean(state.draft);       // review needs a started draft
+    if (id === 'canonical') return hasPreview();             // canonical needs a preview
     return Boolean(state.draft);   // cards need a started draft
   };
 
@@ -208,6 +237,8 @@ function mountProjects(el, hasBus) {
     renderRail();
     if (state.step === 'ws') return renderWs();
     if (state.step === 'start') return renderStart();
+    if (state.step === 'review') return renderReview();
+    if (state.step === 'canonical') return renderCanonicalView();
     if (isCardStep(state.step)) return renderCard(findCard(state.step));
     state.step = 'ws';
     renderWs();
@@ -357,7 +388,7 @@ function mountProjects(el, hasBus) {
         '<div class="pjBtnRow">' +
           (idx > 0 ? '<button type="button" class="pjBtn pjBack">← BACK</button>' : '') +
           '<button type="button" class="pjBtn primary pjNext">' +
-            (idx < total - 1 ? 'SAVE & NEXT →' : 'SAVE DRAFT ✓') + '</button>' +
+            (idx < total - 1 ? 'SAVE & NEXT →' : 'REVIEW BLUEPRINT →') + '</button>' +
           '<button type="button" class="pjBtn pjSaveDraft">SAVE DRAFT</button>' +
           (idx < total - 1 ? '<button type="button" class="pjBtn pjSkip">SKIP FOR NOW</button>' : '') +
         '</div>' +
@@ -399,11 +430,219 @@ function mountProjects(el, hasBus) {
     const back = main.querySelector('.pjBack');
     if (back) back.addEventListener('click', () => goStep(cardKeys()[idx - 1]));
     main.querySelector('.pjNext').addEventListener('click', () => {
-      goStep(idx < total - 1 ? cardKeys()[idx + 1] : 'start');
+      goStep(idx < total - 1 ? cardKeys()[idx + 1] : 'review');
     });
     main.querySelector('.pjSaveDraft').addEventListener('click', () => goStep('start'));
     const skip = main.querySelector('.pjSkip');
     if (skip) skip.addEventListener('click', () => goStep(cardKeys()[idx + 1]));
+  }
+
+  // ---- Blueprint Review: structured answers, gaps highlighted -------------
+  function renderReview() {
+    const draft = state.draft;
+    if (!draft) { state.step = 'start'; return renderStart(); }
+    const preview = draft.preview;
+    const projectId = preview ? preview.projectId : (state.projectId || state.suggestedProjectId || '');
+    let gapCount = 0;
+    const rows = state.cards.map((c) => {
+      const text = (draft.answers[c.key] || '').trim();
+      const gap = !text;
+      if (gap) gapCount += 1;
+      return '<div class="pjReviewRow" data-gap="' + (gap ? 'true' : 'false') + '">' +
+        '<div class="pjReviewHead">' + escapeHtml(c.title) +
+          (gap ? '<span class="pjGapTag">INCOMPLETE</span>' : '') + '</div>' +
+        '<div class="pjReviewBody">' +
+          (gap
+            ? 'No answer yet — this area renders as a visible gap in the canonical. The builder never invents content to fill it.'
+            : escapeHtml(text)) +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    const gapNote = gapCount
+      ? gapCount + ' area' + (gapCount === 1 ? '' : 's') + ' incomplete. You can generate the canonical now — the gaps stay visibly marked — or go back and fill them.'
+      : 'All six areas answered. Note: "Risks and Open Questions" has no dedicated card, so it renders as a gap until you author it in the canonical.';
+
+    main.innerHTML =
+      '<h2 class="pjTitle">Blueprint review</h2>' +
+      '<p class="pjLead">Your structured answers, before prose. Gaps are highlighted; the canonical is generated from approved answers only.</p>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel" for="pjProjectId">PROJECT ID — LOWERCASE KEBAB-CASE</label>' +
+        '<input class="pjName pjProjectId" id="pjProjectId" maxlength="64" value="' + escapeHtml(projectId) + '" />' +
+        '<div class="pjWsSub pjGapNote">' + escapeHtml(gapNote) + '</div>' +
+      '</div>' +
+      '<div class="pjReviewList">' + rows + '</div>' +
+      '<div class="pjCard">' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjReviewBack">← BACK TO INTERVIEW</button>' +
+          '<button type="button" class="pjBtn primary pjGenerate">' +
+            (preview ? 'REGENERATE CANONICAL →' : 'GENERATE CANONICAL →') + '</button>' +
+          (preview ? '<button type="button" class="pjBtn pjToCanonical">OPEN CANONICAL →</button>' : '') +
+        '</div>' +
+        '<div class="pjErr pjReviewErr"></div>' +
+      '</div>';
+
+    const idInput = main.querySelector('.pjProjectId');
+    idInput.addEventListener('input', () => {
+      state.projectId = idInput.value.trim();
+      state.confirmOverwrite = false;
+      const g = main.querySelector('.pjGenerate');
+      if (g) g.textContent = preview ? 'REGENERATE CANONICAL →' : 'GENERATE CANONICAL →';
+    });
+    main.querySelector('.pjReviewBack').addEventListener('click', () => goStep(cardKeys()[state.cards.length - 1]));
+    main.querySelector('.pjGenerate').addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewGenerate', {
+        id: draft.id, expectedRevision: draft.revision,
+        projectId: (idInput.value.trim() || projectId),
+        confirmedOverwrite: state.confirmOverwrite,
+      });
+    });
+    const toCanonical = main.querySelector('.pjToCanonical');
+    if (toCanonical) toCanonical.addEventListener('click', () => goStep('canonical'));
+  }
+
+  // ---- Canonical Draft: preview, per-section regen, manual edit, drift ----
+  function renderCanonicalView() {
+    const draft = state.draft;
+    if (!draft || !draft.preview) { state.step = 'review'; return renderReview(); }
+    const bundle = draft.preview;
+    const drift = Boolean(bundle.canonicalDrift);
+    const gaps = bundle.gaps || [];
+
+    const sectionOptions = SECTIONS.map((s) =>
+      '<option value="' + s.key + '">' + escapeHtml(s.heading) +
+        (gaps.includes(s.key) ? ' — gap' : '') + '</option>').join('');
+
+    const driftBlock = drift
+      ? '<div class="pjCard pjDrift">' +
+          '<div class="pjHelpHead">CANONICAL CHANGED AFTER APPROVAL</div>' +
+          '<div class="pjWsSub">A manual edit no longer matches the approved blueprint hash. Nothing is regenerated silently — choose:</div>' +
+          '<div class="pjBtnRow">' +
+            '<button type="button" class="pjBtn primary pjReapprove">RE-APPROVE EDITED CANONICAL</button>' +
+            '<button type="button" class="pjBtn pjRegenFromAnswers">REGENERATE FROM ANSWERS (DISCARD EDIT)</button>' +
+          '</div>' +
+        '</div>'
+      : '';
+
+    let validationBlock = '';
+    if (state.validation) {
+      const r = state.validation;
+      const summary = r.valid
+        ? 'VALID · ' + r.warnings.length + ' warning(s) · ' + r.suggestions.length + ' suggestion(s)'
+        : 'BLOCKED · ' + r.errors.length + ' error(s) · ' + r.warnings.length + ' warning(s)';
+      const findings = [
+        ...r.errors.map((f) => ['error', f]),
+        ...r.warnings.map((f) => ['warning', f]),
+        ...r.suggestions.map((f) => ['suggestion', f]),
+      ].map(([sev, f]) =>
+        '<div class="pjFinding" data-sev="' + sev + '">' + sev.toUpperCase() + ' · ' + escapeHtml(f.message) + '</div>').join('');
+      validationBlock =
+        '<div class="pjValSummary" data-tone="' + (r.valid ? 'good' : 'warn') + '">' + escapeHtml(summary) + '</div>' +
+        '<div class="pjFindings">' + findings + '</div>';
+    }
+
+    main.innerHTML =
+      '<h2 class="pjTitle">Canonical draft</h2>' +
+      '<p class="pjLead">PROJECT.md, generated from approved answers. Edit it, regenerate one section, or validate — errors block, warnings need review, suggestions advise.</p>' +
+      '<div class="pjWsSub pjCanonState" data-tone="' + (state.stale || drift ? 'warn' : 'good') + '">' +
+        escapeHtml(state.stale
+          ? 'Interview answers changed after this canonical. Regenerate from answers to bring them in.'
+          : (drift ? 'Manual edits differ from the approved blueprint hash — resolve the review below.'
+                   : 'Canonical matches the approved blueprint hash.')) +
+        (gaps.length ? ' Gaps (visibly incomplete, never invented): ' + gaps.map(sectionHeading).join(', ') + '.' : '') +
+      '</div>' +
+      driftBlock +
+      '<div class="pjCard">' +
+        '<label class="pjLabel">BLUEPRINT.JSON</label>' +
+        '<pre class="pjBlueprint">' + escapeHtml(JSON.stringify(bundle.blueprint, null, 2)) + '</pre>' +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel" for="pjCanonical">AUTHORITATIVE CANONICAL MARKDOWN</label>' +
+        '<textarea class="pjCanonical" id="pjCanonical" maxlength="131072" spellcheck="false"></textarea>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjCanonSave" disabled>SAVE CANONICAL EDIT</button>' +
+          '<button type="button" class="pjBtn pjCanonRestore">RESTORE SAVED</button>' +
+        '</div>' +
+        '<div class="pjSectionRegen">' +
+          '<label class="pjLabel">REGENERATE ONE SECTION FROM ITS ANSWER</label>' +
+          '<select class="pjSectionSelect pjDraftSelect">' + sectionOptions + '</select>' +
+          '<div class="pjBtnRow">' +
+            '<button type="button" class="pjBtn pjSectionRegenBtn">REGENERATE SECTION</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="pjErr pjCanonErr"></div>' +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<label class="pjLabel">VALIDATION REPORT</label>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjValidate">VALIDATE</button>' +
+        '</div>' +
+        validationBlock +
+      '</div>' +
+      '<div class="pjCard">' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjCanonReviewBack">← BACK TO REVIEW</button>' +
+          '<button type="button" class="pjBtn pjRegenAll">REGENERATE ALL FROM ANSWERS</button>' +
+        '</div>' +
+      '</div>';
+
+    const canon = main.querySelector('.pjCanonical');
+    canon.value = bundle.canonical;
+    canon.disabled = state.busy;
+    const saveBtn = main.querySelector('.pjCanonSave');
+    canon.addEventListener('input', () => {
+      state.canonicalDirty = canon.value !== bundle.canonical;
+      saveBtn.disabled = !state.canonicalDirty || state.busy;
+    });
+    saveBtn.addEventListener('click', () => {
+      if (saveBtn.disabled || state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewSaveCanonical', {
+        id: draft.id, expectedRevision: draft.revision, canonical: canon.value,
+      });
+    });
+    main.querySelector('.pjCanonRestore').addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewOpen', { id: draft.id });
+    });
+    main.querySelector('.pjSectionRegenBtn').addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewRegenerateSection', {
+        id: draft.id, expectedRevision: draft.revision,
+        key: main.querySelector('.pjSectionSelect').value,
+      });
+    });
+    main.querySelector('.pjValidate').addEventListener('click', () => {
+      ApexBus.post('projectsPreviewValidate', { id: draft.id });
+    });
+    main.querySelector('.pjCanonReviewBack').addEventListener('click', () => goStep('review'));
+    main.querySelector('.pjRegenAll').addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewGenerate', {
+        id: draft.id, expectedRevision: draft.revision,
+        projectId: bundle.projectId, confirmedOverwrite: true,
+      });
+    });
+    const reapprove = main.querySelector('.pjReapprove');
+    if (reapprove) reapprove.addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewAcceptCanonical', { id: draft.id, expectedRevision: draft.revision });
+    });
+    const regenFromAnswers = main.querySelector('.pjRegenFromAnswers');
+    if (regenFromAnswers) regenFromAnswers.addEventListener('click', () => {
+      if (state.busy) return;
+      state.busy = true;
+      ApexBus.post('projectsPreviewGenerate', {
+        id: draft.id, expectedRevision: draft.revision,
+        projectId: bundle.projectId, confirmedOverwrite: true,
+      });
+    });
   }
 
   // ---- bus handlers -------------------------------------------------------
@@ -426,6 +665,9 @@ function mountProjects(el, hasBus) {
   ApexBus.on('projectsDraftStatus', (m) => {
     state.draft = m.draft;
     state.cards = m.cards || state.cards;
+    if (m.suggestedProjectId) state.suggestedProjectId = m.suggestedProjectId;
+    state.bundle = m.draft ? m.draft.preview : null;
+    state.validation = null;   // a fresh draft state means any prior report is stale
     state.busy = false;
     const target = state.pendingStep;
     state.pendingStep = null;
@@ -444,6 +686,42 @@ function mountProjects(el, hasBus) {
       errBox.textContent = 'Not saved — ' + m.error;
       errBox.dataset.tone = 'warn';
     }
+  });
+
+  // ---- slice 4 preview bus handlers ----
+  ApexBus.on('projectsPreviewStatus', (m) => {
+    state.draft = m.draft;
+    state.cards = m.cards || state.cards;
+    state.bundle = m.bundle;
+    state.stale = Boolean(m.stale);
+    state.busy = false;
+    state.canonicalDirty = false;
+    state.confirmOverwrite = false;
+    state.validation = null;   // a new bundle must be re-validated explicitly
+    state.step = 'canonical';  // every preview mutation lands in the canonical view
+    render();
+  });
+
+  ApexBus.on('projectsPreviewResult', (m) => {
+    if (m.ok) return;   // a preview status carries the new bundle on success
+    state.busy = false;
+    if (m.needsConfirmation) {
+      state.confirmOverwrite = true;
+      render();
+      const btn = main.querySelector('.pjGenerate') || main.querySelector('.pjRegenAll');
+      if (btn) btn.textContent = state.step === 'review' ? 'CONFIRM REGENERATE →' : 'CONFIRM REGENERATE ALL';
+      const err = main.querySelector('.pjReviewErr') || main.querySelector('.pjCanonErr');
+      if (err) { err.textContent = m.error; err.dataset.tone = 'warn'; }
+      return;
+    }
+    render();
+    const err = main.querySelector('.pjCanonErr') || main.querySelector('.pjReviewErr');
+    if (err) { err.textContent = 'Not saved — ' + m.error; err.dataset.tone = 'warn'; }
+  });
+
+  ApexBus.on('projectsValidationStatus', (m) => {
+    state.validation = m.report;
+    if (state.step === 'canonical') render();
   });
 
   render();

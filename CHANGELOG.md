@@ -48,6 +48,33 @@
   `test/studio-drafts-drill.js` (create / save / reopen / crash-recover / delete, the
   workspace picker, the interview bus verbs, and the heuristic) chained into
   `test:studio`; zero LLM spend. (App Builder v1, slice 3 of 9.)
+- **App Builder Blueprint Review + Canonical Draft** (`extensions/studio/`): the
+  PROJECTS builder now carries the interview through to a delegable canonical.
+  A new **Review** step shows the six structured answers with gaps highlighted; a
+  new **Canonical** step generates PROJECT.md from **approved answers only** and
+  never invents content — a missing area renders as an explicit, visible
+  "incomplete" placeholder in its section (`lib/blueprint.js`, pattern-matched
+  from the persona render bundle: `buildBundle` / `withCanonicalEdit` /
+  `regenerateSection` / `acceptCanonical`, all using the slice-2 `renderCanonical`
+  / `hashCanonical` primitives rather than duplicating them). Card→section
+  partition: `idea`+`users` collapse into "Vision and Users", each other card owns
+  one section, and "Risks and Open Questions" (no dedicated card in v1) is authored
+  by hand — a visible gap until then, never a split-and-invent of the delivery
+  answer. **Hash-drift** is detected against the approved blueprint snapshot
+  (persisted on the draft, `lib/drafts.js` gaining a validated `preview` field so
+  drift survives reload/crash): a manual edit surfaces a **review prompt** —
+  re-approve (adopt + rehash) or regenerate from answers (discard the edit) — and
+  is **never** a silent regeneration. **Targeted per-section regeneration**
+  re-renders one section from its approved answer, leaving the others and any manual
+  edits elsewhere intact. The **validation report** projects the slice-2
+  `validateProjectPackage` rules (errors block, warnings review, suggestions advise)
+  by staging the preview into an ephemeral temp package and running the same
+  contract — no validation logic is re-implemented, and no package is written to the
+  projects workspace (that is slice 8). No AI or disposable call in this slice. New
+  `test/studio-review-drill.js` (drift detection + review arms, section regen,
+  gap rendering, the validation projection, draft-store snapshot persistence, and
+  the preview bus verbs) chained into `test:studio`; zero LLM spend. (App Builder
+  v1, slice 4 of 9.)
 
 ## 0.2.0 — 2026-07-17
 

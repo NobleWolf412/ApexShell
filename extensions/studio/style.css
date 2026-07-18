@@ -131,3 +131,48 @@
 .studioView[data-builder="projects"] .pjErr { margin-top: 10px; color: var(--dim);
   font-size: 11.5px; line-height: 1.5; }
 .studioView[data-builder="projects"] .pjErr[data-tone="warn"] { color: var(--warning); }
+
+/* ---- Blueprint Review + Canonical Draft (slice 4) ---- */
+.studioView[data-builder="projects"] .pjGapNote { margin-top: 10px; }
+.studioView[data-builder="projects"] .pjReviewList { max-width: 700px; margin-bottom: 16px; }
+.studioView[data-builder="projects"] .pjReviewRow { padding: 12px 16px; margin-bottom: 8px;
+  border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); }
+.studioView[data-builder="projects"] .pjReviewRow[data-gap="true"] {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.studioView[data-builder="projects"] .pjReviewHead { display: flex; gap: 8px; align-items: center;
+  color: var(--text); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.studioView[data-builder="projects"] .pjGapTag { color: var(--warning); font-size: 9px;
+  font-weight: 700; letter-spacing: .18em; border: 1px solid var(--warning);
+  border-radius: 6px; padding: 1px 6px; }
+.studioView[data-builder="projects"] .pjReviewBody { margin-top: 6px; color: var(--dim);
+  font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.studioView[data-builder="projects"] .pjCanonState { margin-bottom: 16px; }
+.studioView[data-builder="projects"] .pjCanonState[data-tone="good"] { color: var(--good); }
+.studioView[data-builder="projects"] .pjCanonState[data-tone="warn"] { color: var(--warning); }
+.studioView[data-builder="projects"] .pjDrift { border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, transparent); }
+
+.studioView[data-builder="projects"] .pjBlueprint,
+.studioView[data-builder="projects"] .pjCanonical { display: block; width: 100%;
+  border: 1px solid var(--edge); border-radius: 9px; background: var(--bg);
+  color: var(--text); font: 11.5px/1.6 Consolas, monospace; user-select: text; }
+.studioView[data-builder="projects"] .pjBlueprint { padding: 12px 14px; max-height: 260px;
+  overflow: auto; white-space: pre; }
+.studioView[data-builder="projects"] .pjCanonical { padding: 12px 14px; min-height: 300px;
+  resize: vertical; }
+.studioView[data-builder="projects"] .pjCanonical:focus { outline: none; border-color: var(--accent); }
+.studioView[data-builder="projects"] .pjSectionRegen { margin-top: 14px; }
+.studioView[data-builder="projects"] .pjSectionSelect { margin-bottom: 0; }
+
+.studioView[data-builder="projects"] .pjValSummary { margin-top: 12px; font-size: 11px;
+  font-weight: 700; letter-spacing: .12em; }
+.studioView[data-builder="projects"] .pjValSummary[data-tone="good"] { color: var(--good); }
+.studioView[data-builder="projects"] .pjValSummary[data-tone="warn"] { color: var(--warning); }
+.studioView[data-builder="projects"] .pjFindings { margin-top: 8px; }
+.studioView[data-builder="projects"] .pjFinding { font-size: 11.5px; line-height: 1.55;
+  padding: 4px 0; color: var(--dim); }
+.studioView[data-builder="projects"] .pjFinding[data-sev="error"] { color: var(--warning); }
+.studioView[data-builder="projects"] .pjFinding[data-sev="warning"] { color: var(--text); }
+.studioView[data-builder="projects"] .pjFinding[data-sev="suggestion"] { color: var(--faint); }

@@ -11,11 +11,13 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const drafts = require('./lib/drafts');
 const { CARDS } = require('./lib/interview');
 const contract = require('./lib/contract');
 const render = require('./lib/render');
+const blueprint = require('./lib/blueprint');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -101,6 +103,35 @@ function selectedWorkspace(stateDir) {
   return saved.workspace;
 }
 
+// Project the slice-2 validator onto an in-memory preview bundle WITHOUT
+// re-implementing a line of it: stage the bundle into an ephemeral temp workspace
+// (never the projects workspace — slice 4 writes no package) and run the same
+// deterministic contract.validateProjectPackage the on-disk drill exercises. The
+// staged blueprint carries the approved hash, so a manual edit surfaces as the
+// contract's own canonical-drift warning too. The temp tree is always removed.
+function validateBundleReport(bundle) {
+  if (!bundle || typeof bundle !== 'object' || !contract.isSafeProjectId(bundle.projectId))
+    throw new Error('Generate a canonical preview first.');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'apex-studio-review-'));
+  try {
+    const dir = path.join(tmp, bundle.projectId);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, 'PROJECT.md'), bundle.canonical, 'utf8');
+    fs.writeFileSync(path.join(dir, 'blueprint.json'), JSON.stringify(bundle.blueprint, null, 2), 'utf8');
+    const report = contract.validateProjectPackage(tmp, bundle.projectId);
+    // The staged paths are ephemeral; never leak them back to the renderer.
+    const strip = (finding) => ({ code: finding.code, message: finding.message });
+    return {
+      valid: report.valid,
+      errors: report.errors.map(strip),
+      warnings: report.warnings.map(strip),
+      suggestions: report.suggestions.map(strip),
+    };
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 function register(ctx) {
   if (!ctx || !ctx.bus || typeof ctx.bus.on !== 'function' || typeof ctx.bus.post !== 'function')
     throw new Error('App Builder requires the extension bus.');
@@ -132,6 +163,24 @@ function register(ctx) {
     });
     ctx.bus.post('toast', { text: 'Project draft was not changed: ' + err.message });
   };
+
+  const previewFailure = (action, err, extra = {}) => {
+    ctx.bus.post('projectsPreviewResult', {
+      ok: false,
+      action,
+      conflict: err.code === 'DRAFT_CONFLICT',
+      error: err.message,
+      ...extra,
+    });
+  };
+
+  const postPreviewStatus = (draft) => ctx.bus.post('projectsPreviewStatus', {
+    draft,
+    cards: CARDS,
+    bundle: draft.preview,
+    stale: Boolean(draft.preview) &&
+      draft.preview.sourceHash !== blueprint.draftSourceHash(draft),
+  });
 
   const postDraftStatus = (draft) => ctx.bus.post('projectsDraftStatus', {
     draft,
@@ -208,6 +257,103 @@ function register(ctx) {
       publishDraftList();
     } catch (err) { draftFailure('delete', err); }
   });
+
+  // ---- Blueprint Review + Canonical Draft (slice 4) -----------------------
+  // Everything is a preview on the draft: no package is written to the workspace
+  // (slice 8). Each verb mutates the persisted preview under the revision gate and
+  // republishes it; the renderer is a pure view over the returned bundle.
+
+  // Generate (or fully regenerate) the canonical from APPROVED answers only. A
+  // regenerate that would discard a manual edit or newer interview work is refused
+  // until the renderer echoes confirmedOverwrite — never a silent overwrite.
+  ctx.bus.on('projectsPreviewGenerate', (message) => {
+    try {
+      const current = currentWorkspaceDraft(message && message.id);
+      const projectId = (message && message.projectId) || render.normalizeProjectId(current.name);
+      const stale = current.preview &&
+        current.preview.sourceHash !== blueprint.draftSourceHash(current);
+      const bundle = blueprint.buildBundle(current, projectId);
+      const replacesCanonical = current.preview && bundle.canonical !== current.preview.canonical;
+      if (current.preview && (current.preview.canonicalDrift || stale || replacesCanonical) &&
+          (!message || message.confirmedOverwrite !== true)) {
+        previewFailure('generate',
+          new Error('Regenerating from answers replaces manual canonical edits or newer interview work.'),
+          { needsConfirmation: true });
+        return;
+      }
+      const draft = drafts.updateDraft(ctx.stateDir, current.id,
+        message && message.expectedRevision, { preview: bundle });
+      ctx.bus.post('projectsPreviewResult', { ok: true, action: 'generated' });
+      postPreviewStatus(draft);
+    } catch (err) { previewFailure('generate', err); }
+  });
+
+  ctx.bus.on('projectsPreviewOpen', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      if (!draft.preview) throw new Error('Generate a canonical preview first.');
+      postPreviewStatus(draft);
+    } catch (err) { previewFailure('open', err); }
+  });
+
+  // A manual canonical edit. Persisted with its drift bit; the renderer surfaces
+  // the review prompt — this verb never re-approves.
+  ctx.bus.on('projectsPreviewSaveCanonical', (message) => {
+    try {
+      const current = currentWorkspaceDraft(message && message.id);
+      if (!current.preview) throw new Error('Generate a canonical preview first.');
+      const bundle = blueprint.withCanonicalEdit(current.preview, message && message.canonical);
+      const draft = drafts.updateDraft(ctx.stateDir, current.id,
+        message && message.expectedRevision, { preview: bundle });
+      ctx.bus.post('projectsPreviewResult', { ok: true, action: 'canonical-saved' });
+      postPreviewStatus(draft);
+    } catch (err) { previewFailure('canonical-save', err); }
+  });
+
+  // Regenerate one section from its approved answer, leaving the others (and any
+  // manual edits elsewhere) intact.
+  ctx.bus.on('projectsPreviewRegenerateSection', (message) => {
+    try {
+      const current = currentWorkspaceDraft(message && message.id);
+      if (!current.preview) throw new Error('Generate a canonical preview first.');
+      const bundle = blueprint.regenerateSection(current.preview, message && message.key);
+      const draft = drafts.updateDraft(ctx.stateDir, current.id,
+        message && message.expectedRevision, { preview: bundle });
+      ctx.bus.post('projectsPreviewResult', { ok: true, action: 'section-regenerated' });
+      postPreviewStatus(draft);
+    } catch (err) { previewFailure('section-regenerate', err); }
+  });
+
+  // Adopt a manually-edited canonical as the approved baseline (the re-approve arm
+  // of the drift review prompt).
+  ctx.bus.on('projectsPreviewAcceptCanonical', (message) => {
+    try {
+      const current = currentWorkspaceDraft(message && message.id);
+      if (!current.preview) throw new Error('Generate a canonical preview first.');
+      const bundle = blueprint.acceptCanonical(current.preview);
+      const draft = drafts.updateDraft(ctx.stateDir, current.id,
+        message && message.expectedRevision, { preview: bundle });
+      ctx.bus.post('projectsPreviewResult', { ok: true, action: 'canonical-accepted' });
+      postPreviewStatus(draft);
+    } catch (err) { previewFailure('canonical-accept', err); }
+  });
+
+  // The validation report — the slice-2 rules, projected, never re-implemented.
+  ctx.bus.on('projectsPreviewValidate', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      if (!draft.preview) throw new Error('Generate a canonical preview first.');
+      ctx.bus.post('projectsValidationStatus', {
+        draftId: draft.id,
+        report: validateBundleReport(draft.preview),
+      });
+    } catch (err) {
+      ctx.bus.post('projectsValidationStatus', {
+        draftId: null,
+        report: { valid: false, errors: [{ code: 'validation', message: err.message }], warnings: [], suggestions: [] },
+      });
+    }
+  });
 }
 
 module.exports = {
@@ -216,4 +362,5 @@ module.exports = {
   writeWorkspaceConfig,
   workspaceStatus,
   selectedWorkspace,
+  validateBundleReport,
 };

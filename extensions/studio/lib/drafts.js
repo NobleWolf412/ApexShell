@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { KEYS } = require('./interview');
+const { BLUEPRINT_AREAS, findRuntimeKeys, hashCanonical, isSafeProjectId } = require('./contract');
 
 const SCHEMA = 1;
 // v4 UUID — the draft id is also its filename, so the shape is pinned tight.
@@ -91,6 +92,45 @@ function atomicWrite(stateDir, file, value) {
   }
 }
 
+const HASH_RE = /^[0-9a-f]{64}$/;
+
+// The approved Blueprint Review snapshot (slice 4), persisted on the draft so
+// hash-drift survives reload/crash — the same discipline personas/lib/drafts.js
+// uses for its preview. null means "no canonical generated yet". The drift bit is
+// re-derived here and cross-checked, so a tampered file can never claim "no drift"
+// while carrying an edited canonical.
+function validatePreview(value) {
+  if (value === null || value === undefined) return;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Draft preview is invalid.');
+  if (!isSafeProjectId(value.projectId)) throw new Error('Draft preview project ID is invalid.');
+  if (typeof value.displayName !== 'string' || !value.displayName.trim())
+    throw new Error('Draft preview display name is invalid.');
+  if (typeof value.description !== 'string') throw new Error('Draft preview description is invalid.');
+  if (typeof value.canonical !== 'string' || !value.canonical.trim() ||
+      Buffer.byteLength(value.canonical, 'utf8') > 128 * 1024)
+    throw new Error('Draft preview canonical is invalid.');
+  if (typeof value.generatedCanonicalHash !== 'string' || !HASH_RE.test(value.generatedCanonicalHash))
+    throw new Error('Draft preview canonical hash is invalid.');
+  if (typeof value.sourceHash !== 'string' || !HASH_RE.test(value.sourceHash))
+    throw new Error('Draft preview source hash is invalid.');
+  const drift = hashCanonical(value.canonical) !== value.generatedCanonicalHash;
+  if (value.canonicalDrift !== drift) throw new Error('Draft preview drift state is invalid.');
+  const blueprint = value.blueprint;
+  if (!blueprint || typeof blueprint !== 'object' || Array.isArray(blueprint) ||
+      blueprint.schema_version !== 1 || blueprint.canonical_hash !== value.generatedCanonicalHash)
+    throw new Error('Draft preview blueprint is invalid.');
+  for (const area of BLUEPRINT_AREAS) {
+    if (!blueprint[area] || typeof blueprint[area] !== 'object' || Array.isArray(blueprint[area]))
+      throw new Error('Draft preview blueprint area is invalid: ' + area);
+  }
+  if (findRuntimeKeys(blueprint).length)
+    throw new Error('Draft preview blueprint contains runtime-only fields.');
+  if (value.gaps !== undefined && (!Array.isArray(value.gaps) ||
+      value.gaps.some((key) => typeof key !== 'string' || key.length > 40)))
+    throw new Error('Draft preview gaps are invalid.');
+}
+
 function validateDraft(value, expectedId) {
   if (!value || value.schema !== SCHEMA) throw new Error('Draft schema must be 1.');
   if (!ID_RE.test(value.id) || (expectedId && value.id !== expectedId))
@@ -118,6 +158,7 @@ function validateDraft(value, expectedId) {
   for (const key of Object.keys(value.answers)) {
     if (!KEYS.includes(key)) throw new Error('Draft contains an unknown answer: ' + key);
   }
+  validatePreview(value.preview === undefined ? null : value.preview);
   return value;
 }
 
@@ -148,6 +189,7 @@ function createDraft(stateDir, workspace, starter) {
     revision: 1,
     currentCard: 0,
     answers: Object.fromEntries(KEYS.map((key) => [key, ''])),
+    preview: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -187,6 +229,12 @@ function updateDraft(stateDir, id, expectedRevision, changes) {
         throw new Error(`Draft answer ${key} is invalid.`);
       next.answers[key] = value;
     }
+  }
+  if (changes && Object.prototype.hasOwnProperty.call(changes, 'preview')) {
+    validatePreview(changes.preview);
+    next.preview = changes.preview === null || changes.preview === undefined
+      ? null
+      : JSON.parse(JSON.stringify(changes.preview));
   }
   next.revision += 1;
   next.updatedAt = new Date().toISOString();
@@ -235,6 +283,7 @@ module.exports = {
   draftsDir,
   draftPath,
   validateDraft,
+  validatePreview,
   readDraft,
   createDraft,
   updateDraft,
