@@ -52,10 +52,18 @@
    the persona view's 74px padding covers its own): without this the stepper
    rail renders underneath the VIEWER/TERMINAL/TODO tabs and its labels clip
    (operator report, 2026-07-18). 52px = shell.css's .dockPane .paneBody. */
-.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; position: relative;
-  padding-left: 52px; }
+/* Bounded height, scoped to THIS view (the persona view keeps .studioViews'
+   whole-page scroll): pjMain and pjCoLog were always overflow-y:auto, but
+   with no height bound the chain just grew and the entire view scrolled
+   "forever" — a long co-designer chat dragged the rail, card, and input row
+   off-screen (operator report, 2026-07-18). Pinning the view to the sheet's
+   height makes the card column and the chat log each scroll internally, and
+   the panel's input row stays put. */
+.studioView[data-builder="projects"] { height: 100%; }
+.studioView[data-builder="projects"] .pjRoot { display: flex; min-height: 0; height: 100%;
+  position: relative; padding-left: 52px; }
 .studioView[data-builder="projects"] .pjRail { width: 200px; flex: none;
-  border-right: 1px solid var(--edge); padding: 16px 0; }
+  border-right: 1px solid var(--edge); padding: 16px 0; overflow-y: auto; }
 .studioView[data-builder="projects"] .pjStep { display: block; width: 100%;
   text-align: left; background: none; border: 0; border-left: 2px solid transparent;
   padding: 9px 18px; color: var(--dim); font-size: 12px; cursor: pointer; }
