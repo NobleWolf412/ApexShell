@@ -1533,6 +1533,13 @@ function mountProjects(el, hasBus) {
         mk.resultError = 'Screen name must be lowercase kebab-case, at most 48 characters.';
         return render();
       }
+      // 24 == mockup.MAX_SCREENS (the drafts.js one-way mirror) — the add site
+      // is the ONE place the list grows, so the cap is enforced here; approval
+      // re-checks it fail-closed in drafts.validateMockupApproval.
+      if (mockupScreensEffective().length >= 24) {
+        mk.resultError = 'Screen list is full — 24 screens is the cap.';
+        return render();
+      }
       if (mockupScreensEffective().some((s) => s.id === id)) return;
       mk.removed = mk.removed.filter((r) => r !== id);   // re-adding a removed one
       if (!mk.proposed.some((s) => s.id === id))
