@@ -271,3 +271,40 @@ closed, fallback determinism + validity vs own allowlist, prompt shape),
 CHANGELOG.md. NEW FILES ONLY plus the package.json test:studio chain line
 and CHANGELOG — zero edits to existing lib/renderer/main files.
 ```
+
+## Slice B2 — the app frame (main tree, CORE — the careful one)
+
+```
+Read design/studio-v2.md (§ Wave B — the living preview) and B1's shipped
+reality (extensions/studio/lib/servers.js + the projectsServerState verbs;
+git log 04da31f). Implement SLICE B2 ONLY: the app frame — the user's real
+app hosted INSIDE the studio via a main-owned Electron WebContentsView.
+Core touch (argued, minimal, line-reviewed): a new main/appFrame.js owning
+create/position/navigate/destroy of ONE WebContentsView per host window,
+attached to whichever BrowserWindow the requesting renderer belongs to
+(BrowserWindow.fromWebContents(ctx.sender's owner) — the S2 idiom; the
+docked shell AND the detached studio window both work). The view loads
+ONLY http://localhost:<port> or http://127.0.0.1:<port> URLs (validate at
+the seam — any other origin refuses; the port comes from the project's
+B1 server state); sandboxed webPreferences (no preload, no node,
+sandbox:true, contextIsolation:true); setWindowOpenHandler deny;
+will-navigate confined to the same localhost origin. Renderer side: a
+PREVIEW surface on the Lift-off/RUN area (Wave E renames it) showing the
+frame when the B1 server is ready — the renderer posts appFrameShow
+{projectId, bounds} / appFrameHide / appFrameNavigate, with bounds synced
+on layout changes (a ResizeObserver on the placeholder div posting
+throttled bounds — study how the studio pane's geometry works; the view
+overlays the placeholder rectangle exactly). The frame hides when the
+step/pane/tab hides (drill the visibility contract at the module seam).
+Bus verbs follow S2's postTo discipline for per-window replies. Factor
+EVERYTHING drillable (URL validation, bounds math, visibility state
+machine, per-window registry) into main/appFrame.js pure functions or a
+registry object with an injectable view factory — drill it hermetically
+like multiwindow-drill stubs electron; the Electron shell stays thin.
+Done: npm test whole (new test/appframe-drill.js: URL allowlist
+(localhost/127.0.0.1 only, port required, hostile origins/paths refuse),
+registry add/position/hide/destroy per window, destroyed-window cleanup,
+bounds sanitation (finite, non-negative, capped)); APEX_SMOKE=1 both
+variants exit 0 (no frame in smoke — nothing starts a server); CHANGELOG
++ floorplan (the new core file). Update & restart applies — say so.
+```
