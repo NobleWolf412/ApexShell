@@ -35,16 +35,9 @@ let nextDisposableId = 1;
 // only, never guessed; persisted (opts.windowsFile) because an app restart
 // otherwise forgets every ceiling and resumed meters sit blank until the
 // first completed turn (the operator, 2026-07-13).
-const MODEL_WINDOWS = new Map();
-let windowsFile = null;
-function learnWindow(name, w) {
-  if (!w || MODEL_WINDOWS.get(name) === w) return;
-  MODEL_WINDOWS.set(name, w);
-  if (windowsFile) {
-    try { fs.writeFileSync(windowsFile, JSON.stringify(Object.fromEntries(MODEL_WINDOWS))); }
-    catch { /* meter degrades to learn-per-run; never break the wire for it */ }
-  }
-}
+// (MODEL_WINDOWS / windowsFile / learnWindow now live INSIDE createSeatHost — a
+//  second host would otherwise clobber the first's learned ceilings via these
+//  module globals; latent today, one host, but held in the closure now. Audit L4.)
 
 // Working-view rendering kinds (J17/J18). The engine only classifies which
 // tool calls are artifact candidates; rendering is the app's business.
@@ -75,8 +68,18 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
   // computes an app-relative path itself (audit M4). Harness default = a temp
   // dir, so a headless/relocated run never writes beside the engine file.
   const localTranscripts = transcriptsDir || path.join(os.tmpdir(), 'apex-transcripts');
+  // Per-host learned context ceilings (was module-global — audit L4).
+  const MODEL_WINDOWS = new Map();
+  const windowsFile = wf || null;
+  const learnWindow = (name, w) => {
+    if (!w || MODEL_WINDOWS.get(name) === w) return;
+    MODEL_WINDOWS.set(name, w);
+    if (windowsFile) {
+      try { fs.writeFileSync(windowsFile, JSON.stringify(Object.fromEntries(MODEL_WINDOWS))); }
+      catch { /* meter degrades to learn-per-run; never break the wire for it */ }
+    }
+  };
   if (wf) {
-    windowsFile = wf;
     try {
       for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(wf, 'utf8'))))
         if (typeof v === 'number' && v > 0) MODEL_WINDOWS.set(k, v);
