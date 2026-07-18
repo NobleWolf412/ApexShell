@@ -217,6 +217,40 @@
   seat/task ever launches. Renderer edits apply on Reload; the `main.js`/
   `main/seats.js`/`main/tasks.js` changes need Update & restart. (App Builder
   v1, slice 8 of 9.)
+- **App Builder import/audit mode** (`extensions/studio/lib/importer.js`): an
+  existing project folder (or a folder holding a bare PROJECT.md) can now enter
+  the builder in audit mode, mirroring the Persona Builder's importer
+  discipline function-for-function: read-only inspection (never writes to the
+  source), a heading→area mapping the user reviews before anything is built,
+  and the blueprint built from the APPROVED mapping only — an unmapped or
+  missing section is a reported gap, never invented content. Three new bus
+  verbs: `projectsImportChoose` (pick a folder, audit it, seed a mapping from
+  heading heuristics), `projectsImportSetMapping` (retarget ONE section's area
+  — or clear it — without re-picking or re-reading the source: the targeted-
+  revision primitive, usable both during the first review and again later to
+  fix one gap), and `projectsImportBuild` (turn the currently-approved mapping
+  into a draft's answers, then run the SAME `blueprint.buildBundle` every other
+  draft uses, so gap reporting is never a second implementation of "never
+  invent" — the first build creates a new draft, every later call from the
+  same audit updates that one draft instead of creating a second). The STUDIO
+  Start screen gained an "IMPORT EXISTING PROJECT…" entry point with a mapping
+  review screen (one dropdown per detected section, gaps listed in plain
+  language) that lands in Blueprint Review the moment a draft is built.
+  **Validator polish**: swept `contract.js`'s error/warning/suggestion messages
+  for terse or code-shaped text (`schema_version` literals, "Runtime-only
+  fields are not portable blueprint data", "Blueprint area is missing or
+  invalid", the fluff tripwires, the orphan/overlap suggestions) and rewrote
+  them in plain language — rule codes and logic are untouched, and the two
+  message-text drill assertions elsewhere in the suite (`/escapes/` in
+  `resolveInside`, `/kebab-case/` in `render.js`/`blueprint.js`'s own
+  `isSafeProjectId` guards) were left alone and still pass unmodified. New
+  `test/studio-import-drill.js` (clean import, missing areas, five hostile-path
+  shapes, targeted revision, and a read-only proof that asserts the source
+  folder's bytes/mtime/directory listing are unchanged after a full
+  choose→remap→build flow) chained into `test:studio`; zero LLM spend, no real
+  seat/disposable call. Renderer edits (the import screen) apply on Reload;
+  the `main.js`/`contract.js` changes need Update & restart. (App Builder v1,
+  slice 9 of 9 — final content slice.)
 
 ## 0.2.0 — 2026-07-17
 

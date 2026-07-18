@@ -218,6 +218,13 @@ function mountProjects(el, hasBus) {
       delegateBusy: false, delegateResult: null,
       chatBusy: false, chatResult: null,
     },
+    // ---- slice 9: import/audit mode ----
+    // Read-only inspection of an existing project folder; a mapping the user
+    // reviews (and can retarget one row at a time — targeted revision) before
+    // anything is built. Reached from Start via IMPORT EXISTING PROJECT.
+    importAudit: null,   // last projectsImportAudit payload (sections, mapping, gaps)
+    importBusy: false,
+    importError: null,
     // ---- slice 6: per-card AI suggest pass (opt-in, one disposable turn) ----
     // Keyed to a single card at a time; switching cards drops any stale
     // prepared/result state rather than carrying it to the wrong question.
@@ -269,6 +276,7 @@ function mountProjects(el, hasBus) {
   const stepDone = (id) => {
     if (id === 'ws') return Boolean(state.ws && state.ws.configured);
     if (id === 'start') return Boolean(state.draft);
+    if (id === 'import') return false;   // never shows a checkmark; it's a one-shot side entry
     if (id === 'review') return hasPreview();
     if (id === 'canonical') return hasPreview() && !state.draft.preview.canonicalDrift;
     if (id === 'create') return Boolean(state.createdProject);
@@ -278,6 +286,7 @@ function mountProjects(el, hasBus) {
   const stepReachable = (id) => {
     if (id === 'ws') return true;
     if (id === 'start') return Boolean(state.ws && state.ws.configured);
+    if (id === 'import') return Boolean(state.ws && state.ws.configured); // same gate as Start
     if (id === 'review') return Boolean(state.draft);       // review needs a started draft
     if (id === 'canonical') return hasPreview();             // canonical needs a preview
     if (id === 'create') return hasPreview();                 // Create needs an approved canonical
@@ -336,6 +345,7 @@ function mountProjects(el, hasBus) {
     coUpdateVisibility();
     if (state.step === 'ws') return renderWs();
     if (state.step === 'start') return renderStart();
+    if (state.step === 'import') return renderImport();
     if (state.step === 'review') return renderReview();
     if (state.step === 'canonical') return renderCanonicalView();
     if (state.step === 'create') return renderCreate();
@@ -413,6 +423,7 @@ function mountProjects(el, hasBus) {
         '<textarea class="pjPitch" id="pjPitch" maxlength="240" placeholder="What is it, in one breath?"></textarea>' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn primary pjBegin" disabled>BEGIN INTERVIEW →</button>' +
+          '<button type="button" class="pjBtn pjImportBtn">IMPORT EXISTING PROJECT…</button>' +
         '</div>' +
         '<div class="pjErr pjStartErr"></div>' +
       '</div>' +
@@ -464,6 +475,118 @@ function mountProjects(el, hasBus) {
       }
       ApexBus.post('projectsDraftDelete', { id: select.value, confirmed: true });
       disarm();
+    });
+
+    main.querySelector('.pjImportBtn').addEventListener('click', () => {
+      state.importAudit = null;
+      state.importError = null;
+      goStep('import');
+    });
+  }
+
+  // ---- Import/audit mode (slice 9) -----------------------------------------
+  // Read-only inspection -> a per-section mapping the user reviews (and can
+  // retarget one row at a time without redoing the pick/read) -> a new draft
+  // whose answers come from the APPROVED mapping only. The source folder is
+  // never written by anything this view does.
+  function renderImport() {
+    const audit = state.importAudit;
+
+    if (!audit) {
+      main.innerHTML =
+        '<h2 class="pjTitle">Import an existing project</h2>' +
+        '<p class="pjLead">Pick a folder that holds an existing PROJECT.md (or a folder with just one Markdown ' +
+          'file in it). Nothing in that folder is ever changed — this only reads it.</p>' +
+        '<div class="pjCard">' +
+          '<div class="pjBtnRow">' +
+            '<button type="button" class="pjBtn primary pjImportChoose" ' + (state.importBusy ? 'disabled' : '') + '>CHOOSE FOLDER…</button>' +
+            '<button type="button" class="pjBtn pjImportBack">← BACK</button>' +
+          '</div>' +
+          (state.importError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(state.importError) + '</div>' : '') +
+        '</div>';
+      main.querySelector('.pjImportChoose').addEventListener('click', () => {
+        state.importBusy = true;
+        state.importError = null;
+        render();
+        ApexBus.post('projectsImportChoose', {});
+      });
+      main.querySelector('.pjImportBack').addEventListener('click', () => goStep('start'));
+      return;
+    }
+
+    const areaOptions = (current) => '<option value="">— unmapped (a gap) —</option>' +
+      state.cards.map((c) =>
+        '<option value="' + escapeHtml(c.key) + '"' + (current === c.key ? ' selected' : '') + '>' +
+          escapeHtml(c.title) + '</option>').join('');
+
+    const rows = audit.sections.map((s) => {
+      const current = audit.mapping[String(s.index)] || '';
+      return '<div class="pjImportRow">' +
+        '<div class="pjImportHeading">' + escapeHtml(s.heading) + '</div>' +
+        '<div class="pjImportContent">' + escapeHtml(s.content.slice(0, 240)) + (s.content.length > 240 ? '…' : '') + '</div>' +
+        '<label class="pjLabel">MAPS TO</label>' +
+        '<select class="pjDraftSelect pjImportMap" data-index="' + s.index + '">' + areaOptions(current) + '</select>' +
+      '</div>';
+    }).join('');
+
+    const gapNote = audit.gaps.length
+      ? 'Not yet mapped, will report as a gap (never invented): ' +
+        audit.gaps.map((k) => (findCard(k) || { title: k }).title).join(', ')
+      : 'Every one of the six areas has at least one section mapped to it.';
+
+    const findings = [
+      ...audit.errors.map((f) => ['error', f]),
+      ...audit.warnings.map((f) => ['warning', f]),
+    ].map(([sev, f]) => '<div class="pjFinding" data-sev="' + sev + '">' + sev.toUpperCase() + ' · ' + escapeHtml(f.message) + '</div>').join('');
+
+    main.innerHTML =
+      '<h2 class="pjTitle">Review the import mapping</h2>' +
+      '<p class="pjLead">' + escapeHtml(audit.canonicalFile) + ' — read-only. Assign each section to one of the ' +
+        'six areas, or leave it unmapped. Changing one row is a targeted revision: it never re-reads the source.</p>' +
+      (findings ? '<div class="pjFindings">' + findings + '</div>' : '') +
+      '<div class="pjCard">' +
+        '<label class="pjLabel" for="pjImportName">WORKING NAME</label>' +
+        '<input class="pjName" id="pjImportName" maxlength="80" value="' + escapeHtml(audit.displayName || '') + '" />' +
+        '<label class="pjLabel" for="pjImportPitch">ONE-SENTENCE PITCH</label>' +
+        '<textarea class="pjPitch" id="pjImportPitch" maxlength="240">' + escapeHtml(audit.description || '') + '</textarea>' +
+      '</div>' +
+      '<div class="pjImportList">' + rows + '</div>' +
+      '<div class="pjCard">' +
+        '<div class="pjWsSub pjGapNote">' + escapeHtml(gapNote) + '</div>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjImportBack">← CHOOSE A DIFFERENT FOLDER</button>' +
+          '<button type="button" class="pjBtn primary pjImportBuild" ' +
+            (state.importBusy || audit.errors.length ? 'disabled' : '') + '>BUILD DRAFT FROM THIS MAPPING →</button>' +
+        '</div>' +
+        (state.importError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(state.importError) + '</div>' : '') +
+      '</div>';
+
+    for (const select of main.querySelectorAll('.pjImportMap')) {
+      select.addEventListener('change', () => {
+        // Targeted revision: ONE row's key, posted alone — the cached audit
+        // sections on the main side are never re-read for this.
+        ApexBus.post('projectsImportSetMapping', {
+          sourceFolder: audit.sourceFolder,
+          index: Number(select.dataset.index),
+          key: select.value || null,
+        });
+      });
+    }
+    main.querySelector('.pjImportBack').addEventListener('click', () => {
+      state.importAudit = null;
+      state.importError = null;
+      render();
+    });
+    main.querySelector('.pjImportBuild').addEventListener('click', () => {
+      if (state.importBusy || audit.errors.length) return;
+      state.importBusy = true;
+      state.importError = null;
+      render();
+      ApexBus.post('projectsImportBuild', {
+        sourceFolder: audit.sourceFolder,
+        name: main.querySelector('#pjImportName').value,
+        pitch: main.querySelector('#pjImportPitch').value,
+      });
     });
   }
 
@@ -1190,6 +1313,30 @@ function mountProjects(el, hasBus) {
   ApexBus.on('projectsValidationStatus', (m) => {
     state.validation = m.report;
     if (state.step === 'canonical') render();
+  });
+
+  // ---- slice 9: import/audit mode ------------------------------------------
+  ApexBus.on('projectsImportAudit', (m) => {
+    state.importAudit = m;
+    state.cards = m.cards || state.cards;
+    state.importBusy = false;
+    state.importError = null;
+    if (state.step === 'import') render();
+  });
+
+  ApexBus.on('projectsImportResult', (m) => {
+    state.importBusy = false;
+    if (m.action === 'audit' || m.action === 'build') {
+      if (!m.ok) { state.importError = m.error; if (state.step === 'import') render(); return; }
+    }
+    if (m.action === 'build' && m.ok) {
+      // The draft is fully built (its blueprint already ran through
+      // buildBundle) — jump straight into Review so the gap report is the
+      // very next thing the user sees, exactly like finishing the interview
+      // by hand. projectsDraftStatus (posted right after this by main.js)
+      // lands the draft and clears busy state.
+      state.pendingStep = 'review';
+    }
   });
 
   // ---- slice 6: per-card AI suggest pass -----------------------------------

@@ -260,15 +260,17 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
       if (frontmatter[key] === undefined || frontmatter[key] === '') {
         const item = finding('missing-frontmatter',
           mode === 'import'
-            ? `Imported project needs mapping for portable field: ${key}`
-            : `Required frontmatter field is missing: ${key}`,
+            ? `This imported project has no ${key} yet — map a section to it during review.`
+            : `PROJECT.md is missing a required field: ${key}.`,
           paths.canonical);
         (mode === 'import' ? warnings : errors).push(item);
       }
     }
     if (frontmatter.schema_version !== undefined &&
         frontmatter.schema_version !== SCHEMA_VERSION)
-      errors.push(finding('schema-version', `PROJECT.md schema_version must be ${SCHEMA_VERSION}.`, paths.canonical));
+      errors.push(finding('schema-version',
+        `PROJECT.md declares schema_version ${frontmatter.schema_version}, but this version of the builder only understands ${SCHEMA_VERSION}.`,
+        paths.canonical));
     if (frontmatter.name !== undefined && frontmatter.name !== projectId)
       errors.push(finding('name-mismatch', 'Frontmatter name must match the project folder.', paths.canonical));
   }
@@ -284,50 +286,54 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
     blueprint = readJson(paths.blueprint, errors);
     if (blueprint) {
       if (blueprint.schema_version !== SCHEMA_VERSION)
-        errors.push(finding('schema-version', `Blueprint schema_version must be ${SCHEMA_VERSION}.`, paths.blueprint));
+        errors.push(finding('schema-version',
+          `blueprint.json declares schema_version ${blueprint.schema_version}, but this version of the builder only understands ${SCHEMA_VERSION}.`,
+          paths.blueprint));
       const runtimeKeys = findRuntimeKeys(blueprint);
       if (runtimeKeys.length)
-        errors.push(finding('runtime-data', `Runtime-only fields are not portable blueprint data: ${runtimeKeys.join(', ')}`, paths.blueprint));
+        errors.push(finding('runtime-data',
+          `This blueprint carries runtime details that can never leave the machine (not portable project data): ${runtimeKeys.join(', ')}`,
+          paths.blueprint));
 
       // Area coverage — validated from the blueprint mapping, not the headings.
       for (const area of BLUEPRINT_AREAS) {
         const value = blueprint[area];
         if (value === undefined || value === null ||
             (typeof value !== 'object' && typeof value !== 'string'))
-          errors.push(finding('missing-blueprint-area', `Blueprint area is missing or invalid: ${area}`, paths.blueprint));
+          errors.push(finding('missing-blueprint-area', `The blueprint has no usable content for its "${area}" area.`, paths.blueprint));
         else if (!areaText(value))
-          warnings.push(finding('incomplete-area', `Interview area is incomplete: ${area}`, paths.blueprint));
+          warnings.push(finding('incomplete-area', `The "${area}" area has no answer recorded yet.`, paths.blueprint));
       }
 
       // Hash drift — the blueprint records a hash of the PROJECT.md it produced;
       // an external edit surfaces as review, never a silent regeneration.
       if (!blueprint.canonical_hash)
-        warnings.push(finding('missing-canonical-hash', 'Blueprint has no approved canonical hash.', paths.blueprint));
+        warnings.push(finding('missing-canonical-hash', 'This blueprint has not been approved against a canonical draft yet, so there is no hash to check it against.', paths.blueprint));
       else if (canonicalText && blueprint.canonical_hash !== hashCanonical(canonicalText))
-        warnings.push(finding('canonical-drift', 'PROJECT.md changed after the blueprint was approved.', paths.canonical));
+        warnings.push(finding('canonical-drift', 'PROJECT.md was edited after the blueprint was approved — review the change before trusting it.', paths.canonical));
 
       // The fluff-logic tripwires (§ Validation warnings).
       const scope = blueprint.scope;
       if (scope && typeof scope === 'object' && !isNonEmptyList(scope.non_goals))
-        warnings.push(finding('scope-no-non-goals', 'Scope card names no non-goals.', paths.blueprint));
+        warnings.push(finding('scope-no-non-goals', "The Scope card doesn't name any non-goals — say at least one thing v1 deliberately will not do.", paths.blueprint));
       const delivery = blueprint.delivery;
       if (delivery && typeof delivery === 'object' &&
           !isNonEmptyList(delivery.verification) &&
           !(typeof delivery.verification === 'string' && delivery.verification.trim()))
-        warnings.push(finding('delivery-no-verification', 'Delivery names no verification expectation.', paths.blueprint));
+        warnings.push(finding('delivery-no-verification', "The Delivery card doesn't say how lift-off will be proven — name at least one verification expectation.", paths.blueprint));
 
       // Delegate route ↔ preset. Kept as a rule shape only: no delegate routing
       // exists yet (that is slice 8), so this fires only when a caller supplies
       // the live preset list AND the blueprint already carries a route.
       const route = delivery && typeof delivery === 'object' ? delivery.delegate_route : undefined;
       if (route && Array.isArray(options.presets) && !options.presets.includes(route))
-        warnings.push(finding('missing-preset', `Delegate route references a preset that does not exist: ${route}`, paths.blueprint));
+        warnings.push(finding('missing-preset', `The delegate route points at "${route}", which is not a currently registered persona preset.`, paths.blueprint));
 
       // Suggestions — advisory only; heuristics never rewrite the blueprint.
       if (areaText(blueprint.idea).length < THIN_AREA_CHARS)
-        suggestions.push(finding('thin-vision', 'Vision is too thin to guide an Architect.', paths.blueprint));
+        suggestions.push(finding('thin-vision', 'The vision reads too thin for an Architect to act on — add the pain, the win, and why now.', paths.blueprint));
       if (areaText(blueprint.scope).length < THIN_AREA_CHARS)
-        suggestions.push(finding('thin-mvp', 'MVP cut is too thin to guide an Architect.', paths.blueprint));
+        suggestions.push(finding('thin-mvp', 'The MVP cut reads too thin for an Architect to act on — name the non-goals and the one full path v1 ships.', paths.blueprint));
 
       // Orphan architecture component — named in architecture, touched by no
       // milestone or delivery note.
@@ -337,7 +343,7 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
         for (const component of architecture.components) {
           if (typeof component === 'string' && component.trim() &&
               !deliveryText.includes(component.trim().toLowerCase()))
-            suggestions.push(finding('architecture-orphan', `Architecture names a component no milestone touches: ${component}`, paths.blueprint));
+            suggestions.push(finding('architecture-orphan', `Architecture names a component ("${component}") that no milestone or delivery note ever mentions.`, paths.blueprint));
         }
       }
 
@@ -350,7 +356,7 @@ function validateProjectPackage(workspaceRoot, projectId, options = {}) {
       for (const sibling of contexts) {
         const shared = [...significantTokens(sibling.text)].filter((token) => selfTokens.has(token));
         if (shared.length >= 3)
-          suggestions.push(finding('project-overlap', `Overlaps an existing project (${sibling.id}): ${shared.slice(0, 5).join(', ')}`, paths.blueprint));
+          suggestions.push(finding('project-overlap', `This looks like it overlaps an existing project (${sibling.id}) — shared terms: ${shared.slice(0, 5).join(', ')}`, paths.blueprint));
       }
     }
   }

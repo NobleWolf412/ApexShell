@@ -23,6 +23,7 @@ const suggest = require('./lib/suggest');
 const codesigner = require('./lib/codesigner');
 const packageCreator = require('./lib/creator');
 const liftoff = require('./lib/liftoff');
+const importer = require('./lib/importer');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -261,6 +262,120 @@ function register(ctx) {
       ctx.bus.post('projectsDraftResult', { ok: true, action: 'deleted' });
       publishDraftList();
     } catch (err) { draftFailure('delete', err); }
+  });
+
+  // ---- Import / audit mode (slice 9, § Import) -----------------------------
+  // Read-only inspection of an existing project folder (or the folder holding
+  // a bare PROJECT.md) -> a user-reviewed mapping onto the six blueprint areas
+  // -> a NEW draft whose answers come from the approved mapping ONLY, then the
+  // same blueprint.buildBundle every other draft uses to report gaps (never
+  // invented content). One active import audit at a time, held in memory —
+  // same "one at a time, in-process state" shape as activeSuggestSeat/
+  // activeCodesigner above. Nothing here ever writes to the source folder;
+  // ctx.pickDirectory is the only Electron-touching call, exactly like the
+  // workspace picker.
+  let activeImport = null; // { sourceFolder, audit, mapping, draftId }
+
+  const importGaps = () => importer.mappingGaps(activeImport ? activeImport.mapping : {});
+
+  const postImportAudit = () => ctx.bus.post('projectsImportAudit', {
+    sourceFolder: activeImport.audit.sourceFolder,
+    canonicalFile: activeImport.audit.canonicalFile,
+    displayName: activeImport.audit.displayName,
+    description: activeImport.audit.description,
+    sections: activeImport.audit.sections,
+    errors: activeImport.audit.errors,
+    warnings: activeImport.audit.warnings,
+    mapping: { ...activeImport.mapping },
+    gaps: importGaps(),
+    cards: CARDS,
+    draftId: activeImport.draftId,
+  });
+
+  ctx.bus.on('projectsImportChoose', async () => {
+    try {
+      const selected = await ctx.pickDirectory({ title: 'Choose a project folder to import' });
+      if (!selected) return;
+      const audit = importer.auditImportFolder(selected);
+      const mapping = {};
+      for (const section of audit.sections) {
+        if (section.suggestedKey) mapping[String(section.index)] = section.suggestedKey;
+      }
+      activeImport = { sourceFolder: audit.sourceFolder, audit, mapping, draftId: null };
+      postImportAudit();
+    } catch (err) {
+      activeImport = null;
+      ctx.bus.post('projectsImportResult', { ok: false, action: 'audit', error: err.message });
+    }
+  });
+
+  // The targeted-revision primitive: retarget ONE section's mapped area (or
+  // clear it with key: null) without re-picking or re-reading the source —
+  // the audit's sections are already cached on activeImport. Works both
+  // during the initial review and again later, after a draft already exists,
+  // so fixing one gap never means redoing the whole import.
+  ctx.bus.on('projectsImportSetMapping', (message) => {
+    try {
+      if (!activeImport || !message || path.resolve(message.sourceFolder || '') !== path.resolve(activeImport.sourceFolder))
+        throw new Error('Choose a project folder to import first.');
+      const index = Number(message.index);
+      const section = activeImport.audit.sections.find((s) => s.index === index);
+      if (!section) throw new Error('That import section no longer exists.');
+      const key = message.key === null || message.key === undefined || message.key === '' ? null : message.key;
+      if (key !== null && !CARDS.some((c) => c.key === key))
+        throw new Error('That is not one of the six blueprint areas.');
+      if (key === null) delete activeImport.mapping[String(index)];
+      else activeImport.mapping[String(index)] = key;
+      postImportAudit();
+    } catch (err) {
+      ctx.bus.post('projectsImportResult', { ok: false, action: 'map', error: err.message });
+    }
+  });
+
+  // Build (or rebuild) the draft from the CURRENTLY approved mapping only.
+  // First call creates a new draft; every later call — including a targeted
+  // revision that only touched one row — updates that SAME draft instead of
+  // creating a second one. Then it runs the mapped answers through the exact
+  // slice-4 buildBundle every other draft uses, so gap reporting is never a
+  // second implementation of "never invent" — it is the same one.
+  ctx.bus.on('projectsImportBuild', (message) => {
+    try {
+      if (!activeImport || !message || path.resolve(message.sourceFolder || '') !== path.resolve(activeImport.sourceFolder))
+        throw new Error('Choose a project folder to import first.');
+      if (activeImport.audit.errors.length)
+        throw new Error('Fix the structural problems in the source doc before importing it.');
+      const answers = importer.answersFromMapping(activeImport.audit, activeImport.mapping);
+      const workspace = selectedWorkspace(ctx.stateDir);
+
+      let draft;
+      if (activeImport.draftId) {
+        const current = currentWorkspaceDraft(activeImport.draftId);
+        draft = drafts.updateDraft(ctx.stateDir, current.id, current.revision, { answers });
+      } else {
+        const created = drafts.createDraft(ctx.stateDir, workspace, {
+          name: (message.name && String(message.name).trim()) || activeImport.audit.displayName || 'Imported project',
+          pitch: (message.pitch !== undefined ? message.pitch : activeImport.audit.description) || '',
+        });
+        draft = drafts.updateDraft(ctx.stateDir, created.id, created.revision, { answers });
+      }
+
+      const projectId = (message.projectId && String(message.projectId).trim()) || render.normalizeProjectId(draft.name);
+      const bundle = blueprint.buildBundle(draft, projectId);
+      draft = drafts.updateDraft(ctx.stateDir, draft.id, draft.revision, { preview: bundle });
+      activeImport.draftId = draft.id;
+
+      ctx.bus.post('projectsImportResult', {
+        ok: true, action: 'build', draftId: draft.id, gaps: bundle.gaps,
+      });
+      postDraftStatus(draft);
+    } catch (err) {
+      ctx.bus.post('projectsImportResult', { ok: false, action: 'build', error: err.message });
+    }
+  });
+
+  ctx.bus.on('projectsImportCancel', () => {
+    activeImport = null;
+    ctx.bus.post('projectsImportResult', { ok: true, action: 'cancelled' });
   });
 
   // ---- Blueprint Review + Canonical Draft (slice 4) -----------------------
@@ -835,3 +950,4 @@ module.exports.suggest = suggest;
 module.exports.codesigner = codesigner;
 module.exports.packageCreator = packageCreator;
 module.exports.liftoff = liftoff;
+module.exports.importer = importer;
