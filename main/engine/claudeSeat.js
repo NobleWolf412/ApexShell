@@ -146,12 +146,17 @@ function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence
   return args;
 }
 
-function startSeat({ cwd, log, onEvent, onExit, resume, model, effort, permissionMode,
-                     noSessionPersistence, tools }) {
+function startSeat(opts) {
+  const { cwd, log, onEvent, onExit } = opts;
   const launch = resolveClaudeLaunch();
   const args = [
     ...(launch.argsPrefix || []),   // node.exe shim bypass: [cli.js] rides in front
-    ...buildArgs({ resume, model, effort, permissionMode, noSessionPersistence, tools }),
+    // Pass the WHOLE opts to buildArgs — buildArgs is the single place that
+    // decides which opts become flags. Hand-picking a subset here is exactly
+    // how `disallowedTools` got silently dropped (the read-only wall's deny-list
+    // emitted nothing on any launch — external audit C1, 2026-07-18); passing
+    // opts through kills that bug class for every current and future flag.
+    ...buildArgs(opts),
   ];
   const spawnArgs = launch.shell ? args.map(quoteForCmd) : args;
   const shown = args.map((arg) => arg === '' ? '""' : arg).join(' ');
