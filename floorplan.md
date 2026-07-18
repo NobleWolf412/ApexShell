@@ -23,7 +23,10 @@ the same change-set — a stale map is worse than none.
    queues, dials, roster). If a UI and the engine disagree, the engine wins.
 2. **One door.** The sandboxed renderer talks to main ONLY through
    `preload.js` (window-caption ipc + the typed message bus). No node
-   integration, strict CSP (`script-src 'self'`).
+   integration, strict CSP: `script-src 'self'` (no `unsafe-eval`) is the
+   load-bearing guarantee. `style-src` carries `'unsafe-inline'` as a SCOPED
+   exception — xterm injects its cursor/selection rules as a runtime style
+   element (index.html:8 documents it); scripts stay fully locked (audit L1).
 3. **Vendor-shaped things are extensions.** The shell core must run with an
    empty `extensions/` folder and no assumptions about trees, personas, or
    services on the machine.
@@ -65,10 +68,14 @@ ApexShell/
 │   │   │                  health via `claude mcp list` (follows seatFocus cwd)
 │   │   └── panes.json     THE USER'S panes (panes.sample.json documents it)
 │   ├── extensions.js      extension loader (see § Extensions)
+│   ├── extensionServices.js  the services an extension's main half receives (ctx)
+│   ├── externalUrl.js    SECURITY: the URL blocklist/guard for "open link"
+│   │                      (shell.openExternal only after this vets it)
 │   ├── liveUpdate.js      source watcher → code-changed badge → seat-safe restart
 │   ├── usage.js           provider usage probes + the per-day local ledger
 │   ├── theme.js / background.js — appearance state (UI-written configs)
 │   └── store.js / artifacts.js — history index + working-view candidates
+│                          (artifacts also gates the apex:// served-file allowlist)
 ├── renderer/              the window (plain JS, no framework)
 │   ├── index.html         static skeleton: title bar, menu, core dock panes,
 │   │                      AI rail (+ button only), tracker blind, script list
@@ -87,6 +94,11 @@ ApexShell/
 │   ├── viewer.js          the VIEWER dock tab (artifact rendering; pin to hold
 │   │                      the view + a history strip of recent artifacts)
 │   ├── usage.js           usage bars (rail units + quarter rows)
+│   ├── bus.js             renderer half of the typed bus + ApexToast
+│   ├── linkify.js         SECURITY: markdown→HTML escaping + safe URL linkify
+│   │                      (LINK_RE excludes "'<> — the XSS contract; test it)
+│   ├── imageStaging.js    paste/drop image staging for the composer
+│   ├── theme.js / background.js — appearance panels (renderer half)
 │   ├── extensions.js      renderer-side extension injector
 │   └── styles/            base/shell/chat/monitors/theme CSS (tokened)
 ├── extensions/            DROP-IN FOLDER — one subfolder per extension
@@ -203,7 +215,13 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   step unasked; bounce → resume the PREVIOUS step's session with the
   findings (max 2 bounces; review steps are always fresh seats —
   independence preserved); needs-decision → pause for the user.
-- **Delegate-from-chat** (`taskDelegateFromChat`): any live rail chat can hand
+- **Hand off → (`seatHandoff` in seats.js)** is the LIVE delegate-from-chat
+  path today: the source chat's recent output becomes a plain-text brief that
+  opens the target persona (reusing a live chat of that persona if one exists —
+  the handoff-back case), NO board task and NO packet gate. `taskDelegateFromChat`
+  below is the older packet-gated variant (now `_test`-mostly); don't confuse
+  them (audit L6).
+- **taskDelegateFromChat** (legacy/packet-gated): any live rail chat can hand
   its work onward without a pre-planned task — the tab row's Delegate → button
   picks a target persona, the chat becomes step 1 of a fresh auto task, is
   asked for its handoff packet, and the normal machinery advances (wrap+close
