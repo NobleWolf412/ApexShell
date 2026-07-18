@@ -158,6 +158,46 @@ Verification: hermetic drills for the mockup contract (self-containment
 check: no external URLs; provenance/hash; stale detection), served-path
 allowlist tests, smoke with the PREVIEW step open.
 
+## Wave S — the detached studio (its own window, second monitor)
+
+Operator requirement (2026-07-18, post-Wave-A): *"when you launch Apex
+Studio it would be perfect if it opened up in its own window and you could
+put it on your second monitor so you can work in Apex and Apex Studio
+simultaneously and they work hand in hand."* This wave MUST land before
+Wave B: the living preview's WebContentsView bounds-sync binds to whichever
+window hosts STUDIO — build the second window first or rebuild B later.
+
+- **One renderer, two windows.** The studio window loads the SAME
+  renderer/index.html with a boot flag (`#apexWindow=studio`) — same
+  preload, same one-door, same CSP, same extension injection. The shell
+  boots in studio mode: every dock blind, the chat center, the rail, and
+  the trackers hide; the STUDIO pane mounts full-bleed. Zero duplicated
+  machinery; the mode is layout, not a fork.
+- **The bus becomes multi-window** (the wave's core touch, kept narrow):
+  `main/bus.js` posts broadcast to every live window's webContents instead
+  of one; renderer→main routing is already per-sender. Each window's
+  `ready` reannounces to it alone where the machinery already handles
+  reload-replay. Both windows mounting the studio is CORRECT, not a
+  conflict: every state change broadcasts, so the docked pane and the
+  detached window are two live views of the same truth (draft revision
+  gates already protect writes — the same discipline that guards two
+  actions in one window guards two windows).
+- **The affordance.** A ⧉ pop-out button on the STUDIO pane header opens
+  the detached window (bounds persisted machine-side, restored on reopen —
+  second monitor placement sticks); the docked tab stays functional and
+  shows a subtle "also open in its own window" mark. Closing the detached
+  window is just closing a window. A persisted preference reopens it on
+  app launch.
+- **Hand in hand.** Nothing else changes: seats, the board, the co-designer,
+  mockups — all main-side truth reached over the same bus from either
+  window. Work a chat in Apex on monitor one while the SEE step or (later)
+  the living preview fills monitor two.
+
+Slices: S1 — the multi-window bus + createStudioWindow + boot flag (core,
+careful, drilled); S2 — studio boot mode layout + pop-out affordance +
+bounds/preference persistence + the wave sweep folded in (small wave, two
+slices).
+
 ## Wave B — the living preview (your real app, inside STUDIO)
 
 - **Dev-server runner.** Per-project launch config (command, cwd, port,
@@ -330,10 +370,10 @@ deleting a prompts file applied to a COMPLETE build).
 
 ## Build order
 
-Waves land in order (A→E, F alongside C-E); each wave is 3-5 slices, one
-fresh seat per slice, gates per slice (`npm test` whole, smoke, `test:live`
-where the engine or a WebContentsView seam moves), sweep as the tail slice
-of each wave — the v1 protocol verbatim. Wave A is pure extension code and
+Waves land in order (A→S→B→C/D→E, F alongside C-E); each wave is 3-5
+slices (S is two), one fresh seat per slice, gates per slice (`npm test`
+whole, smoke, `test:live` where the engine or a WebContentsView seam
+moves), sweep as the tail slice of each wave — the v1 protocol verbatim. Wave A is pure extension code and
 ships value alone (mockups make every blueprint tangible even if B-E never
 land). Wave B is the one careful core touch (main-owned WebContentsView +
 bounds sync — argued, minimal, drilled). C rides B. D is parallel-safe with
