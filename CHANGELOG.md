@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave A slice A3 — the mockup pass**
+  (`extensions/studio/lib/mockup.js` new; `extensions/studio/main.js`,
+  `extensions/studio/renderer.js`, `test/studio-mockup-drill.js` new): the
+  blueprint gains its first visual stage. Screen derivation is a
+  DETERMINISTIC pass over the blueprint (no AI): the platform answer picks
+  the kind — web/desktop/mobile words → screen mockups, cli/terminal →
+  terminal storyboard frames (invocation/session, + errors/config when
+  mentioned), api/service → one endpoint-map page; explicit UI words outrank
+  cli which outranks api, and no match defaults to screens. Screens: `home`
+  always, plus `auth`/`dashboard`/`settings` only when the blueprint's own
+  words mention them — the user renames/removes/adds the list before
+  generating anything. The prompt builder feeds ONE screen per disposable
+  turn: blueprint digest + the Look area + the A2 tokens summary (compiled
+  by `lib/design.js`, never re-implemented) + that screen's purpose. The
+  untrusted-reply contract is fenced (```html, like every other untrusted
+  contract in the extension) and fails CLOSED to an error + NO file on any
+  violation: exactly one complete document (doctype→</html>; two fences are
+  an error, not a pick), a 512 KB cap, and every static external-URL vector
+  rejected individually — http(s):// and protocol-relative // in src=,
+  href=, CSS url(), and @import — while data: URIs, #fragments, and
+  relative refs stay legal (self-contained means inline or data:). Output
+  lands under the DRAFT's own storage, never the projects workspace (no
+  package exists yet): `state/extensions/studio/mockups/<draftId>/
+  <screen>.html` + a provenance sidecar carrying the generating canonical
+  hash, under the drafts-store discipline (symlink/non-dir refusal at both
+  levels, exclusive-temp atomic rename, regex-pinned filenames); deleting a
+  draft cleans its mockup dir too. Drift stays honest: a blueprint change
+  flips `isMockupStale()` and the Canonical step's minimal mockup list (the
+  real PREVIEW surface is A4) shows a STALE badge — nothing ever regenerates
+  silently. Bus verbs mirror the suggest pass verb-for-verb —
+  `projectsMockupList/Prepare/Run/Stop` with usage preflight, 5-minute
+  prepare TTL, explicit `approved:true`, single-flight, launch:{model,
+  effort} passthrough (omitted when the picker is unset), and a backstop
+  timer (5 min — a whole document, not a chip list). New hermetic drill
+  `test/studio-mockup-drill.js` (43 gates: derivation table + determinism,
+  prompt shape, valid reply, eleven external-URL rejections, oversize/
+  non-HTML/missing-fence/double-fence, provenance staleness flip, store
+  containment + cleanup, and the full prepare/TTL/approval/single-flight/
+  backstop machine on a stubbed disposable — zero LLM spend).
+
 - **STUDIO v2, Wave A slice A2 — the tokens compiler**
   (`extensions/studio/lib/design.js` new; `lib/contract.js`, `lib/creator.js`,
   `extensions/studio/main.js`): the blueprint's `look` answer now compiles

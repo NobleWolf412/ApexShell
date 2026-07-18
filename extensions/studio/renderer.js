@@ -230,6 +230,16 @@ function mountProjects(el, hasBus) {
     // Keyed to a single card at a time; switching cards drops any stale
     // prepared/result state rather than carrying it to the wrong question.
     suggest: { card: null, prepared: null, busy: false, phase: null, result: null },
+    // ---- slice A3: the mockup pass (minimal list on the Canonical step; the
+    // real preview surface is A4). `forDraft` doubles as the request guard so
+    // the list fetch never loops with its own re-render. added/removed are
+    // the user's local edits over the deterministic proposal (rename = remove
+    // + add); prepared/busy mirror the suggest block's two-step gate.
+    mockups: {
+      forDraft: null, kind: null, proposed: [], generated: [], hasPreview: false,
+      error: null, removed: [], added: [], selected: null,
+      prepared: null, busy: false, phase: null, resultError: null,
+    },
     // ---- slice 7: the co-designer panel (one long-lived controller per open) ----
     codesigner: {
       open: false,
@@ -973,6 +983,141 @@ function mountProjects(el, hasBus) {
     if (toCanonical) toCanonical.addEventListener('click', () => goStep('canonical'));
   }
 
+  // ---- slice A3: the mockup pass block on the Canonical step --------------
+  // Deliberately minimal (A4 owns the real PREVIEW surface): the derived
+  // screen list — renameable via remove+add — with generated/STALE status,
+  // and the same two-step prepare→run gate the suggest block uses. Nothing
+  // regenerates silently: STALE is a badge, and every generation is an
+  // explicit, approved, priced action.
+  const mockupKindNote = (kind) =>
+    kind === 'cli' ? 'CLI platform — terminal storyboard frames.'
+      : kind === 'api' ? 'API platform — one endpoint-map page.'
+        : 'Screen mockups.';
+
+  function mockupScreensEffective() {
+    const mk = state.mockups;
+    const kept = mk.proposed.filter((s) => !mk.removed.includes(s.id));
+    return kept.concat(mk.added);
+  }
+
+  function renderMockupBlock() {
+    const mk = state.mockups;
+    if (mk.error) {
+      return '<div class="pjCard"><label class="pjLabel">MOCKUPS</label>' +
+        '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.error) + '</div></div>';
+    }
+    const generatedById = new Map(mk.generated.map((g) => [g.screen.id, g]));
+    const screens = mockupScreensEffective();
+    // Generated screens the user has since removed from the proposal still
+    // exist as files — keep them visible rather than orphaning them silently.
+    for (const g of mk.generated)
+      if (!screens.some((s) => s.id === g.screen.id)) screens.push(g.screen);
+    const rows = screens.map((s) => {
+      const g = generatedById.get(s.id);
+      const status = g
+        ? (g.stale ? '<span class="pjChip" data-tone="warn">STALE</span>'
+                   : '<span class="pjChip" data-tone="good">generated</span>')
+        : '<span class="pjChip">not generated</span>';
+      const on = mk.selected === s.id ? ' primary' : '';
+      return '<div class="pjBtnRow">' +
+        '<button type="button" class="pjBtn pjMockPick' + on + '" data-screen-id="' + escapeHtml(s.id) + '">' +
+          escapeHtml(s.title || s.id) + '</button> ' + status +
+        '<button type="button" class="pjBtn pjMockRemove" data-screen-id="' + escapeHtml(s.id) + '" title="Remove from the list (files are untouched)">✕</button>' +
+      '</div>';
+    }).join('');
+    const canRun = Boolean(mk.prepared) && !mk.busy;
+    return (
+      '<div class="pjCard pjMockups">' +
+        '<label class="pjLabel">MOCKUPS (SEE IT BEFORE YOU BUILD IT)</label>' +
+        '<div class="pjWsSub">' + escapeHtml(mockupKindNote(mk.kind)) +
+          ' The list is a deterministic proposal from the blueprint — rename (remove + add), remove, or add screens before generating. ' +
+          'A blueprint change marks generated screens STALE; nothing regenerates without you.</div>' +
+        (mk.hasPreview ? '' :
+          '<div class="pjWsSub" data-tone="warn">Mockups generate FROM the approved canonical — generate the preview above first.</div>') +
+        rows +
+        '<div class="pjBtnRow">' +
+          '<input type="text" class="pjMockAddName" maxlength="48" placeholder="new-screen-name (kebab-case)" />' +
+          '<button type="button" class="pjBtn pjMockAdd">ADD SCREEN</button>' +
+        '</div>' +
+        '<div class="pjBtnRow">' +
+          '<button type="button" class="pjBtn pjMockPrepare" ' +
+            (mk.busy || !mk.selected || !mk.hasPreview ? 'disabled' : '') + ' ' +
+            'title="Runs one hidden disposable session to generate this screen\'s mockup — a real Claude turn, opt-in.">' +
+            (mk.prepared ? 'RE-CHECK USAGE' : 'GENERATE SELECTED (USES A SESSION)') +
+          '</button>' +
+          (mk.prepared
+            ? '<button type="button" class="pjBtn primary pjMockRun" ' + (canRun ? '' : 'disabled') + '>RUN MOCKUP PASS</button>'
+            : '') +
+          (mk.busy ? '<button type="button" class="pjBtn pjMockStop">STOP</button>' : '') +
+        '</div>' +
+        (mk.prepared
+          ? '<div class="pjWsSub pjAiUsage">' + escapeHtml(usageNote(mk.prepared.usage)) + '</div>'
+          : '') +
+        (mk.busy ? '<div class="pjWsSub pjAiUsage">Generating ' + escapeHtml(mk.selected || '') + '…</div>' : '') +
+        (mk.resultError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.resultError) + '</div>' : '') +
+      '</div>'
+    );
+  }
+
+  function wireMockupBlock(draft) {
+    const mk = state.mockups;
+    for (const btn of main.querySelectorAll('.pjMockPick')) {
+      btn.addEventListener('click', () => {
+        mk.selected = btn.dataset.screenId;
+        mk.prepared = null;   // a prepare is per-screen; switching drops it
+        render();
+      });
+    }
+    for (const btn of main.querySelectorAll('.pjMockRemove')) {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.screenId;
+        mk.added = mk.added.filter((s) => s.id !== id);
+        if (!mk.removed.includes(id)) mk.removed.push(id);
+        if (mk.selected === id) { mk.selected = null; mk.prepared = null; }
+        render();
+      });
+    }
+    const addBtn = main.querySelector('.pjMockAdd');
+    const addName = main.querySelector('.pjMockAddName');
+    if (addBtn && addName) addBtn.addEventListener('click', () => {
+      const id = addName.value.trim().toLowerCase();
+      if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(id) || id.length > 48) {
+        mk.resultError = 'Screen name must be lowercase kebab-case, at most 48 characters.';
+        return render();
+      }
+      if (mockupScreensEffective().some((s) => s.id === id)) return;
+      mk.removed = mk.removed.filter((r) => r !== id);   // re-adding a removed one
+      if (!mk.proposed.some((s) => s.id === id))
+        mk.added.push({ id, title: id, purpose: '' });
+      mk.resultError = null;
+      mk.selected = id;
+      render();
+    });
+    const prepareBtn = main.querySelector('.pjMockPrepare');
+    if (prepareBtn) prepareBtn.addEventListener('click', () => {
+      if (prepareBtn.disabled || !mk.selected) return;
+      const screen = mockupScreensEffective().find((s) => s.id === mk.selected) ||
+        (state.mockups.generated.find((g) => g.screen.id === mk.selected) || {}).screen;
+      if (!screen) return;
+      mk.prepared = null;
+      mk.resultError = null;
+      ApexBus.post('projectsMockupPrepare', { id: draft.id, screen });
+    });
+    const runBtn = main.querySelector('.pjMockRun');
+    if (runBtn) runBtn.addEventListener('click', () => {
+      if (runBtn.disabled || !mk.prepared) return;
+      mk.busy = true;
+      mk.phase = 'running';
+      ApexBus.post('projectsMockupRun', {
+        id: mk.prepared.draftId, screen: mk.prepared.screen,
+        expectedRevision: mk.prepared.revision, approved: true,
+      });
+      render();
+    });
+    const stopBtn = main.querySelector('.pjMockStop');
+    if (stopBtn) stopBtn.addEventListener('click', () => ApexBus.post('projectsMockupStop', {}));
+  }
+
   // ---- Canonical Draft: preview, per-section regen, manual edit, drift ----
   function renderCanonicalView() {
     const draft = state.draft;
@@ -980,6 +1125,18 @@ function mountProjects(el, hasBus) {
     const bundle = draft.preview;
     const drift = Boolean(bundle.canonicalDrift);
     const gaps = bundle.gaps || [];
+
+    // Fetch the mockup screen list once per draft — the arriving payload
+    // re-renders this step, and forDraft (set before posting) stops that
+    // re-render from re-requesting in a loop.
+    if (state.mockups.forDraft !== draft.id) {
+      state.mockups = {
+        forDraft: draft.id, kind: null, proposed: [], generated: [], hasPreview: false,
+        error: null, removed: [], added: [], selected: null,
+        prepared: null, busy: false, phase: null, resultError: null,
+      };
+      ApexBus.post('projectsMockupList', { id: draft.id });
+    }
 
     const sectionOptions = SECTIONS.map((s) =>
       '<option value="' + s.key + '">' + escapeHtml(s.heading) +
@@ -1051,6 +1208,7 @@ function mountProjects(el, hasBus) {
         '</div>' +
         validationBlock +
       '</div>' +
+      renderMockupBlock() +
       '<div class="pjCard">' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn pjCanonReviewBack">← BACK TO REVIEW</button>' +
@@ -1113,6 +1271,7 @@ function mountProjects(el, hasBus) {
         projectId: bundle.projectId, confirmedOverwrite: true,
       });
     });
+    wireMockupBlock(draft);
   }
 
   // ---- Create Project (slice 8): the explicit action that writes the atomic
@@ -1331,6 +1490,7 @@ function mountProjects(el, hasBus) {
     state.canonicalDirty = false;
     state.confirmOverwrite = false;
     state.validation = null;   // a new bundle must be re-validated explicitly
+    state.mockups.forDraft = null;  // canonical hash may have moved — refresh STALE bits
     state.step = 'canonical';  // every preview mutation lands in the canonical view
     render();
   });
@@ -1406,6 +1566,54 @@ function mountProjects(el, hasBus) {
     const card = m.card;
     state.suggest = { card, prepared: null, busy: false, phase: m.error ? 'error' : 'done', result: m };
     if (state.step === card) renderCard(findCard(card));
+  });
+
+  // ---- slice A3: the mockup pass --------------------------------------------
+  ApexBus.on('projectsMockupScreens', (m) => {
+    const mk = state.mockups;
+    if (state.draft && m.draftId !== state.draft.id) return;
+    mk.forDraft = m.draftId;
+    mk.kind = m.kind;
+    mk.proposed = m.proposed || [];
+    mk.generated = m.generated || [];
+    mk.hasPreview = Boolean(m.hasPreview);
+    mk.error = m.error || null;
+    if (mk.selected && !mockupScreensEffective().some((s) => s.id === mk.selected) &&
+        !mk.generated.some((g) => g.screen.id === mk.selected))
+      mk.selected = null;
+    if (!mk.selected && mk.proposed.length) mk.selected = mk.proposed[0].id;
+    if (state.step === 'canonical') render();
+  });
+
+  ApexBus.on('projectsMockupPrepared', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    Object.assign(state.mockups, { prepared: m, busy: false, phase: 'prepared', resultError: null });
+    if (state.step === 'canonical') render();
+  });
+
+  ApexBus.on('projectsMockupStatus', (m) => {
+    if (m.phase === 'error') {
+      Object.assign(state.mockups, { prepared: null, busy: false, phase: 'error', resultError: m.error });
+      if (state.step === 'canonical') render();
+      return;
+    }
+    if (m.phase === 'stopped') {
+      Object.assign(state.mockups, { prepared: null, busy: false, phase: 'stopped' });
+      if (state.step === 'canonical') render();
+    }
+    // 'running' is already reflected client-side the instant RUN is clicked.
+  });
+
+  ApexBus.on('projectsMockupResult', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    Object.assign(state.mockups, {
+      prepared: null, busy: false,
+      phase: m.ok ? 'done' : 'error',
+      resultError: m.ok ? null : m.error,
+    });
+    // A successful write is followed by a fresh projectsMockupScreens post
+    // from main, which repaints the list with the new generated entry.
+    if (state.step === 'canonical') render();
   });
 
   // ---- slice 7: the co-designer panel ---------------------------------------

@@ -20,6 +20,7 @@ const render = require('./lib/render');
 const blueprint = require('./lib/blueprint');
 const modelPicker = require('./lib/modelPicker');
 const suggest = require('./lib/suggest');
+const mockup = require('./lib/mockup');
 const codesigner = require('./lib/codesigner');
 const packageCreator = require('./lib/creator');
 const design = require('./lib/design');
@@ -266,6 +267,14 @@ function register(ctx) {
         throw new Error('Draft deletion requires explicit confirmation.');
       const workspace = selectedWorkspace(ctx.stateDir);
       drafts.deleteDraft(ctx.stateDir, message.id, workspace);
+      // The draft's mockup files (slice A3) die with it — they are derived
+      // artifacts of a draft that no longer exists. Best-effort AFTER the
+      // draft delete succeeded: a cleanup hiccup surfaces as a toast, never
+      // as a phantom "draft was not deleted" error.
+      try { mockup.deleteDraftMockups(ctx.stateDir, message.id); }
+      catch (err) {
+        ctx.bus.post('toast', { text: 'Draft deleted, but its mockup files were not cleaned up: ' + err.message });
+      }
       ctx.bus.post('projectsDraftResult', { ok: true, action: 'deleted' });
       publishDraftList();
     } catch (err) { draftFailure('delete', err); }
@@ -631,6 +640,186 @@ function register(ctx) {
     ctx.bus.post('projectsCardSuggestStatus', { phase: 'stopped' });
   });
 
+  // ---- the mockup pass (slice A3, § Wave A) --------------------------------
+  // Verb-for-verb the suggest pass's state machine: prepare (usage snapshot +
+  // TTL) → run (approved:true, one disposable turn, launch override) →
+  // result; backstop timer; one pass in flight. What differs is the payload
+  // (one screen, not one card), the contract (lib/mockup.js's one-HTML-
+  // document discipline), and the landing zone: a validated reply becomes a
+  // FILE under the draft's own mockup store + a provenance sidecar carrying
+  // the generating canonical hash — never a draft field, never a package
+  // write (no package exists yet). Any contract violation is an error + NO
+  // file. The backstop is longer than suggest's because a whole HTML document
+  // is a far longer generation than a chip list.
+  const MOCKUP_PREPARE_TTL_MS = 5 * 60 * 1000;   // == SUGGEST_PREPARE_TTL_MS
+  const MOCKUP_BACKSTOP_MS = 5 * 60 * 1000;      // one full document, not chips
+  let preparedMockup = null;   // { draftId, screen, revision, preparedAt }
+  let activeMockupSeat = null; // { controller, backstop } — one pass at a time
+
+  // The proposed + generated screen lists for the Canonical step's minimal
+  // UI (A4 owns the real preview surface). Derivation prefers the APPROVED
+  // blueprint (the preview bundle) and falls back to a deterministic build
+  // from the current answers, so the list renders even before first generate.
+  const postMockupScreens = (draft) => {
+    const source = draft.preview ? draft.preview.blueprint : blueprint.blueprintFromDraft(draft);
+    const derived = mockup.deriveScreens(source);
+    ctx.bus.post('projectsMockupScreens', {
+      draftId: draft.id,
+      kind: derived.kind,
+      proposed: derived.screens,
+      generated: mockup.listMockups(ctx.stateDir, draft),
+      hasPreview: Boolean(draft.preview),
+      error: null,
+    });
+  };
+
+  ctx.bus.on('projectsMockupList', (message) => {
+    try {
+      postMockupScreens(currentWorkspaceDraft(message && message.id));
+    } catch (err) {
+      ctx.bus.post('projectsMockupScreens', {
+        draftId: message && message.id, kind: null, proposed: [], generated: [],
+        hasPreview: false, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsMockupPrepare', (message) => {
+    try {
+      const screen = mockup.cleanScreen(message && message.screen);
+      const draft = currentWorkspaceDraft(message && message.id);
+      if (!draft.preview)
+        throw new Error('Generate the canonical preview first — mockups are generated FROM the approved blueprint.');
+      const usage = ctx.usage && typeof ctx.usage.claudeSnapshot === 'function'
+        ? ctx.usage.claudeSnapshot() : null;
+      const usageFresh = Boolean(usage && usage.asOf && !usage.stale &&
+        Date.now() - usage.asOf <= 5 * 60 * 1000);
+      preparedMockup = {
+        draftId: draft.id,
+        screen,
+        revision: draft.revision,
+        preparedAt: Date.now(),
+      };
+      ctx.bus.post('projectsMockupPrepared', {
+        draftId: draft.id,
+        screen,
+        revision: draft.revision,
+        usage: usage ? {
+          session: usage.session || null,
+          weekly: usage.weekly || null,
+          asOf: usage.asOf || null,
+          stale: !usageFresh,
+        } : null,
+        requiresApproval: true,
+      });
+    } catch (err) {
+      preparedMockup = null;
+      ctx.bus.post('projectsMockupStatus', { phase: 'error', error: err.message });
+    }
+  });
+
+  ctx.bus.on('projectsMockupRun', (message) => {
+    try {
+      if (!message || message.approved !== true)
+        throw new Error('The mockup pass runs a hidden Claude session — it needs explicit approval.');
+      if (!preparedMockup || message.id !== preparedMockup.draftId ||
+          !message.screen || message.screen.id !== preparedMockup.screen.id ||
+          message.expectedRevision !== preparedMockup.revision)
+        throw new Error('Prepare the mockup pass again from the current draft.');
+      if (Date.now() - preparedMockup.preparedAt > MOCKUP_PREPARE_TTL_MS)
+        throw new Error('The usage check expired; prepare the mockup pass again.');
+      if (activeMockupSeat) throw new Error('A mockup pass is already running.');
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+
+      const screen = preparedMockup.screen;
+      const draft = currentWorkspaceDraft(preparedMockup.draftId);
+      if (draft.revision !== preparedMockup.revision)
+        throw new Error('The draft changed; prepare the mockup pass again.');
+      if (!draft.preview)
+        throw new Error('Generate the canonical preview first — mockups are generated FROM the approved blueprint.');
+      const bundle = draft.preview;
+      // The provenance anchor: the approved canonical hash this mockup is
+      // generated FROM. A later blueprint change flips the STALE badge.
+      const canonicalHash = bundle.generatedCanonicalHash;
+      const derived = mockup.deriveScreens(bundle.blueprint);
+      // The A2 tokens summary — compiled, never re-implemented (lib/design.js
+      // is deterministic and total, so this costs nothing).
+      const tokensSummary = design.compileTokens(bundle.blueprint.look).tokens.summary;
+      const prompt = mockup.buildPrompt({
+        displayName: bundle.displayName,
+        blueprint: bundle.blueprint,
+        tokensSummary,
+        kind: derived.kind,
+        screen,
+      });
+
+      // Slice 5's launch override, same passthrough as the suggest pass:
+      // omitted entirely when the STUDIO picker holds no pick.
+      const pick = modelPicker.readModelPick(ctx.stateDir);
+      const launch = (pick.model || pick.effort)
+        ? { model: pick.model || undefined, effort: pick.effort || undefined }
+        : null;
+
+      let finalText = '';
+      const done = (payload) => {
+        if (!activeMockupSeat) return;
+        const seat = activeMockupSeat;
+        activeMockupSeat = null;
+        clearTimeout(seat.backstop);
+        try { seat.controller.close(); } catch { /* already gone */ }
+        ctx.bus.post('projectsMockupResult', {
+          draftId: draft.id, screen, ok: false, error: null,
+          ...payload,
+        });
+      };
+      const controller = ctx.seats.startDisposable({
+        kickoff: prompt,
+        ...(launch ? { launch } : {}),
+        onEvent: (event) => {
+          if (!activeMockupSeat) return;
+          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
+          else if (event.type === 'result') {
+            const parsed = mockup.parseLlmReply(finalText);
+            if (parsed.error) { done({ error: parsed.error }); return; }
+            // Only a fully validated document ever reaches disk — and the
+            // store re-checks the contract's caps itself, so no ordering bug
+            // can smuggle a violation into a file.
+            try {
+              const written = mockup.writeMockup(ctx.stateDir, draft.id, screen, parsed.html, canonicalHash);
+              done({ ok: true, file: written.file });
+              postMockupScreens(currentWorkspaceDraft(draft.id));
+            } catch (err) {
+              done({ error: err.message });
+            }
+          } else if (event.type === 'dead') {
+            done({ error: 'the mockup seat exited before answering' });
+          }
+        },
+      });
+      activeMockupSeat = {
+        controller,
+        backstop: setTimeout(() => done({ error: 'the mockup pass timed out' }), MOCKUP_BACKSTOP_MS),
+      };
+      preparedMockup = null;
+      ctx.bus.post('projectsMockupStatus', { phase: 'running' });
+    } catch (err) {
+      ctx.bus.post('projectsMockupResult', {
+        draftId: message && message.id, screen: message && message.screen,
+        ok: false, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsMockupStop', () => {
+    if (!activeMockupSeat) return;
+    const seat = activeMockupSeat;
+    activeMockupSeat = null;
+    clearTimeout(seat.backstop);
+    try { seat.controller.close(); } catch { /* already gone */ }
+    ctx.bus.post('projectsMockupStatus', { phase: 'stopped' });
+  });
+
   // ---- the co-designer panel (slice 7, § AI integration Level 2) ----------
   // ONE long-lived disposable controller per open panel session — NOT a fresh
   // one per turn. `codesignerOpen` starts it (its kickoff already sends turn
@@ -955,6 +1144,7 @@ module.exports = {
 
 module.exports.modelPicker = modelPicker;
 module.exports.suggest = suggest;
+module.exports.mockup = mockup;
 module.exports.codesigner = codesigner;
 module.exports.packageCreator = packageCreator;
 module.exports.liftoff = liftoff;
