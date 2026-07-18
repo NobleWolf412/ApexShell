@@ -181,7 +181,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         cols: opts.launch.cols, rows: opts.launch.rows,
         log: (l) => log(`[${id}] ${l}`),
         onEvent: postM,
-        onExit: (code) => { if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
+        onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
       });
     } else if (opts.launch && opts.launch.model === 'codex') {
       // The Codex app-server lane (R33) — an OWNED clean-view seat, full
@@ -196,7 +196,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         permissionMode: entry.mode,
         log: (l) => log(`[${id}] ${l}`),
         onEvent: postM,
-        onExit: (code) => { if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
+        onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
       });
     } else if (opts.launch && opts.launch.model === 'qwen') {
       // The local lane (J22): Ollama-backed, chat-only, view-vocab direct.
@@ -206,7 +206,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         cwd: opts.cwd || apexRoot,
         log: (l) => log(`[${id}] ${l}`),
         onEvent: postM,
-        onExit: (code) => { if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
+        onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
       });
     } else {
       entry.seat = startSeat({
@@ -215,7 +215,7 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
         ...(opts.launch || {}),
         log: (l) => log(`[${id}] ${l}`),
         onEvent: (evt) => routeEvt(evt, postM, log),
-        onExit: (code) => { if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
+        onExit: (code) => { entry.dead = true; if (!entry.closed) post({ type: 'seatEvt', id, m: { type: 'dead', code } }); changed(); },
       });
     }
     seats.set(id, entry);
@@ -328,6 +328,11 @@ function createSeatHost({ apexRoot, emit, log, onChange, record, projectsRoot,
     if (!msg || !SEAT_MSGS.has(msg.type)) return false;
     const entry = seats.get(msg.id);
     if (!entry) return true;   // late message for a dead seat — swallow
+    // A seat whose process has exited stays in the roster (visible as dead so
+    // the user can Retry/close) but its child is GONE — routing a write to it
+    // hits a destroyed stdin (EPIPE) and can crash main (external audit H3).
+    // Only seatClose (removes it) may still act on a dead seat.
+    if (entry.dead && msg.type !== 'seatClose') return true;
     switch (msg.type) {
       case 'seatSend': {
         // Images ride the message as base64 content blocks (J19: paste/drop).

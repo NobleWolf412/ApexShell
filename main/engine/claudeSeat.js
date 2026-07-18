@@ -190,11 +190,16 @@ function startSeat(opts) {
   child.stderr.on('data', (c) => log(`stderr: ${c.toString('utf8').trim()}`));
   child.on('exit', (code) => { log(`exit: ${code}`); if (!disposed) onExit(code); });
   child.on('error', (err) => { log(`spawn error: ${err.message}`); if (!disposed) onExit(-1); });
+  // stdin has its OWN error surface (EPIPE / ERR_STREAM_DESTROYED when the child
+  // is gone). Unhandled, it crashes main — the host now gates writes to dead
+  // seats, but this is the last-line guard (external audit H3).
+  child.stdin.on('error', (err) => log(`stdin error: ${err.message}`));
 
   const write = (obj) => {
+    if (disposed || child.exitCode !== null || !child.stdin.writable) return;   // dead child — don't EPIPE
     const line = JSON.stringify(obj);
     log(`» ${line.length > 2000 ? line.slice(0, 2000) + '…[truncated]' : line}`);
-    child.stdin.write(line + '\n');
+    try { child.stdin.write(line + '\n'); } catch (e) { log(`stdin write failed: ${e.message}`); }
   };
 
   return {
