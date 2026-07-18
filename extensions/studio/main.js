@@ -24,6 +24,7 @@ const mockup = require('./lib/mockup');
 const codesigner = require('./lib/codesigner');
 const packageCreator = require('./lib/creator');
 const design = require('./lib/design');
+const spines = require('./lib/spines');
 const liftoff = require('./lib/liftoff');
 const importer = require('./lib/importer');
 const servers = require('./lib/servers');
@@ -1195,6 +1196,22 @@ function register(ctx) {
       ? contract.parseFrontmatter(fs.readFileSync(canonicalPath, 'utf8')).attributes
       : {};
 
+  // F2 (§ Wave F): the contract addendum rides the Lift-off kickoff. Each
+  // spine file reads fail-soft — absent = undefined, so the addendum states
+  // does-not-exist-yet honestly; unreadable or unparseable = a junk sentinel
+  // every spines/design validator rejects, so the addendum reports the file
+  // present-but-unusable by name. A malformed spine costs one honest line in
+  // the addendum, never the kickoff itself.
+  const readSpine = (file) => {
+    if (!fs.existsSync(file)) return undefined;
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch { return { unparseable: true }; }
+  };
+  const contractAddendum = (paths) => spines.renderContractAddendum(
+    readSpine(paths.tokens),
+    readSpine(path.join(paths.designDir, 'components.json')),
+    readSpine(path.join(paths.designDir, 'manifest.json')));
+
   // Lift-off (a): register the project's folder into seatconfig.json's
   // `_workspaces`. The actual write is ctx.seats.registerWorkspace — a plain
   // synchronous ctx.seats method, not a bus verb (see its comment in
@@ -1263,11 +1280,15 @@ function register(ctx) {
       if (typeof ctx.bus.inject !== 'function')
         throw new Error('Delegation requires the bus injection seam.');
       const canonicalText = fs.readFileSync(paths.canonical, 'utf8');
+      // F2: the brief is PROJECT.md verbatim PLUS the contract addendum —
+      // composed (and cap-trimmed, PROJECT.md winning) in lib/liftoff.js so
+      // main/tasks.js's own 20000-char slice never cuts anything silently.
+      const brief = liftoff.composeKickoffBrief(canonicalText, contractAddendum(paths));
       const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
       const title = 'Delegate: ' + (frontmatter.display_name || projectId);
       ctx.bus.inject({
         type: 'taskCreate', title, cwd: paths.projectDir,
-        route, brief: canonicalText, auto: false, start: true,
+        route, brief, auto: false, start: true,
       });
       if (message && message.saveAsTemplate) {
         const templateName = (typeof message.templateName === 'string' && message.templateName.trim())
@@ -1284,6 +1305,12 @@ function register(ctx) {
   // route, no task. seatCreate is main/seats.js's own normal "open a rail
   // seat" verb (the same one a click on a rail button posts); same
   // in-process dispatch reasoning as taskCreate above.
+  // F2 caveat, stated rather than faked: the contract addendum rides the
+  // DELEGATE kickoff (above) but cannot ride this one yet — seatCreate reads
+  // no kickoff text off the wire (a seat's kickoff comes from its persona
+  // preset alone; see main/seats.js createFromMessage), and main/seats.js is
+  // outside this slice's surface. Wiring an additive message-carried kickoff
+  // there is the follow-up; a dead field injected here today would be a lie.
   ctx.bus.on('projectsLiftoffChat', (message) => {
     try {
       const projectId = message && message.projectId;
