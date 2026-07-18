@@ -281,3 +281,23 @@
 .studioView[data-builder="projects"] .pjSeeStale { padding: 8px 10px; color: var(--warning);
   font-size: 11.5px; line-height: 1.5; border-bottom: 1px solid var(--warning);
   background: color-mix(in srgb, var(--warning) 10%, transparent); }
+.studioView[data-builder="projects"] .pjSeeStale[data-tone="quiet"] { color: var(--dim);
+  border-bottom-color: var(--edge); background: transparent; }
+
+/* annotate note chips (slice A5): one row per pinned note — selector, the
+   element's text excerpt, the user's words, remove. */
+.studioView[data-builder="projects"] .pjSeeNotes { display: flex; flex-direction: column;
+  gap: 6px; margin-top: 8px; }
+.studioView[data-builder="projects"] .pjSeeNoteChip { display: flex; align-items: baseline;
+  gap: 8px; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 8px;
+  font-size: 12px; line-height: 1.5; }
+.studioView[data-builder="projects"] .pjSeeNoteSel { color: var(--accent);
+  font-family: var(--mono, monospace); font-size: 11px; flex-shrink: 0;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studioView[data-builder="projects"] .pjSeeNoteText { color: var(--text); flex: 1;
+  overflow-wrap: anywhere; }
+.studioView[data-builder="projects"] .pjSeeNoteRemove { flex-shrink: 0; }
+.studioView[data-builder="projects"] .pjSeeNoteEntry { margin-top: 8px; }
+.studioView[data-builder="projects"] .pjSeeNoteInput { flex: 1; min-width: 0;
+  padding: 8px 10px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--bg); color: var(--text); font-size: 12px; }

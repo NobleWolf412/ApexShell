@@ -53,6 +53,19 @@ const DIGEST_AREA_CHARS = 700;
 const LOOK_CHARS = 1500;
 const PROVENANCE_SCHEMA = 1;
 const HASH_RE = /^[0-9a-f]{64}$/;
+// Slice A5 — element annotation. The pick-message caps are the bridge's
+// allowlist numbers (drafts.js mirrors them for the persisted note shape —
+// same one-way mirror as its APPROVAL_SCREEN_RE, documented there): a
+// selector is a short locating hint, a text slice is context for the regen
+// prompt, never content. Oversized fields DROP the whole message (fail
+// closed), they are never truncated into acceptance.
+const PICK_MESSAGE_TYPE = 'apex-mockup-pick';
+const PICK_CANCEL_TYPE = 'apex-mockup-pick-cancel';
+const MAX_PICK_SELECTOR = 256;
+const MAX_PICK_TEXT = 160;
+const MAX_NOTE_CHARS = 500;
+const MAX_NOTES_PER_SCREEN = 12;
+const PICKS_PER_SECOND = 10;
 
 // ---- screen derivation (deterministic, documented) --------------------------
 // Platform kind from the blueprint's platform answer (lowercased, whole-word).
@@ -163,9 +176,36 @@ function cleanScreen(value) {
 }
 
 // ---- the prompt builder -----------------------------------------------------
+// A5: the batched note chips for THIS screen ride the regen prompt pinned to
+// their elements' selector/text context — one line per note, in the exact
+// "the element matching <selector> ('<text>'): <note>" shape the drill pins.
+// Inputs come off the validated draft (drafts.validateMockupNotes), so this
+// only re-caps defensively and drops anything non-object rather than throwing:
+// a malformed note must never sink a whole regen turn the user already paid
+// approval for.
+function noteLines(notes) {
+  if (!Array.isArray(notes) || !notes.length) return [];
+  const lines = [
+    '',
+    'The user reviewed the PREVIOUS mockup of this screen and pinned notes to',
+    'specific elements. Apply every note; keep everything they did not mention:',
+  ];
+  for (const n of notes.slice(0, MAX_NOTES_PER_SCREEN)) {
+    if (!n || typeof n !== 'object') continue;
+    const selector = String(n.selector || '').slice(0, MAX_PICK_SELECTOR);
+    const text = String(n.text || '').slice(0, MAX_PICK_TEXT);
+    const note = String(n.note || '').slice(0, MAX_NOTE_CHARS);
+    if (!selector || !note) continue;
+    lines.push('- the element matching ' + selector +
+      (text ? ' ("' + text + '")' : ' (no visible text)') + ': ' + note);
+  }
+  return lines.length > 3 ? lines : [];
+}
+
 /** One screen's generation prompt: blueprint digest + Look area + the A2
- *  tokens summary + this ONE screen's purpose, then the reply contract. */
-function buildPrompt({ displayName, blueprint, tokensSummary, kind, screen }) {
+ *  tokens summary + this ONE screen's purpose (+ the screen's pinned note
+ *  chips on a regen-with-notes), then the reply contract. */
+function buildPrompt({ displayName, blueprint, tokensSummary, kind, screen, notes }) {
   const cleaned = cleanScreen(screen);
   const digest = ['BLUEPRINT DIGEST for "' + String(displayName || '(untitled)') + '":'];
   for (const area of BLUEPRINT_AREAS) {
@@ -191,6 +231,7 @@ function buildPrompt({ displayName, blueprint, tokensSummary, kind, screen }) {
     'Generate ' + what + ':',
     'Screen: ' + cleaned.title + ' (' + cleaned.id + ')',
     'Purpose: ' + (cleaned.purpose || '(none stated — infer the obvious purpose from the digest)'),
+    ...noteLines(notes),
     '',
     'Reply with exactly ONE fenced block and nothing else outside it:',
     '```html',
@@ -358,6 +399,154 @@ function writeMockup(stateDir, draftId, screen, html, canonicalHash) {
   return { file, provenance };
 }
 
+// ---- element annotation (slice A5) ------------------------------------------
+// The picker script, injected at SERVE time into a DERIVED file — never into
+// the stored mockup (the stored bytes are the provenance-hashed artifact; the
+// A3 contract validated them and they stay pristine). The derived file is
+// <screen>.annotate.html in the SAME served mockups dir: the A4 gate already
+// admits direct-child .html files, so serving it needs zero core change. It is
+// disposable — regenerated on every serve, never hashed, never listed (no
+// provenance sidecar; listMockups keys on .json), never packaged
+// (collectApprovedMockups builds paths from approval screen ids, which are
+// SCREEN_ID_RE-pinned and can never contain a dot), and it dies with the
+// mockups dir. The script itself mutates nothing in the mockup's own DOM
+// beyond appending one data-free fixed-position overlay box; it posts exactly
+// TWO message shapes and nothing else, ever. targetOrigin is '*' by necessity:
+// the sandboxed document has an OPAQUE origin (allow-scripts without
+// allow-same-origin), so it can neither name its own origin nor the parent's —
+// the receiving bridge compensates with the event.source identity check plus
+// the field-level allowlist below.
+const PICKER_SCRIPT = [
+  '<script>',
+  '(function () {',
+  "  'use strict';",
+  '  // Apex STUDIO annotate picker (slice A5) — serve-time injection, see',
+  '  // extensions/studio/lib/mockup.js. Posts ONLY apex-mockup-pick /',
+  '  // apex-mockup-pick-cancel to parent; the parent validates everything.',
+  '  var MAX_SELECTOR = ' + MAX_PICK_SELECTOR + ';',
+  '  var MAX_TEXT = ' + MAX_PICK_TEXT + ';',
+  '  var box = document.createElement("div");',
+  '  box.style.cssText = "position:fixed;top:0;left:0;pointer-events:none;" +',
+  '    "z-index:2147483647;border:2px solid #7aa2ff;border-radius:2px;" +',
+  '    "background:rgba(122,162,255,0.15);display:none;";',
+  '  document.documentElement.appendChild(box);',
+  '  function place(el) {',
+  '    if (!el || el === box || el === document.documentElement || el === document.body) {',
+  '      box.style.display = "none"; return;',
+  '    }',
+  '    var r = el.getBoundingClientRect();',
+  '    box.style.display = "block";',
+  '    box.style.left = r.left + "px"; box.style.top = r.top + "px";',
+  '    box.style.width = r.width + "px"; box.style.height = r.height + "px";',
+  '  }',
+  '  // Short selector: id wins; else a tag.class chain (at most 4 hops, 2',
+  '  // classes each); a class-free hop falls back to :nth-of-type. Locating',
+  '  // HINT for the regen prompt, not a query — capped, best effort.',
+  '  function selectorFor(el) {',
+  '    if (el.id) return "#" + el.id;',
+  '    var parts = [];',
+  '    var node = el;',
+  '    while (node && node.nodeType === 1 && node !== document.body && parts.length < 4) {',
+  '      var part = node.tagName.toLowerCase();',
+  '      var cls = (typeof node.className === "string" ? node.className : "")',
+  '        .trim().split(/\\s+/).filter(Boolean);',
+  '      if (cls.length) { part += "." + cls.slice(0, 2).join("."); }',
+  '      else {',
+  '        var i = 1, sib = node;',
+  '        while ((sib = sib.previousElementSibling)) { if (sib.tagName === node.tagName) i += 1; }',
+  '        part += ":nth-of-type(" + i + ")";',
+  '      }',
+  '      parts.unshift(part);',
+  '      node = node.parentElement;',
+  '    }',
+  '    return parts.join(" > ");',
+  '  }',
+  '  document.addEventListener("mousemove", function (e) { place(e.target); }, true);',
+  '  document.addEventListener("mouseleave", function () { box.style.display = "none"; }, true);',
+  '  document.addEventListener("click", function (e) {',
+  '    e.preventDefault(); e.stopPropagation();',
+  '    var el = e.target;',
+  '    if (!el || el === box || el.nodeType !== 1) return;',
+  '    var r = el.getBoundingClientRect();',
+  '    parent.postMessage({',
+  '      type: ' + JSON.stringify(PICK_MESSAGE_TYPE) + ',',
+  '      selector: selectorFor(el).slice(0, MAX_SELECTOR),',
+  '      text: (el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, MAX_TEXT),',
+  '      bbox: { x: r.left, y: r.top, w: r.width, h: r.height }',
+  '    }, "*");',
+  '  }, true);',
+  '  document.addEventListener("keydown", function (e) {',
+  '    if (e.key === "Escape") parent.postMessage({ type: ' + JSON.stringify(PICK_CANCEL_TYPE) + ' }, "*");',
+  '  }, true);',
+  '})();',
+  '</script>',
+].join('\n');
+
+/** Pure derivation: a stored (contract-complete) mockup document + the picker
+ *  script, injected just before the closing </html>. Throws on an incomplete
+ *  document — only contract-validated files ever reach this. */
+function deriveAnnotateHtml(html) {
+  const s = String(html || '');
+  if (!/<\/html\s*>\s*$/i.test(s))
+    throw new Error('Annotate derivation needs a complete HTML document.');
+  return s.replace(/<\/html\s*>\s*$/i, PICKER_SCRIPT + '\n</html>\n');
+}
+
+/** Write (or refresh) one screen's derived .annotate.html beside the pristine
+ *  file. Reads the stored mockup, injects the picker, lands atomically —
+ *  the pristine file is never touched. Returns the derived file's path. */
+function writeAnnotateMockup(stateDir, draftId, screenId) {
+  const source = screenFile(stateDir, draftId, screenId, '.html');
+  const stat = fs.lstatSync(source);   // throws on missing → caller fail-softs
+  if (stat.isSymbolicLink() || !stat.isFile())
+    throw new Error('Mockup file must be a regular file, not a link.');
+  const derived = screenFile(stateDir, draftId, screenId, '.annotate.html');
+  atomicWriteFile(derived, deriveAnnotateHtml(fs.readFileSync(source, 'utf8')));
+  return derived;
+}
+
+/** The bridge's allowlist over an untrusted postMessage payload — a hostile
+ *  mockup page can post ANYTHING here. Pure and total: never throws, returns
+ *  null for everything that is not exactly one of the two known shapes.
+ *  A valid pick is REBUILT field by field (never a spread of the raw
+ *  message), so unknown/extra fields are dropped by construction; oversized
+ *  selector/text and non-finite bbox numbers drop the whole message.
+ *  The renderer bridge (extensions/studio/renderer.js wireSee) mirrors this
+ *  function verbatim — it cannot require node modules — and THIS export is
+ *  the drilled authority the mirror is held to. */
+function validatePickMessage(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (raw.type === PICK_CANCEL_TYPE) return { kind: 'cancel' };
+  if (raw.type !== PICK_MESSAGE_TYPE) return null;
+  if (typeof raw.selector !== 'string' || !raw.selector.trim() ||
+      raw.selector.length > MAX_PICK_SELECTOR) return null;
+  if (typeof raw.text !== 'string' || raw.text.length > MAX_PICK_TEXT) return null;
+  const b = raw.bbox;
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  for (const key of ['x', 'y', 'w', 'h'])
+    if (typeof b[key] !== 'number' || !Number.isFinite(b[key])) return null;
+  return {
+    kind: 'pick',
+    selector: raw.selector,
+    text: raw.text,
+    bbox: { x: b.x, y: b.y, w: b.w, h: b.h },
+  };
+}
+
+/** The bridge's flood guard: at most PICKS_PER_SECOND accepted messages per
+ *  one-second window, everything beyond silently dropped, fresh window fresh
+ *  budget. A closure so the drill can drive it with its own clock; the
+ *  renderer mirrors it next to the validator mirror. */
+function createPickLimiter(maxPerSecond = PICKS_PER_SECOND) {
+  let windowStart = 0;
+  let count = 0;
+  return (now = Date.now()) => {
+    if (now - windowStart >= 1000) { windowStart = now; count = 0; }
+    count += 1;
+    return count <= maxPerSecond;
+  };
+}
+
 /** Read one screen's provenance record. Fail-soft: a missing, linked, or
  *  malformed sidecar reads as null (no provenance = not generated). */
 function readProvenance(stateDir, draftId, screenId) {
@@ -475,6 +664,17 @@ module.exports = {
   MAX_SCREEN_ID,
   MAX_SCREEN_TITLE,
   MAX_SCREEN_PURPOSE,
+  PICK_MESSAGE_TYPE,
+  PICK_CANCEL_TYPE,
+  MAX_PICK_SELECTOR,
+  MAX_PICK_TEXT,
+  MAX_NOTE_CHARS,
+  MAX_NOTES_PER_SCREEN,
+  PICKS_PER_SECOND,
+  deriveAnnotateHtml,
+  writeAnnotateMockup,
+  validatePickMessage,
+  createPickLimiter,
   deriveScreens,
   cleanScreen,
   buildPrompt,

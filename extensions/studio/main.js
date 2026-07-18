@@ -697,13 +697,29 @@ function register(ctx) {
     const source = draft.preview ? draft.preview.blueprint : blueprint.blueprintFromDraft(draft);
     const derived = mockup.deriveScreens(source);
     const served = registerMockupServe(draft);
-    const generated = mockup.listMockups(ctx.stateDir, draft).map((g) => ({
-      ...g,
-      uri: served
-        ? 'apex://local/' + encodeURIComponent(
-            path.join(mockup.draftMockupsDir(ctx.stateDir, draft.id), g.screen.id + '.html'))
-        : null,
-    }));
+    const generated = mockup.listMockups(ctx.stateDir, draft).map((g) => {
+      // A5: the derived .annotate.html (pristine bytes + the injected picker
+      // script) is REFRESHED on every serve and rides the same served dir —
+      // the gate admits any direct-child .html, so no core change. The stored
+      // mockup is never touched; the derivative is disposable (no sidecar,
+      // never listed, never packaged, dies with the mockups dir). Fail-soft:
+      // a derivation hiccup only means annotate mode is unavailable.
+      let annotateUri = null;
+      if (served) {
+        try {
+          annotateUri = 'apex://local/' + encodeURIComponent(
+            mockup.writeAnnotateMockup(ctx.stateDir, draft.id, g.screen.id));
+        } catch { /* pristine preview still works */ }
+      }
+      return {
+        ...g,
+        uri: served
+          ? 'apex://local/' + encodeURIComponent(
+              path.join(mockup.draftMockupsDir(ctx.stateDir, draft.id), g.screen.id + '.html'))
+          : null,
+        annotateUri,
+      };
+    });
     ctx.bus.post('projectsMockupScreens', {
       draftId: draft.id,
       kind: derived.kind,
@@ -789,12 +805,17 @@ function register(ctx) {
       // The A2 tokens summary — compiled, never re-implemented (lib/design.js
       // is deterministic and total, so this costs nothing).
       const tokensSummary = design.compileTokens(bundle.blueprint.look).tokens.summary;
+      // A5: a regen-with-notes IS this same verb — when the draft carries
+      // note chips for this screen they ride the prompt pinned to their
+      // elements' selector/text context; no notes, byte-identical to A3.
+      const screenNotes = (draft.mockupNotes && draft.mockupNotes[screen.id]) || null;
       const prompt = mockup.buildPrompt({
         displayName: bundle.displayName,
         blueprint: bundle.blueprint,
         tokensSummary,
         kind: derived.kind,
         screen,
+        notes: screenNotes,
       });
 
       // Slice 5's launch override, same passthrough as the suggest pass:
@@ -835,9 +856,20 @@ function register(ctx) {
               // the draft (not just flagged), so a fresh APPROVE is the only
               // way back; the drift/hash arm of invalidation lives in
               // mockup.isApprovalCurrent.
+              // A5: the screen's note chips clear here too — they were
+              // CONSUMED by the turn that just landed. On success ONLY, and
+              // deliberately: a failed regen (hostile reply, timeout) leaves
+              // the notes on the draft so the user retries without retyping.
               let refreshed = currentWorkspaceDraft(draft.id);
-              if (refreshed.mockupApproval) {
-                refreshed = drafts.updateDraft(ctx.stateDir, refreshed.id, refreshed.revision, { mockupApproval: null });
+              const invalidations = {};
+              if (refreshed.mockupApproval) invalidations.mockupApproval = null;
+              if (refreshed.mockupNotes && refreshed.mockupNotes[screen.id]) {
+                const remaining = { ...refreshed.mockupNotes };
+                delete remaining[screen.id];
+                invalidations.mockupNotes = Object.keys(remaining).length ? remaining : null;
+              }
+              if (Object.keys(invalidations).length) {
+                refreshed = drafts.updateDraft(ctx.stateDir, refreshed.id, refreshed.revision, invalidations);
                 ctx.bus.post('projectsDraftPatched', { draft: refreshed, cards: CARDS });
               }
               done({ ok: true, file: written.file });
@@ -903,6 +935,45 @@ function register(ctx) {
     } catch (err) {
       ctx.bus.post('projectsMockupApproveResult', {
         ok: false, draftId: message && message.id,
+        conflict: err.code === 'DRAFT_CONFLICT', error: err.message,
+      });
+    }
+  });
+
+  // ---- note chips (slice A5) -----------------------------------------------
+  // One verb replaces ONE screen's whole note list on the draft (add = list +
+  // one, remove = list − one — the renderer sends the result, main rebuilds it
+  // clean). Mutation flows through drafts.updateDraft's revision gate like
+  // every other draft edit; drafts.validateMockupNotes is the fail-closed
+  // authority on shape/caps (an over-cap note or a 13th chip is an error, not
+  // a truncation). Notes are rebuilt field by field from the known keys only —
+  // never a spread of renderer input — mirroring the bridge's own discipline.
+  // The refresh rides projectsDraftPatched (no-navigation, same as approval).
+  ctx.bus.on('projectsMockupNoteSave', (message) => {
+    try {
+      const draft = currentWorkspaceDraft(message && message.id);
+      const screenId = message && message.screenId;
+      if (typeof screenId !== 'string' || screenId.length > mockup.MAX_SCREEN_ID ||
+          !mockup.SCREEN_ID_RE.test(screenId))
+        throw new Error('Screen name must be lowercase kebab-case, at most ' + mockup.MAX_SCREEN_ID + ' characters.');
+      if (!Array.isArray(message.notes))
+        throw new Error('Mockup notes must be a list.');
+      const cleaned = message.notes.map((n) => ({
+        selector: String((n && n.selector) || ''),
+        text: String((n && n.text) || ''),
+        note: String((n && n.note) || '').trim(),
+      }));
+      const next = { ...(draft.mockupNotes || {}) };
+      if (cleaned.length) next[screenId] = cleaned;
+      else delete next[screenId];
+      const updated = drafts.updateDraft(ctx.stateDir, draft.id,
+        message && message.expectedRevision,
+        { mockupNotes: Object.keys(next).length ? next : null });
+      ctx.bus.post('projectsMockupNoteResult', { ok: true, draftId: updated.id, screenId });
+      ctx.bus.post('projectsDraftPatched', { draft: updated, cards: CARDS });
+    } catch (err) {
+      ctx.bus.post('projectsMockupNoteResult', {
+        ok: false, draftId: message && message.id, screenId: message && message.screenId,
         conflict: err.code === 'DRAFT_CONFLICT', error: err.message,
       });
     }

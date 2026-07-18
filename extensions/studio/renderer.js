@@ -253,6 +253,10 @@ function mountProjects(el, hasBus) {
       prepared: null, busy: false, phase: null, resultError: null,
       approval: null, approvalCurrent: false, deviceWidth: 'desktop',
       approveMsg: null,
+      // ---- slice A5: annotate mode. The picker only exists in the derived
+      // .annotate.html, which is only iframed while annotate is on — so "the
+      // picker never runs outside the SEE step" holds by construction.
+      annotate: false, pendingPick: null, noteMsg: null,
     },
     // ---- slice 7: the co-designer panel (one long-lived controller per open) ----
     codesigner: {
@@ -305,6 +309,47 @@ function mountProjects(el, hasBus) {
   const approvalCurrent = () => Boolean(state.draft && state.draft.mockupApproval &&
     state.draft.preview &&
     state.draft.mockupApproval.canonicalHash === state.draft.preview.generatedCanonicalHash);
+
+  // ---- slice A5: the annotate bridge --------------------------------------
+  // The client mirror of lib/mockup.validatePickMessage — the renderer cannot
+  // require node modules, so the lib export is the drilled AUTHORITY and this
+  // mirror is held to it (same one-way mirroring as SECTIONS/approvalCurrent).
+  // Strict allowlist over an untrusted postMessage payload: exact type string,
+  // capped selector/text (oversized DROPS the message, never truncates),
+  // all-finite numeric bbox, and the result is REBUILT from known fields only
+  // — never a spread of the raw message. Never throws; garbage is null.
+  const PICK_TYPE = 'apex-mockup-pick';
+  const PICK_CANCEL_TYPE = 'apex-mockup-pick-cancel';
+  const MAX_PICK_SELECTOR = 256;
+  const MAX_PICK_TEXT = 160;
+  function validatePickMessage(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    if (raw.type === PICK_CANCEL_TYPE) return { kind: 'cancel' };
+    if (raw.type !== PICK_TYPE) return null;
+    if (typeof raw.selector !== 'string' || !raw.selector.trim() ||
+        raw.selector.length > MAX_PICK_SELECTOR) return null;
+    if (typeof raw.text !== 'string' || raw.text.length > MAX_PICK_TEXT) return null;
+    const b = raw.bbox;
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+    for (const key of ['x', 'y', 'w', 'h'])
+      if (typeof b[key] !== 'number' || !Number.isFinite(b[key])) return null;
+    return { kind: 'pick', selector: raw.selector, text: raw.text,
+             bbox: { x: b.x, y: b.y, w: b.w, h: b.h } };
+  }
+
+  // The bridge's window listeners exist ONLY while the SEE step is mounted
+  // AND annotate mode is on: every render() tears the bridge down first and
+  // only wireSee (annotate on, iframe present) arms a fresh one, bound to
+  // THAT iframe's contentWindow — the strongest identity check available
+  // against a sandboxed (opaque-origin) frame. A hostile mockup can post
+  // floods of garbage; everything non-conforming drops silently here.
+  let pickBridge = null;   // { onMessage, onKey }
+  function teardownPickBridge() {
+    if (!pickBridge) return;
+    window.removeEventListener('message', pickBridge.onMessage);
+    window.removeEventListener('keydown', pickBridge.onKey);
+    pickBridge = null;
+  }
 
   const stepDone = (id) => {
     if (id === 'ws') return Boolean(state.ws && state.ws.configured);
@@ -401,6 +446,7 @@ function mountProjects(el, hasBus) {
 
   // ---- render -------------------------------------------------------------
   function render() {
+    teardownPickBridge();   // A5: only wireSee (SEE + annotate on) re-arms it
     renderRail();
     coUpdateVisibility();
     if (state.step === 'ws') return renderWs();
@@ -1064,6 +1110,7 @@ function mountProjects(el, hasBus) {
         prepared: null, busy: false, phase: null, resultError: null,
         approval: null, approvalCurrent: false, deviceWidth: state.mockups.deviceWidth || 'desktop',
         approveMsg: null,
+        annotate: false, pendingPick: null, noteMsg: null,
       };
       ApexBus.post('projectsMockupList', { id: draft.id });
     }
@@ -1102,15 +1149,24 @@ function mountProjects(el, hasBus) {
     // no-external-URL contract and the apex:// response CSP (no network at
     // all), the page is fully inert. src is the apex:// URI the served-file
     // gate admitted; the provenance stamp busts the iframe cache on regen.
+    // A5: annotate mode swaps the iframe's src to the DERIVED .annotate.html
+    // (pristine bytes + the serve-time-injected picker script); the pristine
+    // file renders otherwise. Same sandbox either way — the picker page is as
+    // untrusted as the mockup it wraps.
+    const annotating = Boolean(mk.annotate && current && current.annotateUri);
     let frame;
     if (current && current.uri) {
+      const src = annotating ? current.annotateUri : current.uri;
       frame = '<div class="pjSeeFrame" style="width:' + DEVICE_WIDTHS[mk.deviceWidth] + 'px">' +
         (current.stale
           ? '<div class="pjSeeStale" data-tone="warn">STALE — the blueprint changed after this mockup was generated. ' +
             'Regenerate it below, or it stays as-is; nothing regenerates without you.</div>'
           : '') +
+        (annotating
+          ? '<div class="pjSeeStale" data-tone="quiet">ANNOTATE — hover to highlight, click an element to pin a note. Esc exits.</div>'
+          : '') +
         '<iframe class="pjSeeIframe" sandbox="allow-scripts" src="' +
-          escapeHtml(current.uri + '#' + (current.generatedAt || '')) + '"></iframe>' +
+          escapeHtml(src + '#' + (current.generatedAt || '')) + '"></iframe>' +
       '</div>';
     } else {
       frame = '<div class="pjSeeFrame pjSeeEmpty" style="width:' + DEVICE_WIDTHS[mk.deviceWidth] + 'px">' +
@@ -1136,10 +1192,28 @@ function mountProjects(el, hasBus) {
     }
 
     const canRun = Boolean(mk.prepared) && !mk.busy;
+    // A5: this screen's pinned note chips (persisted on the draft, capped 12).
+    const screenNotes = (mk.selected && draft.mockupNotes && draft.mockupNotes[mk.selected]) || [];
+    const noteChips = screenNotes.map((n, i) =>
+      '<div class="pjSeeNoteChip">' +
+        '<span class="pjSeeNoteSel">' + escapeHtml(n.selector) + '</span>' +
+        (n.text ? '<span class="pjWsSub">“' + escapeHtml(n.text) + '”</span>' : '') +
+        '<span class="pjSeeNoteText">' + escapeHtml(n.note) + '</span>' +
+        '<button type="button" class="pjBtn pjSeeNoteRemove" data-note-index="' + i + '" title="Remove this note">✕</button>' +
+      '</div>').join('');
+    const notesCard =
+      '<div class="pjCard">' +
+        '<label class="pjLabel">NOTES — ' + screenNotes.length + '/12 ON THIS SCREEN</label>' +
+        '<div class="pjWsSub">Pin a note to an element (ANNOTATE above), batch them, then regenerate — ' +
+          'one turn carries them all, pinned to their elements. Notes clear when the regeneration succeeds.</div>' +
+        '<div class="pjSeeNoteEntry"></div>' +
+        (noteChips ? '<div class="pjSeeNotes">' + noteChips + '</div>' : '') +
+        (mk.noteMsg ? '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.noteMsg) + '</div>' : '') +
+      '</div>';
     main.innerHTML =
       '<h2 class="pjTitle">See it before you build it</h2>' +
       '<p class="pjLead">' + escapeHtml(mockupKindNote(mk.kind)) +
-        ' Switch screens, try device widths, regenerate what reads wrong, then approve. ' +
+        ' Switch screens, try device widths, click what reads wrong and say so, then approve. ' +
         'A blueprint change marks screens STALE; nothing regenerates without you.</p>' +
       '<div class="pjCard">' +
         '<div class="pjChipRow pjSeeSwitcher">' + switcher + '</div>' +
@@ -1147,16 +1221,27 @@ function mountProjects(el, hasBus) {
           '<input type="text" class="pjMockAddName" maxlength="48" placeholder="new-screen-name (kebab-case)" />' +
           '<button type="button" class="pjBtn pjMockAdd">ADD SCREEN</button>' +
         '</div>' +
-        '<div class="pjBtnRow pjSeeWidths">' + widths + '</div>' +
+        '<div class="pjBtnRow pjSeeWidths">' + widths +
+          '<button type="button" class="pjBtn pjSeeAnnotate' + (annotating ? ' primary' : '') + '" ' +
+            (current && current.annotateUri ? '' : 'disabled') + ' ' +
+            'title="Hover highlights, a click pins a note to that element. The picker only exists in a derived serve-time copy — the stored mockup stays pristine.">' +
+            (annotating ? 'EXIT ANNOTATE (ESC)' : 'ANNOTATE') + '</button>' +
+        '</div>' +
         frame +
       '</div>' +
+      notesCard +
       '<div class="pjCard">' +
-        '<label class="pjLabel">' + (current ? 'REGENERATE THIS SCREEN' : 'GENERATE THIS SCREEN') + '</label>' +
+        '<label class="pjLabel">' + (current
+          ? (screenNotes.length ? 'REGENERATE THIS SCREEN WITH ITS NOTES' : 'REGENERATE THIS SCREEN')
+          : 'GENERATE THIS SCREEN') + '</label>' +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn pjMockPrepare" ' +
             (mk.busy || !mk.selected ? 'disabled' : '') + ' ' +
             'title="Runs one hidden disposable session to generate this screen\'s mockup — a real Claude turn, opt-in. Regenerating clears any recorded approval.">' +
-            (mk.prepared ? 'RE-CHECK USAGE' : (current ? 'REGENERATE' : 'GENERATE') + ' SELECTED (USES A SESSION)') +
+            (mk.prepared ? 'RE-CHECK USAGE'
+              : (current
+                  ? (screenNotes.length ? 'REGENERATE WITH NOTES (' + screenNotes.length + ')' : 'REGENERATE')
+                  : 'GENERATE') + ' SELECTED (USES A SESSION)') +
           '</button>' +
           (mk.prepared
             ? '<button type="button" class="pjBtn primary pjMockRun" ' + (canRun ? '' : 'disabled') + '>RUN MOCKUP PASS</button>'
@@ -1187,10 +1272,116 @@ function mountProjects(el, hasBus) {
     wireSee(draft);
   }
 
+  // A5: the note-entry panel for a pending pick. A TARGETED repaint of its
+  // own holder only — a full render() would reload the iframe and throw away
+  // the mockup's state on every single pick, so the message bridge calls this
+  // instead of render() for the pick arm (cancel/exit do full renders; they
+  // swap the iframe src anyway).
+  function renderNoteEntry(draft) {
+    const holder = main.querySelector('.pjSeeNoteEntry');
+    if (!holder) return;
+    const mk = state.mockups;
+    const p = mk.pendingPick;
+    if (!p) { holder.replaceChildren(); return; }
+    holder.innerHTML =
+      '<div class="pjWsSub">Picked <b>' + escapeHtml(p.selector) + '</b>' +
+        (p.text ? ' — “' + escapeHtml(p.text) + '”' : '') + '</div>' +
+      '<div class="pjBtnRow">' +
+        '<input type="text" class="pjSeeNoteInput" maxlength="500" placeholder="What should change here? (your words ride the regen prompt)" />' +
+        '<button type="button" class="pjBtn primary pjSeeNoteSave">PIN NOTE</button>' +
+        '<button type="button" class="pjBtn pjSeeNoteCancel">CANCEL</button>' +
+      '</div>';
+    const input = holder.querySelector('.pjSeeNoteInput');
+    const saveNote = () => {
+      const note = input.value.trim();
+      if (!note) return;
+      const existing = (mk.selected && state.draft.mockupNotes && state.draft.mockupNotes[mk.selected]) || [];
+      if (existing.length >= 12) {
+        mk.noteMsg = 'Note limit reached for this screen (12) — remove one, or regenerate to consume them.';
+        mk.pendingPick = null;
+        render();
+        return;
+      }
+      ApexBus.post('projectsMockupNoteSave', {
+        id: state.draft.id, expectedRevision: state.draft.revision, screenId: mk.selected,
+        notes: existing.concat([{ selector: p.selector, text: p.text, note }]),
+      });
+      // the fresh draft rides projectsDraftPatched and repaints the chips
+      mk.pendingPick = null;
+      mk.noteMsg = null;
+      renderNoteEntry(draft);
+    };
+    holder.querySelector('.pjSeeNoteSave').addEventListener('click', saveNote);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveNote(); });
+    holder.querySelector('.pjSeeNoteCancel').addEventListener('click', () => {
+      mk.pendingPick = null;
+      renderNoteEntry(draft);
+    });
+    input.focus();
+  }
+
   function wireSee(draft) {
     const mk = state.mockups;
     for (const btn of main.querySelectorAll('.pjSeeWidth')) {
       btn.addEventListener('click', () => { mk.deviceWidth = btn.dataset.width; render(); });
+    }
+    // ---- A5: annotate mode + the message bridge ----
+    const annotateBtn = main.querySelector('.pjSeeAnnotate');
+    if (annotateBtn) annotateBtn.addEventListener('click', () => {
+      if (annotateBtn.disabled) return;
+      mk.annotate = !mk.annotate;
+      mk.pendingPick = null;
+      render();
+    });
+    for (const btn of main.querySelectorAll('.pjSeeNoteRemove')) {
+      btn.addEventListener('click', () => {
+        const existing = (mk.selected && state.draft.mockupNotes && state.draft.mockupNotes[mk.selected]) || [];
+        const next = existing.filter((_, i) => i !== Number(btn.dataset.noteIndex));
+        ApexBus.post('projectsMockupNoteSave', {
+          id: state.draft.id, expectedRevision: state.draft.revision, screenId: mk.selected,
+          notes: next,
+        });
+      });
+    }
+    renderNoteEntry(draft);
+    const iframe = main.querySelector('.pjSeeIframe');
+    if (mk.annotate && iframe) {
+      // render() already tore any previous bridge down; arm one bound to THIS
+      // iframe. event.source === contentWindow is the strongest identity
+      // check available against a sandboxed opaque-origin frame (its origin
+      // reads as 'null'); the validator mirror + the flood guard do the rest.
+      // Everything non-conforming is dropped in silence — no throw, no log a
+      // hostile page could spam.
+      let windowStart = 0, count = 0;
+      const allowPick = () => {   // mirror of lib/mockup.createPickLimiter (10/s)
+        const now = Date.now();
+        if (now - windowStart >= 1000) { windowStart = now; count = 0; }
+        count += 1;
+        return count <= 10;
+      };
+      const onMessage = (event) => {
+        if (event.source !== iframe.contentWindow) return;
+        if (!allowPick()) return;
+        const valid = validatePickMessage(event.data);
+        if (!valid) return;
+        if (valid.kind === 'cancel') {   // Esc inside the mockup
+          mk.annotate = false;
+          mk.pendingPick = null;
+          render();
+          return;
+        }
+        mk.pendingPick = { selector: valid.selector, text: valid.text, bbox: valid.bbox };
+        renderNoteEntry(draft);
+      };
+      const onKey = (event) => {        // Esc with focus on the studio side
+        if (event.key !== 'Escape') return;
+        mk.annotate = false;
+        mk.pendingPick = null;
+        render();
+      };
+      window.addEventListener('message', onMessage);
+      window.addEventListener('keydown', onKey);
+      pickBridge = { onMessage, onKey };
     }
     const approveBtn = main.querySelector('.pjSeeApprove');
     if (approveBtn) approveBtn.addEventListener('click', () => {
@@ -1756,6 +1947,14 @@ function mountProjects(el, hasBus) {
   ApexBus.on('projectsMockupApproveResult', (m) => {
     if (state.draft && m.draftId !== state.draft.id) return;
     state.mockups.approveMsg = m.ok ? null : ('Not approved — ' + m.error);
+    if (!m.ok && state.step === 'see') render();
+  });
+
+  // ---- slice A5: note chips. Success needs no handler work — the fresh
+  // draft rides projectsDraftPatched, which already repaints SEE.
+  ApexBus.on('projectsMockupNoteResult', (m) => {
+    if (state.draft && m.draftId !== state.draft.id) return;
+    state.mockups.noteMsg = m.ok ? null : ('Note was not saved — ' + m.error);
     if (!m.ok && state.step === 'see') render();
   });
 

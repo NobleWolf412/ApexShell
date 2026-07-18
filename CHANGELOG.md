@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave A slice A5 — annotate → regenerate**
+  (`extensions/studio/lib/{mockup,drafts}.js`, `extensions/studio/main.js`,
+  `extensions/studio/renderer.js`, `extensions/studio/style.css`; drills in
+  `test/studio-mockup-drill.js` — extension code only, zero `main/` changes):
+  element annotation inside the sandboxed mockup. At SERVE time the studio
+  writes a DERIVED `<screen>.annotate.html` (the stored bytes + an injected
+  picker script) into the same served mockups dir — the A4 gate already
+  admits direct-child `.html`, so serving it needs no core change; the
+  stored mockup stays pristine (it is the provenance-hashed artifact), and
+  the derivative is disposable: refreshed every serve, never hashed, never
+  listed (no sidecar), never packaged (approval screen ids are
+  `SCREEN_ID_RE`-pinned — no dots — so `collectApprovedMockups` can never
+  name it; drilled), gone with the mockups dir. In annotate mode the SEE
+  iframe swaps to that file: hover highlights via one data-free
+  fixed-position overlay, a click posts exactly ONE message shape
+  (`{type:'apex-mockup-pick', selector, text, bbox}`), Esc posts
+  `apex-mockup-pick-cancel`, nothing else ever — `targetOrigin` is `'*'`
+  because a sandboxed opaque-origin document can name no origin; the
+  renderer bridge compensates with an `event.source === contentWindow`
+  identity check plus a strict allowlist (`lib/mockup.validatePickMessage`,
+  the drilled authority the renderer mirror is held to): exact type string,
+  selector ≤ 256 / text ≤ 160 (oversized DROPS, never truncates),
+  all-finite numeric bbox, result rebuilt from known fields only, ≤ 10
+  picks/s (`createPickLimiter`), everything else dropped in silence — a
+  hostile mockup page cannot crash or spoof the studio (drilled: wrong
+  type, oversized, unknown-field, flood, garbage). The bridge exists only
+  while SEE is mounted AND annotate is on (every render tears it down);
+  the picker never runs outside the SEE step by construction — it only
+  exists in the derived file, which is only iframed there. Picks become
+  note chips persisted on the draft (`drafts.js`-validated `mockupNotes`
+  field: per-screen arrays of `{selector, text, note ≤ 500}`, ≤ 12/screen,
+  fail-closed like `mockupApproval`) via one `projectsMockupNoteSave` verb
+  under the usual revision gate. REGENERATE WITH NOTES is the NORMAL A3
+  `projectsMockupRun` — when the draft carries notes for the screen they
+  ride the prompt pinned to their elements ("the element matching
+  <selector> ("<text>"): <note>"); no new verbs, same
+  prepare/approve/TTL/backstop machinery. A successful regen consumes the
+  screen's notes (cleared on success ONLY — a failed turn leaves them so
+  nothing is retyped) and clears the recorded approval outright (A4's
+  invalidation, verified and extended by drill). 12 new drill gates, zero
+  LLM spend (stubbed disposable).
+
 - **STUDIO v2, Wave A slice A4 — the SEE step**
   (`extensions/studio/renderer.js`, `extensions/studio/main.js`,
   `extensions/studio/lib/{drafts,mockup,creator,contract}.js`,

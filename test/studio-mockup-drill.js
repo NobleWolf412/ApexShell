@@ -752,5 +752,268 @@ gate('without a current approval, Create writes no mockups/ and validation warns
   assert.equal(mockup.collectApprovedMockups(h.stateDir, current).length, 0);
 });
 
+// ---------- A5: the annotate bridge — validatePickMessage is the drilled
+// authority the renderer's mirror is held to. A hostile mockup page can post
+// ANYTHING; everything below proves it cannot crash or spoof the studio.
+const GOOD_PICK = {
+  type: 'apex-mockup-pick',
+  selector: '#hero > button.cta',
+  text: 'Get started',
+  bbox: { x: 12, y: 34.5, w: 120, h: 40 },
+};
+
+gate('validatePickMessage: a valid pick passes, REBUILT clean — unknown fields dropped', () => {
+  const out = mockup.validatePickMessage(GOOD_PICK);
+  assert.deepEqual(out, { kind: 'pick', selector: '#hero > button.cta',
+    text: 'Get started', bbox: { x: 12, y: 34.5, w: 120, h: 40 } });
+  const spoofed = mockup.validatePickMessage({
+    ...GOOD_PICK,
+    evil: 'payload', __proto__: { sneaky: true },
+    bbox: { ...GOOD_PICK.bbox, extra: 'field' },
+  });
+  assert.deepEqual(Object.keys(spoofed).sort(), ['bbox', 'kind', 'selector', 'text'],
+    'never a spread of the raw message');
+  assert.deepEqual(Object.keys(spoofed.bbox).sort(), ['h', 'w', 'x', 'y']);
+});
+
+gate('validatePickMessage: wrong type / oversized / bad bbox all drop silently', () => {
+  const drops = [
+    { ...GOOD_PICK, type: 'apex-mockup-pick2' },
+    { ...GOOD_PICK, type: 'seatCreate' },
+    { selector: '#a', text: '', bbox: GOOD_PICK.bbox },                       // no type
+    { ...GOOD_PICK, selector: 'x'.repeat(mockup.MAX_PICK_SELECTOR + 1) },    // oversized drops, never truncates
+    { ...GOOD_PICK, selector: '' },
+    { ...GOOD_PICK, selector: 42 },
+    { ...GOOD_PICK, text: 'x'.repeat(mockup.MAX_PICK_TEXT + 1) },
+    { ...GOOD_PICK, text: null },
+    { ...GOOD_PICK, bbox: null },
+    { ...GOOD_PICK, bbox: [12, 34, 120, 40] },
+    { ...GOOD_PICK, bbox: { x: 12, y: 34, w: 120 } },                        // missing h
+    { ...GOOD_PICK, bbox: { x: 12, y: 34, w: 120, h: NaN } },
+    { ...GOOD_PICK, bbox: { x: Infinity, y: 34, w: 120, h: 40 } },
+    { ...GOOD_PICK, bbox: { x: '12', y: 34, w: 120, h: 40 } },
+  ];
+  for (const raw of drops)
+    assert.equal(mockup.validatePickMessage(raw), null, JSON.stringify(raw));
+});
+
+gate('validatePickMessage: never throws on garbage; cancel is the only other shape', () => {
+  for (const junk of [null, undefined, '', 'hi', 42, true, [], [GOOD_PICK], () => {}])
+    assert.doesNotThrow(() => assert.equal(mockup.validatePickMessage(junk), null, String(junk)));
+  assert.deepEqual(mockup.validatePickMessage({ type: 'apex-mockup-pick-cancel' }), { kind: 'cancel' });
+  assert.deepEqual(mockup.validatePickMessage({ type: 'apex-mockup-pick-cancel', evil: 1 }),
+    { kind: 'cancel' }, 'a cancel carries nothing, whatever rode along');
+});
+
+gate('createPickLimiter: 10 picks/s pass, the flood drops, the next window recovers', () => {
+  const allow = mockup.createPickLimiter();
+  const t0 = 1000000;
+  for (let i = 0; i < 10; i++) assert.equal(allow(t0 + i), true, 'pick ' + i + ' within budget');
+  for (let i = 10; i < 200; i++) assert.equal(allow(t0 + i), false, 'flood pick ' + i + ' dropped');
+  assert.equal(allow(t0 + 1000), true, 'a fresh window has a fresh budget');
+});
+
+// ---------- A5: the serve-time derived .annotate.html ------------------------
+gate('deriveAnnotateHtml injects the picker; only complete documents derive', () => {
+  const derived = mockup.deriveAnnotateHtml(VALID_DOC);
+  assert.ok(derived.includes('apex-mockup-pick'), 'the pick message type is in the script');
+  assert.ok(derived.includes('apex-mockup-pick-cancel'), 'the Esc cancel shape too');
+  assert.match(derived, /<\/html>\s*$/i, 'still a complete document');
+  assert.equal(derived.indexOf('Apex STUDIO annotate picker') >= 0, true);
+  assert.throws(() => mockup.deriveAnnotateHtml('<!doctype html><body>truncated'), /complete HTML/);
+  assert.throws(() => mockup.deriveAnnotateHtml(''), /complete HTML/);
+});
+
+gate('serve time writes the derived file beside a byte-identical pristine one', () => {
+  const h = freshHarness('annotate-serve');
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC,
+    h.draft.preview.generatedCanonicalHash);
+  h.bus.handlers.get('projectsMockupList')({ id: h.draft.id });
+  const dir = path.join(h.stateDir, 'mockups', h.draft.id);
+  const derivedFile = path.join(dir, 'home.annotate.html');
+  assert.ok(fs.existsSync(derivedFile), 'the derived file landed');
+  assert.ok(fs.readFileSync(derivedFile, 'utf8').includes('apex-mockup-pick'));
+  assert.equal(fs.readFileSync(path.join(dir, 'home.html'), 'utf8'), VALID_DOC,
+    'the stored mockup stays PRISTINE — injection never mutates the hashed artifact');
+  const posted = h.bus.posts.find((p) => p.type === 'projectsMockupScreens').payload;
+  assert.equal(posted.generated.length, 1, 'the derivative is never listed as a screen');
+  assert.equal(posted.generated[0].annotateUri,
+    'apex://local/' + encodeURIComponent(derivedFile));
+  assert.equal(posted.generated[0].uri,
+    'apex://local/' + encodeURIComponent(path.join(dir, 'home.html')),
+    'the pristine URI is unchanged');
+});
+
+gate('the annotate derivative can never ride into a package', () => {
+  const h = freshHarness('annotate-package');
+  const hash = h.draft.preview.generatedCanonicalHash;
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC, hash);
+  // serve (writes the derivative), then approve + create — the real flow
+  h.bus.handlers.get('projectsMockupList')({ id: h.draft.id });
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  const approvedDraft = drafts.readDraft(h.stateDir, h.draft.id);
+  // collectApprovedMockups builds paths from SCREEN_ID_RE-pinned approval ids
+  // — a dotted 'home.annotate' can never be one of them.
+  for (const m of studio.mockup.collectApprovedMockups(h.stateDir, approvedDraft)) {
+    assert.ok(!m.htmlFile.includes('.annotate'), m.htmlFile);
+    assert.ok(!m.provenanceFile.includes('.annotate'), m.provenanceFile);
+  }
+  h.bus.handlers.get('projectsCreate')({
+    id: approvedDraft.id, expectedRevision: approvedDraft.revision, confirmed: true,
+  });
+  const result = h.bus.posts.find((p) => p.type === 'projectsCreateResult').payload;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const packaged = fs.readdirSync(path.join(h.workspace, 'snipersight', 'mockups')).sort();
+  assert.deepEqual(packaged, ['home.html', 'home.json'],
+    'exactly the pristine html + provenance — no .annotate variant rode along');
+});
+
+// ---------- A5: note chips on the draft --------------------------------------
+const GOOD_NOTE = { selector: '#hero > button.cta', text: 'Get started', note: 'Make this amber.' };
+
+gate('drafts.validateMockupNotes fails closed on malformed shapes', () => {
+  assert.doesNotThrow(() => drafts.validateMockupNotes(null));
+  assert.doesNotThrow(() => drafts.validateMockupNotes({ home: [GOOD_NOTE] }));
+  const bads = [
+    [], 'yes', {},                                        // empty map must be null
+    { home: [] },                                         // empty list must drop the key
+    { home: GOOD_NOTE },                                  // not an array
+    { '../evil': [GOOD_NOTE] },                           // unsafe screen id
+    { 'UPPER': [GOOD_NOTE] },
+    { home: Array.from({ length: 13 }, () => GOOD_NOTE) },// over the 12 cap
+    { home: [{ ...GOOD_NOTE, extra: true }] },            // unknown field
+    { home: [{ ...GOOD_NOTE, selector: '' }] },
+    { home: [{ ...GOOD_NOTE, selector: 'x'.repeat(257) }] },
+    { home: [{ ...GOOD_NOTE, text: 'x'.repeat(161) }] },
+    { home: [{ ...GOOD_NOTE, note: '' }] },
+    { home: [{ ...GOOD_NOTE, note: 'x'.repeat(501) }] },
+    { home: [{ ...GOOD_NOTE, note: 42 }] },
+    { home: [null] },
+  ];
+  for (const bad of bads)
+    assert.throws(() => drafts.validateMockupNotes(bad), /invalid|unknown|must be|empty|too long/i,
+      JSON.stringify(bad));
+});
+
+gate('projectsMockupNoteSave records notes under the revision gate; caps refuse', () => {
+  const h = freshHarness('notes-save');
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: h.draft.id, expectedRevision: h.draft.revision, screenId: 'home', notes: [GOOD_NOTE],
+  });
+  let result = h.bus.posts.find((p) => p.type === 'projectsMockupNoteResult').payload;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(h.bus.posts.some((p) => p.type === 'projectsDraftPatched'), 'the fresh draft rides back');
+  let onDisk = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.deepEqual(onDisk.mockupNotes, { home: [GOOD_NOTE] }, 'notes survive restart on the draft');
+
+  // a stale revision is a conflict, never a silent overwrite
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: h.draft.id, expectedRevision: h.draft.revision, screenId: 'home', notes: [],
+  });
+  result = h.bus.posts.find((p) => p.type === 'projectsMockupNoteResult').payload;
+  assert.equal(result.ok, false);
+  assert.equal(result.conflict, true);
+
+  // the 13th note refuses whole — capped, fail closed, draft untouched
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: onDisk.id, expectedRevision: onDisk.revision, screenId: 'home',
+    notes: Array.from({ length: 13 }, (_, i) => ({ ...GOOD_NOTE, note: 'note ' + i })),
+  });
+  result = h.bus.posts.find((p) => p.type === 'projectsMockupNoteResult').payload;
+  assert.equal(result.ok, false);
+  assert.deepEqual(drafts.readDraft(h.stateDir, h.draft.id).mockupNotes, { home: [GOOD_NOTE] });
+
+  // an over-cap note body refuses too — never truncated into acceptance
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: onDisk.id, expectedRevision: onDisk.revision, screenId: 'home',
+    notes: [{ ...GOOD_NOTE, note: 'x'.repeat(501) }],
+  });
+  assert.equal(h.bus.posts.find((p) => p.type === 'projectsMockupNoteResult').payload.ok, false);
+
+  // an empty list clears the screen's key; an empty map lands as null
+  h.bus.posts.length = 0;
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: onDisk.id, expectedRevision: onDisk.revision, screenId: 'home', notes: [],
+  });
+  assert.equal(h.bus.posts.find((p) => p.type === 'projectsMockupNoteResult').payload.ok, true);
+  assert.equal(drafts.readDraft(h.stateDir, h.draft.id).mockupNotes, null);
+});
+
+gate('buildPrompt pins each note to its selector/text context; no notes, no section', () => {
+  const base = {
+    displayName: 'SniperSight',
+    blueprint: draftLike({ idea: 'A trading layer.' }),
+    tokensSummary: 'dark',
+    kind: 'screens',
+    screen: { id: 'home', title: 'Home', purpose: 'Main.' },
+  };
+  const plain = mockup.buildPrompt(base);
+  assert.ok(!plain.includes('pinned notes'), 'no notes section without notes');
+  const withNotes = mockup.buildPrompt({ ...base, notes: [
+    GOOD_NOTE,
+    { selector: 'div.card:nth-of-type(2)', text: '', note: 'Collapse this on mobile.' },
+  ] });
+  assert.ok(withNotes.includes('pinned notes'));
+  assert.ok(withNotes.includes('- the element matching #hero > button.cta ("Get started"): Make this amber.'),
+    'the exact pinned line shape');
+  assert.ok(withNotes.includes('- the element matching div.card:nth-of-type(2) (no visible text): Collapse this on mobile.'));
+});
+
+// ---------- A5: regenerate-with-notes rides the NORMAL A3 verb ---------------
+gate('a regen carries the screen\'s notes in the prompt; success consumes notes AND approval', () => {
+  const h = freshHarness('notes-regen');
+  const hash = h.draft.preview.generatedCanonicalHash;
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC, hash);
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  let draft = drafts.readDraft(h.stateDir, h.draft.id);
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: draft.id, expectedRevision: draft.revision, screenId: 'home', notes: [GOOD_NOTE],
+  });
+  draft = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.ok(draft.mockupApproval && draft.mockupNotes, 'approved + annotated');
+
+  h.bus.handlers.get('projectsMockupPrepare')({ id: draft.id, screen: h.screen });
+  const prepared = h.bus.posts.at(-1).payload;
+  h.bus.handlers.get('projectsMockupRun')({
+    id: draft.id, screen: h.screen, expectedRevision: prepared.revision, approved: true,
+  });
+  const started = h.latestStarted();
+  assert.ok(started.kickoff.includes('- the element matching #hero > button.cta ("Get started"): Make this amber.'),
+    'the regen prompt carries the note pinned to its element');
+
+  started.onEvent({ type: 'text', text: fence(VALID_DOC) });
+  started.onEvent({ type: 'result', ok: true });
+  const after = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.equal(after.mockupApproval, null, 'fresh pixels need fresh approval (A4, still holding)');
+  assert.equal(after.mockupNotes, null, 'consumed notes clear on success');
+});
+
+gate('a FAILED regen leaves the notes (and approval) untouched — retry without retyping', () => {
+  const h = freshHarness('notes-regen-fail');
+  const hash = h.draft.preview.generatedCanonicalHash;
+  mockup.writeMockup(h.stateDir, h.draft.id, h.screen, VALID_DOC, hash);
+  h.bus.handlers.get('projectsMockupApprove')({ id: h.draft.id, expectedRevision: h.draft.revision });
+  let draft = drafts.readDraft(h.stateDir, h.draft.id);
+  h.bus.handlers.get('projectsMockupNoteSave')({
+    id: draft.id, expectedRevision: draft.revision, screenId: 'home', notes: [GOOD_NOTE],
+  });
+  draft = drafts.readDraft(h.stateDir, h.draft.id);
+
+  h.bus.handlers.get('projectsMockupPrepare')({ id: draft.id, screen: h.screen });
+  const prepared = h.bus.posts.at(-1).payload;
+  h.bus.handlers.get('projectsMockupRun')({
+    id: draft.id, screen: h.screen, expectedRevision: prepared.revision, approved: true,
+  });
+  const started = h.latestStarted();
+  started.onEvent({ type: 'text', text: fence(inject('<img src="https://evil.example/x.png">')) });
+  started.onEvent({ type: 'result', ok: true });
+  const after = drafts.readDraft(h.stateDir, h.draft.id);
+  assert.deepEqual(after.mockupNotes, { home: [GOOD_NOTE] }, 'notes survive a failed turn');
+  assert.ok(after.mockupApproval, 'no new pixels landed — the recorded approval stands');
+});
+
 console.log('\nSTUDIO MOCKUP DRILL: ' + passed + '/' + (passed + failed) + ' passed');
 process.exit(failed ? 1 : 0);

@@ -159,6 +159,52 @@ function validateMockupApproval(value) {
   }
 }
 
+// The SEE step's per-screen note chips (slice A5), persisted on the draft so
+// they survive restart: { <screenId>: [{ selector, text, note }] } or null for
+// "no notes". selector/text are the bridge-validated element context (their
+// caps mirror lib/mockup.js's MAX_PICK_SELECTOR/MAX_PICK_TEXT, same one-way
+// mirror as APPROVAL_SCREEN_RE above); note is the user's own words. A screen
+// with no notes has NO key (an empty array is invalid — one representation),
+// and an empty map is stored as null (main.js normalizes). Notes clear for a
+// screen when its regen SUCCEEDS (they were consumed by that turn); a failed
+// regen leaves them so the user never retypes — that clearing lives in
+// main.js's projectsMockupRun, like the approval clearing it rides beside.
+const MAX_NOTE_SELECTOR = 256;   // == mockup.MAX_PICK_SELECTOR
+const MAX_NOTE_TEXT = 160;       // == mockup.MAX_PICK_TEXT
+const MAX_NOTE_CHARS = 500;      // == mockup.MAX_NOTE_CHARS
+const MAX_NOTES_PER_SCREEN = 12; // == mockup.MAX_NOTES_PER_SCREEN
+
+function validateMockupNotes(value) {
+  if (value === null || value === undefined) return;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Draft mockup notes are invalid.');
+  const screens = Object.keys(value);
+  if (!screens.length) throw new Error('Empty draft mockup notes must be null.');
+  for (const screenId of screens) {
+    if (screenId.length > 48 || !APPROVAL_SCREEN_RE.test(screenId))
+      throw new Error('Draft mockup notes name an invalid screen: ' + screenId);
+    const list = value[screenId];
+    if (!Array.isArray(list) || !list.length || list.length > MAX_NOTES_PER_SCREEN)
+      throw new Error(`Draft mockup notes for ${screenId} must be 1-${MAX_NOTES_PER_SCREEN} entries.`);
+    for (const note of list) {
+      if (!note || typeof note !== 'object' || Array.isArray(note))
+        throw new Error('Draft mockup note is invalid.');
+      if (typeof note.selector !== 'string' || !note.selector.trim() ||
+          note.selector.length > MAX_NOTE_SELECTOR)
+        throw new Error('Draft mockup note selector is invalid.');
+      if (typeof note.text !== 'string' || note.text.length > MAX_NOTE_TEXT)
+        throw new Error('Draft mockup note text is invalid.');
+      if (typeof note.note !== 'string' || !note.note.trim() ||
+          note.note.length > MAX_NOTE_CHARS)
+        throw new Error('Draft mockup note is empty or too long.');
+      for (const key of Object.keys(note)) {
+        if (!['selector', 'text', 'note'].includes(key))
+          throw new Error('Draft mockup note contains an unknown field: ' + key);
+      }
+    }
+  }
+}
+
 function validateDraft(value, expectedId) {
   if (!value || value.schema !== SCHEMA) throw new Error('Draft schema must be 1.');
   if (!ID_RE.test(value.id) || (expectedId && value.id !== expectedId))
@@ -188,6 +234,7 @@ function validateDraft(value, expectedId) {
   }
   validatePreview(value.preview === undefined ? null : value.preview);
   validateMockupApproval(value.mockupApproval === undefined ? null : value.mockupApproval);
+  validateMockupNotes(value.mockupNotes === undefined ? null : value.mockupNotes);
   return value;
 }
 
@@ -234,6 +281,7 @@ function createDraft(stateDir, workspace, starter) {
     answers: Object.fromEntries(KEYS.map((key) => [key, ''])),
     preview: null,
     mockupApproval: null,
+    mockupNotes: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -286,6 +334,12 @@ function updateDraft(stateDir, id, expectedRevision, changes) {
       ? null
       : JSON.parse(JSON.stringify(changes.mockupApproval));
   }
+  if (changes && Object.prototype.hasOwnProperty.call(changes, 'mockupNotes')) {
+    validateMockupNotes(changes.mockupNotes);
+    next.mockupNotes = changes.mockupNotes === null || changes.mockupNotes === undefined
+      ? null
+      : JSON.parse(JSON.stringify(changes.mockupNotes));
+  }
   next.revision += 1;
   next.updatedAt = new Date().toISOString();
   validateDraft(next, id);
@@ -335,6 +389,7 @@ module.exports = {
   validateDraft,
   validatePreview,
   validateMockupApproval,
+  validateMockupNotes,
   readDraft,
   createDraft,
   updateDraft,
