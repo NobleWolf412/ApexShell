@@ -593,6 +593,11 @@ function onPacket(task, stepIndex, packet) {
       task.todos[i].done = true;
     }
   }
+  // A PAUSED task parks EVERY terminal packet uniformly — this guard must sit
+  // above needs-decision/bounce/done, else a decision landing during a pause
+  // flipped the task to needs-attention and taskResume (which only re-drives
+  // done/bounce) then stranded it (external audit M5, 2026-07-18).
+  if (task.status === 'paused') { publish(); return; }
   if (packet.status === 'needs-decision') {
     // seat stays open — the user answers in its chat; the chain resumes on
     // the next valid packet (the observer keeps parsing this seat's results).
@@ -600,7 +605,6 @@ function onPacket(task, stepIndex, packet) {
     attention(task, 'decision', packet.decision);
     return;
   }
-  if (task.status === 'paused') { publish(); return; }
   if (packet.status === 'bounce') {
     step.delegateWanted = false;   // a bounce outranks the pending Delegate
     if (task.auto) { bounce(task, stepIndex, packet); return; }
@@ -962,10 +966,17 @@ function taskResume(msg) {
   task.attention = null;
   task.updatedAt = now();
   // a packet that landed while paused was parked by onPacket (it returns early
-  // when paused) — process it now that we're live again (auto chains)
-  if (task.auto && step && step.packet && step.status === 'running') {
-    if (step.packet.status === 'done') { advance(task); return; }
-    if (step.packet.status === 'bounce') { bounce(task, task.currentStep, step.packet); return; }
+  // when paused) — process it now that we're live again
+  if (step && step.packet && step.status === 'running') {
+    // a decision parked during pause re-surfaces on resume (not auto-only —
+    // it needs the user regardless), so it isn't stranded (M5 follow-through)
+    if (step.packet.status === 'needs-decision') {
+      attention(task, 'decision', step.packet.decision); return;
+    }
+    if (task.auto) {
+      if (step.packet.status === 'done') { advance(task); return; }
+      if (step.packet.status === 'bounce') { bounce(task, task.currentStep, step.packet); return; }
+    }
   }
   publish();
 }
