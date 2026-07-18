@@ -167,7 +167,12 @@ function detectDemote(result, threshold) {
 /** The completion contract appended to the kickoff. Mirrors handoff.js's
  *  contractText() in stating the rules plainly so a well-behaved model
  *  self-polices the bounds — and states that violations discard the report
- *  whole, because here they do. */
+ *  whole, because here they do.
+ *  C2's one extension (the v1 apply discipline): `hunks` is the COMPLETE new
+ *  content of the file, not a diff excerpt — the boom applier writes exactly
+ *  those bytes, so a diff would land as a diff. Stated here, in the prompt,
+ *  while the PARSER stays exactly C1's (hunks optional, capped): the apply
+ *  layer refuses an edit without hunks, it never repairs one. */
 function contractText() {
   return [
     'When your edit is COMPLETE, end your FINAL message with exactly one fenced block:',
@@ -175,12 +180,15 @@ function contractText() {
     '{ "summary": "<what you changed and why, under ' + SUMMARY_CAP + ' chars>",',
     '  "edits": [ { "file": "<project-RELATIVE path — never absolute, never ..>",',
     '               "kind": "modified" | "created",',
-    '               "hunks": "<optional: a unified-diff excerpt of this file\'s change>" } ],',
+    '               "hunks": "<the COMPLETE new content of this file — the applier writes these exact bytes>" } ],',
     '  "followup": "<optional one-liner; exactly "' + DELEGATE_FOLLOWUP + '" when the job is bigger than one minimal edit>" }',
     '```',
     'Rules: at most ' + MAX_EDITS + ' edits, and a report claiming more than ' + DEMOTE_EDIT_THRESHOLD +
       ' (or asking to delegate) becomes a',
-    'proposal card for the user instead of landing directly. A report that breaks the contract —',
+    'proposal card for the user instead of landing directly. Every edit you want applied MUST',
+    'carry the file\'s complete new content in "hunks" (under ' + Math.floor(HUNKS_CAP / 1024) +
+      ' KB — a file too big for that is',
+    'not a boom: report followup "' + DELEGATE_FOLLOWUP + '" instead). A report that breaks the contract —',
     'an absolute or .. path, an unknown kind, an oversized field — is discarded WHOLE, so stay',
     'inside it. Do not emit the block until you are finished.',
   ].join('\n');

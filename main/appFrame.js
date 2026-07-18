@@ -23,6 +23,19 @@
 // events. The same split holds — shaping, caps, the per-frame rate gate, and
 // reset-on-navigate are all pure logic here (drilled); main.js's factory
 // contributes exactly two thin webContents listeners feeding raw events in.
+//
+// Slice C2 adds the inspect seam: inspect(win, on) injects a picker overlay
+// into the HOSTED page (executeJavaScript via the adapter's runScript — the
+// registry itself stays Electron-free) and the picks ride BACK on the same
+// console wire the B3 instruments use, keyed by a magic prefix. The routing
+// order is the drilled contract: prefix first (a prefixed line NEVER chips,
+// valid or not), THEN the error-level chip gate — which moved here from the
+// shell factory for exactly that reason (the factory now forwards every
+// console line with its level; the filter that decides what a line IS must
+// live where the drill can prove it). shapePickPayload is the A5
+// validatePickMessage twin: caps, known fields rebuilt, fail-closed — the
+// hosted page can console.log ANYTHING, so a prefixed payload is hostile
+// until proven shaped.
 'use strict';
 
 const MAX_URL = 2048;         // a dev-server URL is short; anything huge is hostile
@@ -31,6 +44,23 @@ const MAX_EVENT_TEXT = 300;   // one console line tells its story in this much
 const MAX_EVENT_URL = 200;
 const EVENT_RATE = 20;        // forwarded events per frame per second — beyond is a storm
 const EVENT_WINDOW_MS = 1000;
+
+// ---- the pick channel (C2) -------------------------------------------------
+// The injected picker posts console.log(PICK_PREFIX + JSON) — no debugger API,
+// no second wire: the B3 console-message listener already flows to main. The
+// caps twin lib/mockup.js's A5 pick-message numbers (selector/text) plus the
+// picker-capture extras the C2 brief names (tag, classes, an outerHTML slice
+// for data-source hints). Oversized fields DROP the whole payload — the
+// injected script slices before posting, so anything over a cap was not our
+// script talking.
+const PICK_PREFIX = '[apex-pick]';
+const MAX_PICK_JSON = 8 * 1024;   // the whole JSON line — fields sum well under this
+const MAX_PICK_SELECTOR = 256;
+const MAX_PICK_TEXT = 160;
+const MAX_PICK_TAG = 24;
+const MAX_PICK_CLASSES = 8;
+const MAX_PICK_CLASS_CHARS = 64;
+const MAX_PICK_HTML = 2000;
 
 // ---- the URL wall ----------------------------------------------------------
 // The frame loads ONLY http://localhost:<port> or http://127.0.0.1:<port>
@@ -100,22 +130,158 @@ function shapeFrameEvent(raw) {
   return out;
 }
 
+// ---- the pick payload (C2) ---------------------------------------------------
+// The A5 validatePickMessage twin, applied to a console line instead of a
+// postMessage: strip the prefix, bound the JSON, parse, then REBUILD known
+// fields only (never a spread — unknown keys drop by construction). Total and
+// fail-closed: any wrong type, any over-cap string, any non-string class
+// refuses the WHOLE payload (drop whole, never repair — the mockup.js rule).
+// Two shapes exist and nothing else ever leaves here: { kind: 'cancel' }
+// (Esc in the page) and the full { kind: 'pick', … } capture.
+function shapePickPayload(line) {
+  if (typeof line !== 'string' || !line.startsWith(PICK_PREFIX)) return null;
+  const json = line.slice(PICK_PREFIX.length);
+  if (!json || json.length > MAX_PICK_JSON) return null;
+  let raw;
+  try { raw = JSON.parse(json); } catch { return null; }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (raw.cancel === true) return { kind: 'cancel' };
+  if (typeof raw.selector !== 'string' || !raw.selector.trim() ||
+      raw.selector.length > MAX_PICK_SELECTOR) return null;
+  if (typeof raw.text !== 'string' || raw.text.length > MAX_PICK_TEXT) return null;
+  if (typeof raw.tag !== 'string' || !raw.tag.trim() || raw.tag.length > MAX_PICK_TAG) return null;
+  if (typeof raw.html !== 'string' || raw.html.length > MAX_PICK_HTML) return null;
+  if (!Array.isArray(raw.classes) || raw.classes.length > MAX_PICK_CLASSES) return null;
+  const classes = [];
+  for (const c of raw.classes) {
+    if (typeof c !== 'string' || c.length > MAX_PICK_CLASS_CHARS) return null;
+    classes.push(c);
+  }
+  return {
+    kind: 'pick',
+    selector: raw.selector,
+    classes,
+    text: raw.text,
+    tag: raw.tag,
+    html: raw.html,
+  };
+}
+
+// ---- the injected picker (C2) ------------------------------------------------
+// The A5 overlay pattern applied to the app frame's UNTRUSTED page: one fixed
+// pointer-events-none highlight box, hover tracks, a click captures the
+// element and posts it via console.log with the magic prefix, Esc uninstalls
+// and posts a cancel. Idempotent by guard (window.__apexInspect — a second
+// install is a no-op) and fully removable (off() detaches every listener,
+// removes the box, deletes the guard); a navigate needs no removal at all —
+// the script dies with the document, and the registry drops its inspect flag
+// at the same trigger so the two truths never diverge. The script mutates
+// nothing in the page beyond appending the overlay box, and it speaks ONLY
+// the two prefixed shapes shapePickPayload admits.
+const INSPECT_INSTALL_JS = [
+  '(function () {',
+  "  'use strict';",
+  '  // Apex STUDIO boom-change inspector (slice C2) — injected by',
+  '  // main/appFrame.js inspect(); posts ONLY prefixed pick/cancel lines.',
+  '  if (window.__apexInspect) return;   // double-inject guard',
+  '  var box = document.createElement("div");',
+  '  box.style.cssText = "position:fixed;top:0;left:0;pointer-events:none;" +',
+  '    "z-index:2147483647;border:2px solid #7aa2ff;border-radius:2px;" +',
+  '    "background:rgba(122,162,255,0.15);display:none;";',
+  '  document.documentElement.appendChild(box);',
+  '  function place(el) {',
+  '    if (!el || el === box || el === document.documentElement || el === document.body) {',
+  '      box.style.display = "none"; return;',
+  '    }',
+  '    var r = el.getBoundingClientRect();',
+  '    box.style.display = "block";',
+  '    box.style.left = r.left + "px"; box.style.top = r.top + "px";',
+  '    box.style.width = r.width + "px"; box.style.height = r.height + "px";',
+  '  }',
+  '  // Short selector: id wins; else a tag.class chain (at most 4 hops, 2',
+  '  // classes each); a class-free hop falls back to :nth-of-type. A locating',
+  '  // HINT for the resolver, not a query — capped, best effort (the A5 shape).',
+  '  function selectorFor(el) {',
+  '    if (el.id) return "#" + el.id;',
+  '    var parts = [];',
+  '    var node = el;',
+  '    while (node && node.nodeType === 1 && node !== document.body && parts.length < 4) {',
+  '      var part = node.tagName.toLowerCase();',
+  '      var cls = (typeof node.className === "string" ? node.className : "")',
+  '        .trim().split(/\\s+/).filter(Boolean);',
+  '      if (cls.length) { part += "." + cls.slice(0, 2).join("."); }',
+  '      else {',
+  '        var i = 1, sib = node;',
+  '        while ((sib = sib.previousElementSibling)) { if (sib.tagName === node.tagName) i += 1; }',
+  '        part += ":nth-of-type(" + i + ")";',
+  '      }',
+  '      parts.unshift(part);',
+  '      node = node.parentElement;',
+  '    }',
+  '    return parts.join(" > ");',
+  '  }',
+  '  function post(payload) { console.log(' + JSON.stringify(PICK_PREFIX) + ' + JSON.stringify(payload)); }',
+  '  function onMove(e) { place(e.target); }',
+  '  function onLeave() { box.style.display = "none"; }',
+  '  function onClick(e) {',
+  '    e.preventDefault(); e.stopPropagation();',
+  '    var el = e.target;',
+  '    if (!el || el === box || el.nodeType !== 1) return;',
+  '    var cls = (typeof el.className === "string" ? el.className : "")',
+  '      .trim().split(/\\s+/).filter(Boolean).slice(0, ' + MAX_PICK_CLASSES + ')',
+  '      .map(function (c) { return c.slice(0, ' + MAX_PICK_CLASS_CHARS + '); });',
+  '    post({',
+  '      selector: selectorFor(el).slice(0, ' + MAX_PICK_SELECTOR + '),',
+  '      classes: cls,',
+  '      text: (el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, ' + MAX_PICK_TEXT + '),',
+  '      tag: el.tagName.toLowerCase().slice(0, ' + MAX_PICK_TAG + '),',
+  '      html: (el.outerHTML || "").slice(0, ' + MAX_PICK_HTML + ')',
+  '    });',
+  '  }',
+  '  function off() {',
+  '    document.removeEventListener("mousemove", onMove, true);',
+  '    document.removeEventListener("mouseleave", onLeave, true);',
+  '    document.removeEventListener("click", onClick, true);',
+  '    document.removeEventListener("keydown", onKey, true);',
+  '    if (box.parentNode) box.parentNode.removeChild(box);',
+  '    delete window.__apexInspect;',
+  '  }',
+  '  function onKey(e) { if (e.key === "Escape") { off(); post({ cancel: true }); } }',
+  '  document.addEventListener("mousemove", onMove, true);',
+  '  document.addEventListener("mouseleave", onLeave, true);',
+  '  document.addEventListener("click", onClick, true);',
+  '  document.addEventListener("keydown", onKey, true);',
+  '  window.__apexInspect = { off: off };',
+  '})(); true;',
+].join('\n');
+
+// The uninstall is one guarded call — safe on a page that never got the
+// install (a reload since inspect-on), safe twice. Ends in a serializable
+// literal so executeJavaScript never trips on cloning a DOM return value.
+const INSPECT_REMOVE_JS =
+  'window.__apexInspect && window.__apexInspect.off && window.__apexInspect.off(); true;';
+
 // ---- the per-window registry -----------------------------------------------
-// createFrameRegistry({ createView, postEvent?, now? }) → { show, hide,
-// navigate, stateOf, destroyFor, destroyAll }. `createView(win, allowedUrl,
-// onEvent)` returns an adapter {loadURL, setBounds, setVisible, destroy} —
-// Electron's WebContentsView in production, a recording stub in the drill.
-// `allowedUrl` is a live accessor onto the entry's current URL: the shell's
-// will-navigate guard reads it, so confinement follows every navigate without
-// the shell holding state. `onEvent(raw)` (B3) is the raw instrument inlet:
-// the shell's two listeners call it, the gate below shapes and rate-bounds,
-// and survivors leave through `postEvent(win, shaped)`. `now` is the gate's
-// clock — injectable so the drill owns time.
-function createFrameRegistry({ createView, postEvent, now }) {
-  const entries = new Map();   // win -> { view, url, visible, bounds, projectId, ev }
+// createFrameRegistry({ createView, postEvent?, postPick?, now? }) → { show,
+// hide, navigate, inspect, stateOf, destroyFor, destroyAll }. `createView(win,
+// allowedUrl, onEvent)` returns an adapter {loadURL, setBounds, setVisible,
+// destroy, runScript?} — Electron's WebContentsView in production, a recording
+// stub in the drill (runScript is C2's one adapter addition: executeJavaScript
+// on the hosted page; an adapter without it simply cannot inspect, refused
+// honestly). `allowedUrl` is a live accessor onto the entry's current URL: the
+// shell's will-navigate guard reads it, so confinement follows every navigate
+// without the shell holding state. `onEvent(raw)` (B3) is the raw instrument
+// inlet: the shell's listeners call it with EVERY console line (level along
+// for the ride since C2), the gate below routes/shapes/rate-bounds, and
+// survivors leave through `postEvent(win, shaped)`; shaped picks leave through
+// `postPick(win, pick)`. `now` is the gate's clock — injectable so the drill
+// owns time.
+function createFrameRegistry({ createView, postEvent, postPick, now }) {
+  const entries = new Map();   // win -> { view, url, visible, bounds, projectId, ev, inspect }
 
   const clock = typeof now === 'function' ? now : Date.now;
   const say = typeof postEvent === 'function' ? postEvent : () => {};
+  const pickOut = typeof postPick === 'function' ? postPick : () => {};
   const dead = (win) => !win || (typeof win.isDestroyed === 'function' && win.isDestroyed());
   const refuse = (projectId, error) => ({ ok: false, projectId: projectId || null, error });
 
@@ -128,8 +294,29 @@ function createFrameRegistry({ createView, postEvent, now }) {
   // chips (a stale count from the old page would lie about the new one).
   const freshGate = () => ({ winStart: 0, sent: 0, dropped: 0 });
   function deliver(win, e, raw) {
+    if (entries.get(win) !== e) return;              // the frame died under it
+    // C2 — the pick channel, filtered FIRST: a console line opening with the
+    // magic prefix belongs to the inspector wire and NEVER chips, whether it
+    // parses or not (a hostile page spoofing the prefix earns dead air, not a
+    // costumed chip). Picks only speak while inspect is on — off, the prefix
+    // is still stripped from the chip flow but goes nowhere. An in-page Esc
+    // (kind 'cancel') flips the flag here so the toggle truth never lags the
+    // page's own uninstall.
+    if (raw && raw.kind === 'console' && typeof raw.text === 'string' &&
+        raw.text.startsWith(PICK_PREFIX)) {
+      if (!e.inspect) return;
+      const pick = shapePickPayload(raw.text);
+      if (!pick) return;                             // hostile payload — fail closed
+      if (pick.kind === 'cancel') e.inspect = false;
+      pickOut(win, pick);
+      return;
+    }
+    // The B3 error-level gate, AFTER the prefix filter (it moved here from the
+    // shell factory so that ordering is drilled, not assumed): the picker logs
+    // at plain log level, but only error lines ever chip.
+    if (raw && raw.kind === 'console' && raw.level !== 'error') return;
     const shaped = shapeFrameEvent(raw);
-    if (!shaped || entries.get(win) !== e) return;   // junk, or the frame died under it
+    if (!shaped) return;                             // junk drops silently
     const t = clock();
     if (t - e.ev.winStart >= EVENT_WINDOW_MS) {
       if (e.ev.dropped > 0)
@@ -153,15 +340,17 @@ function createFrameRegistry({ createView, postEvent, now }) {
     if (!bounds) return refuse(m.projectId, 'The app frame needs a real on-screen rectangle.');
     let e = entries.get(win);
     if (!e) {
-      e = { view: null, url: null, visible: false, bounds: null, projectId: null, ev: freshGate() };
+      e = { view: null, url: null, visible: false, bounds: null, projectId: null,
+            ev: freshGate(), inspect: false };
       e.view = createView(win, () => e.url, (raw) => deliver(win, e, raw));
       entries.set(win, e);
       // the window's death is the ONE destroy trigger (hide never tears down)
       if (typeof win.once === 'function') win.once('closed', () => destroyFor(win));
     }
     e.projectId = m.projectId || null;
-    // a CHANGED url reloads — a fresh page earns a fresh event budget too
-    if (e.url !== url) { e.url = url; e.view.loadURL(url); e.ev = freshGate(); }
+    // a CHANGED url reloads — a fresh page earns a fresh event budget, and the
+    // inspector died with the old document, so the flag follows it (C2)
+    if (e.url !== url) { e.url = url; e.view.loadURL(url); e.ev = freshGate(); e.inspect = false; }
     e.bounds = bounds;
     e.view.setBounds(bounds);
     if (!e.visible) { e.visible = true; e.view.setVisible(true); }
@@ -191,9 +380,30 @@ function createFrameRegistry({ createView, postEvent, now }) {
     e.url = url;
     e.view.loadURL(url);
     // reset-on-navigate: the renderer's chips clear at the same trigger, so a
-    // saturated budget or a pending drop count must not haunt the new page
+    // saturated budget or a pending drop count must not haunt the new page —
+    // and the injected inspector died with the document (C2), so its flag
+    // resets here too rather than lying about a picker that no longer exists
     e.ev = freshGate();
+    e.inspect = false;
     return { ok: true, projectId: e.projectId, url: e.url, visible: e.visible };
+  }
+
+  // C2 — inspect mode: on injects the picker (idempotent — the script's own
+  // window.__apexInspect guard makes a double install a no-op), off runs the
+  // guarded uninstall. Existing-frame-only like navigate (show owns creation),
+  // and honest about an adapter that cannot run scripts. The flag is the
+  // registry's truth for the pick channel above: picks flow only while it is
+  // set, and every page replacement (navigate, changed-url show) clears it.
+  function inspect(win, msg) {
+    const m = msg || {};
+    if (dead(win)) return refuse(m.projectId, 'That window is gone.');
+    const e = entries.get(win);
+    if (!e) return refuse(m.projectId, 'Show the app frame before inspecting it.');
+    if (typeof e.view.runScript !== 'function')
+      return refuse(e.projectId, 'This frame cannot host the inspector.');
+    e.inspect = m.on === true;
+    e.view.runScript(e.inspect ? INSPECT_INSTALL_JS : INSPECT_REMOVE_JS);
+    return { ok: true, projectId: e.projectId, inspect: e.inspect };
   }
 
   function destroyFor(win) {
@@ -210,11 +420,12 @@ function createFrameRegistry({ createView, postEvent, now }) {
   function stateOf(win) {
     const e = entries.get(win);
     return e
-      ? { present: true, url: e.url, visible: e.visible, bounds: e.bounds, projectId: e.projectId }
+      ? { present: true, url: e.url, visible: e.visible, bounds: e.bounds,
+          projectId: e.projectId, inspect: e.inspect }
       : { present: false };
   }
 
-  return { show, hide, navigate, destroyFor, destroyAll, stateOf };
+  return { show, hide, navigate, inspect, destroyFor, destroyAll, stateOf };
 }
 
 // ---- the bus verbs ---------------------------------------------------------
@@ -232,6 +443,9 @@ function register({ bus, windowFor, zoomOf, createView }) {
     // instrument events (B3) ride per-window postTo like every frame reply —
     // the hosted page's noise belongs to the window that hosts it, alone
     postEvent: (win, msg) => bus.postTo(win, 'appFrameEvent', msg),
+    // picks (C2) ride the same per-window discipline: a click in THIS
+    // window's frame is this window's boom card, nobody else's
+    postPick: (win, msg) => bus.postTo(win, 'appFramePick', msg),
   });
   const host = (ctx) => windowFor(ctx && ctx.sender);
 
@@ -250,8 +464,17 @@ function register({ bus, windowFor, zoomOf, createView }) {
     if (!win) return;
     bus.postTo(win, 'appFrameState', registry.navigate(win, m));
   });
+  // C2 — the strip toggle's verb. Its OWN reply type (not appFrameState:
+  // the renderer's frame-state handler surfaces errors in the RUN drawer,
+  // and an inspect refusal belongs to the inspect toggle, not the server).
+  bus.on('appFrameInspect', (m, ctx) => {
+    const win = host(ctx);
+    if (!win) return;
+    bus.postTo(win, 'appFrameInspectState', registry.inspect(win, m));
+  });
 
   return registry;   // main.js holds it for the quit-time destroyAll backstop
 }
 
-module.exports = { validateFrameUrl, sameFrameOrigin, sanitizeBounds, shapeFrameEvent, createFrameRegistry, register };
+module.exports = { validateFrameUrl, sameFrameOrigin, sanitizeBounds, shapeFrameEvent,
+  PICK_PREFIX, shapePickPayload, createFrameRegistry, register };

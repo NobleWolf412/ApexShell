@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **STUDIO v2, Wave C slice C2 — boom-change (the full loop on the app
+  frame)** (`main/appFrame.js` + `main/main.js` — the last core touch;
+  `extensions/studio/{main.js,renderer.js}` +
+  `extensions/studio/lib/{boom.js,surgeon.js}`; drills:
+  `test/appframe-drill.js` grows to 28 checks (inspect/pick seam), new
+  `test/studio-boom-drill.js` 15 checks). INSPECT rides the preview strip:
+  `appFrame.inspect(win, on)` injects the A5-pattern picker overlay into the
+  hosted page through the adapter's one new `runScript` line
+  (executeJavaScript; idempotent by page guard, removable, dead with every
+  navigate — the registry's flag drops at the same trigger). Picks come BACK
+  on the existing console wire as `'[apex-pick]'+JSON` lines — no debugger
+  API after all: the factory now forwards EVERY console line with its level,
+  and BOTH gates live drilled in the registry, prefix first (a prefixed line
+  never chips, valid or not; hostile payloads are dead air) then the B3
+  error-level chip gate; `shapePickPayload` twins the A5 validator (caps,
+  rebuilt known fields, fail-closed) and survivors leave as `appFramePick`
+  per-window. A pick opens the BOOM card (extension): element context +
+  intent + GO — the A3 prepare/approve machinery collapsed to approve-on-GO
+  (usage on the card, no TTL, single-flight, 5-min backstop). GO runs the C1
+  resolver (candidates shown with tier/confidence, honestly) → one Surgeon
+  disposable → `surgeon.parseReply` fail-closed → `detectDemote`. v1 apply
+  discipline (`lib/boom.js`): hunks must be the COMPLETE new file content
+  (`contractText` extended to say so; the C1 parser untouched), every path
+  re-runs the wall AND must resolve inside the project dir at apply time,
+  modified-requires-exists / created-requires-not, parents staged before any
+  byte, atomic temp+rename per file. The ledger: git project (`.git`
+  exists) → dirty snapshot, apply, `git add -- <files>` + `git commit -m
+  'boom: …'` via an injectable execFile seam (args array, never a shell) —
+  the hash is the revert token; else backup-FIRST copies to
+  `state/extensions/studio/boomledger/<projectId>/<ts>/…`; entries `{ts,
+  intent≤200, files, mode, token, demoted?}` persist atomically, capped
+  100. REVERT per entry: `git revert --no-edit <hash>` (dirty tree refused
+  honestly, token pinned to hex) or backup restore (+ created files
+  removed). Demote → no writes, a "bigger than a boom" card whose DELEGATE
+  pre-fills the Lift-off flow — the intent rides the F2
+  `composeKickoffBrief` addendum tail (one call, no new machinery). Stated
+  divergence, argued in `lib/boom.js`'s header: the disposable primitive is
+  tool-disabled/scratch-cwd by engine contract (out of scope), so the seat
+  does not literally run in the project cwd — the top candidates' file
+  contents ride the kickoff instead, bounded at the 16 KB small-file law.
+  Update & restart applies.
+
 - **STUDIO v2, Wave D slice D2 — the ARCHITECTURE step (the X-ray, visible)**
   (`extensions/studio/{main.js,renderer.js,style.css}` +
   `extensions/studio/lib/{xray.js,drafts.js,creator.js}`; drills:

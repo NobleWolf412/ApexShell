@@ -267,6 +267,20 @@ function mountProjects(el, hasBus) {
       forProject: null, config: null, form: null,
       phase: 'stopped', port: null, log: [], error: null, busy: false,
       events: [], eventsOpen: false, deviceWidth: 'desktop',
+      // C2: the strip's INSPECT toggle — main's truth (appFrameInspectState /
+      // an in-page Esc) mirrors here; every page replacement drops it there,
+      // so the reload/url-change paths drop it here too.
+      inspect: false,
+    },
+    // ---- slice C2: the boom loop. A pick from the app frame's inspector
+    // opens the card (context = the shaped appFramePick payload); GO is the
+    // approval (the A3 two-step collapsed — usage shows on the card first);
+    // candidates/result mirror main's posts; the ledger lists landed booms
+    // with REVERT. Intent survives re-renders the liveAnswers way.
+    boom: {
+      open: false, context: null, intent: '', usage: null, cardError: null,
+      busy: false, candidates: null, truncated: false, result: null,
+      ledger: [], revertMsg: null, revertBusy: false,
     },
     // ---- slice 9: import/audit mode ----
     // Read-only inspection of an existing project folder; a mapping the user
@@ -1945,6 +1959,158 @@ function mountProjects(el, hasBus) {
     main.querySelector('.pjCreateBack').addEventListener('click', () => goStep('canonical'));
   }
 
+  // ---- slice C2: the BOOM card + ledger (markup halves; wireBoom below) ----
+  function describePick(c) {
+    if (!c) return '(no element)';
+    const cls = c.classes && c.classes.length ? '.' + c.classes.join('.') : '';
+    return '<' + (c.tag || 'element') + cls + '>' + (c.text ? ' — “' + c.text + '”' : '');
+  }
+
+  // The resolver's honesty, shown before anything lands: every candidate with
+  // its tier and confidence, verbatim from main.
+  function boomCandidateLines(b) {
+    const lines = (b.candidates || []).map((c, i) =>
+      (i + 1) + '. [' + c.tier + ', ' + c.confidence + ' confidence] ' +
+      (c.file ? c.file + (c.line ? ':' + c.line : '') : '(no file — element context only)'));
+    if (b.truncated) lines.push('(project walk truncated — a huge tree lowers confidence)');
+    return lines.join('\n');
+  }
+
+  function boomResultHtml(m) {
+    if (!m) return '';
+    if (m.error)
+      return '<div class="pjErr" data-tone="warn">Nothing landed — ' + escapeHtml(m.error) + '</div>';
+    if (m.demoted)
+      return '<div class="pjErr" data-tone="warn">BIGGER THAN A BOOM — ' +
+          escapeHtml((m.reasons || []).join(' · ') || 'the surgeon asked to delegate') + '. Nothing was written.</div>' +
+        (m.summary ? '<div class="pjWsSub">' + escapeHtml(m.summary) + '</div>' : '') +
+        '<div class="pjBtnRow"><button type="button" class="pjBtn primary pjBoomDelegate" ' +
+          'title="Pre-fills DELEGATE TO THE ARCHITECT with this intent riding the kickoff brief">DELEGATE IT →</button></div>';
+    if (m.ok)
+      return '<div class="pjErr" data-tone="good">LANDED (' + escapeHtml(m.mode || '') +
+          (m.token ? ' · ' + escapeHtml(String(m.token).slice(0, 12)) : '') + ') — ' +
+          escapeHtml(m.summary || '') + '</div>' +
+        '<div class="pjWsSub">' + escapeHtml((m.edits || [])
+          .map((e) => e.file + ' (' + e.kind + ')').join(' · ')) + '</div>' +
+        (m.warning ? '<div class="pjErr" data-tone="warn">' + escapeHtml(m.warning) + '</div>' : '');
+    return '';
+  }
+
+  function boomCardHtml() {
+    const b = state.boom;
+    if (!b.open) return '';
+    return '<div class="pjCard pjBoomCard">' +
+      '<div class="pjLabel">BOOM — CHANGE WHAT YOU CLICKED</div>' +
+      '<div class="pjWsSub">Picked ' + escapeHtml(describePick(b.context)) +
+        (b.context && b.context.selector ? ' · at ' + escapeHtml(b.context.selector) : '') + '</div>' +
+      (b.cardError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(b.cardError) + '</div>' : '') +
+      '<input type="text" class="pjName pjBoomIntent" maxlength="1000" ' +
+        'placeholder="What should change here? One surgical strike — your words are the whole job." ' +
+        (b.busy ? 'disabled ' : '') + 'value="' + escapeHtml(b.intent) + '" />' +
+      '<div class="pjWsSub pjAiUsage">' + escapeHtml(usageNote(b.usage)) +
+        ' GO launches one hidden Surgeon session — GO is the approval; small edits land (with a revert), bigger ones demote to a delegate card.</div>' +
+      '<div class="pjBtnRow">' +
+        '<button type="button" class="pjBtn primary pjBoomGo" ' + (b.busy ? 'disabled' : '') + '>GO (USES A SESSION)</button>' +
+        (b.busy ? '<button type="button" class="pjBtn pjBoomStop">STOP</button>' : '') +
+        '<button type="button" class="pjBtn pjBoomClose">CLOSE</button>' +
+      '</div>' +
+      (b.busy ? '<div class="pjWsSub pjAiUsage">The Surgeon is on it — one strike, then the report…</div>' : '') +
+      (b.candidates && b.candidates.length
+        ? '<pre class="pjInstrList">' + escapeHtml('WHERE IT PROBABLY LIVES\n' + boomCandidateLines(b)) + '</pre>'
+        : '') +
+      boomResultHtml(b.result) +
+    '</div>';
+  }
+
+  function boomLedgerHtml() {
+    const b = state.boom;
+    if (!b.ledger.length) return '';
+    const rows = b.ledger.slice().reverse().slice(0, 20).map((e) => {
+      const files = (e.files || []).map((f) => f.file).join(', ');
+      return '<div class="pjSeeNoteChip">' +
+        '<span class="pjWsSub">' + escapeHtml(String(e.ts || '').replace('T', ' ').slice(0, 19)) +
+          (e.demoted ? ' · DEMOTED' : ' · ' + escapeHtml(String(e.mode || '').toUpperCase())) + '</span>' +
+        '<span class="pjSeeNoteText">' + escapeHtml(e.intent || '(no intent recorded)') +
+          (files ? ' — ' + escapeHtml(files) : '') + '</span>' +
+        (e.demoted
+          ? ''
+          : '<button type="button" class="pjBtn pjBoomRevert" data-ts="' + escapeHtml(e.ts || '') +
+              '" data-token="' + escapeHtml(e.token || '') + '" ' + (b.revertBusy ? 'disabled ' : '') +
+              'title="' + (e.mode === 'git'
+                ? 'git revert --no-edit of this boom\'s commit (refused if the tree is dirty)'
+                : 'Restore the backed-up originals (files the boom created are removed)') + '">REVERT</button>') +
+      '</div>';
+    }).join('');
+    return '<div class="pjCard">' +
+      '<label class="pjLabel">BOOM LEDGER — ' + b.ledger.length + ' (LAST ' + Math.min(20, b.ledger.length) + ' SHOWN)</label>' +
+      '<div class="pjWsSub">Every boom, revertable: a git project reverts by commit; anything else restores the backup copies. Capped at 100, oldest dropped.</div>' +
+      '<div class="pjSeeNotes">' + rows + '</div>' +
+      (b.revertMsg ? '<div class="pjErr" data-tone="warn">' + escapeHtml(b.revertMsg) + '</div>' : '') +
+    '</div>';
+  }
+
+  function wireBoom(p) {
+    const b = state.boom;
+    const inspectBtn = main.querySelector('.pjInspectBtn');
+    if (inspectBtn) inspectBtn.addEventListener('click', () => {
+      // main is the truth — the toggle flips when appFrameInspectState answers
+      ApexBus.post('appFrameInspect', { on: !state.server.inspect });
+    });
+    const intentEl = main.querySelector('.pjBoomIntent');
+    if (intentEl) intentEl.addEventListener('input', () => { b.intent = intentEl.value; });
+    const goBtn = main.querySelector('.pjBoomGo');
+    if (goBtn) goBtn.addEventListener('click', () => {
+      if (b.busy) return;
+      const intent = (intentEl ? intentEl.value : b.intent).trim();
+      if (!intent) { b.result = { error: 'Say what should change first — the intent is the whole job.' }; render(); return; }
+      b.intent = intent;
+      b.busy = true;
+      b.result = null;
+      b.candidates = null;
+      render();
+      ApexBus.post('projectsBoomGo', {
+        projectId: p.projectId, context: b.context, intent, approved: true,
+      });
+    });
+    const stopBtn = main.querySelector('.pjBoomStop');
+    if (stopBtn) stopBtn.addEventListener('click', () => ApexBus.post('projectsBoomStop', {}));
+    const closeBtn = main.querySelector('.pjBoomClose');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+      if (b.busy) ApexBus.post('projectsBoomStop', {});
+      b.open = false;
+      b.busy = false;
+      b.context = null;
+      b.result = null;
+      b.candidates = null;
+      render();
+    });
+    const delegateBtn = main.querySelector('.pjBoomDelegate');
+    if (delegateBtn) delegateBtn.addEventListener('click', () => {
+      // demote → delegate: pre-fill the EXISTING Lift-off flow (no new
+      // machinery — the intent rides the next DELEGATE click's kickoff)
+      state.liftoff.boomIntent = b.intent;
+      b.open = false;
+      b.result = null;
+      render();
+    });
+    const handoffClear = main.querySelector('.pjBoomHandoffClear');
+    if (handoffClear) handoffClear.addEventListener('click', () => {
+      state.liftoff.boomIntent = '';
+      render();
+    });
+    for (const btn of main.querySelectorAll('.pjBoomRevert')) {
+      btn.addEventListener('click', () => {
+        if (b.revertBusy) return;
+        b.revertBusy = true;
+        b.revertMsg = null;
+        render();
+        ApexBus.post('projectsBoomRevert', {
+          projectId: p.projectId, ts: btn.dataset.ts, token: btn.dataset.token || null,
+        });
+      });
+    }
+  }
+
   // ---- Lift-off (slice 8): the payoff screen, offered right after Create
   // succeeds. Three independent actions — none of them chains into another.
   function renderLiftoff() {
@@ -1962,8 +2128,16 @@ function mountProjects(el, hasBus) {
         // B3: events belong to a project's frame; the width taste carries over
         events: [], eventsOpen: false,
         deviceWidth: state.server.deviceWidth || 'desktop',
+        inspect: false,
+      };
+      // C2: a fresh project gets a fresh boom slate + its own ledger
+      state.boom = {
+        open: false, context: null, intent: '', usage: null, cardError: null,
+        busy: false, candidates: null, truncated: false, result: null,
+        ledger: [], revertMsg: null, revertBusy: false,
       };
       ApexBus.post('projectsServerConfigGet', { projectId: p.projectId });
+      ApexBus.post('projectsBoomLedgerGet', { projectId: p.projectId });
     }
     const srv = state.server;
     const form = srv.form || (srv.config ? {
@@ -2006,6 +2180,13 @@ function mountProjects(el, hasBus) {
           'save this route as a template</label>' +
         '<input class="pjName pjLiftTemplateName" maxlength="60" placeholder="Template name" ' +
           (lift.saveAsTemplate ? '' : 'hidden') + ' value="' + escapeHtml(lift.templateName) + '" />' +
+        // C2: a demoted boom's DELEGATE pre-fills this flow — the intent rides
+        // the kickoff brief as extra context (the F2 composition, one call).
+        (lift.boomIntent
+          ? '<div class="pjWsSub" data-tone="quiet">BOOM HANDOFF rides the kickoff: “' +
+              escapeHtml(String(lift.boomIntent).slice(0, 160)) + '” ' +
+              '<button type="button" class="pjBtn pjBoomHandoffClear" title="Drop the boom handoff from the kickoff">✕</button></div>'
+          : '') +
         '<div class="pjBtnRow">' +
           '<button type="button" class="pjBtn primary pjLiftDelegateBtn" ' + (lift.delegateBusy ? 'disabled' : '') + '>DELEGATE →</button>' +
         '</div>' +
@@ -2094,6 +2275,11 @@ function mountProjects(el, hasBus) {
                   (FRAME_WIDTHS[w] ? ' ' + FRAME_WIDTHS[w] : ' FULL') + '</button>').join('') +
               '<button type="button" class="pjBtn pjFrameReloadBtn" ' +
                 'title="Reload the app frame (the dev server keeps running)">RELOAD</button>' +
+              // C2: the inspect toggle — main injects the picker into the
+              // hosted page; a click there opens the BOOM card below.
+              '<button type="button" class="pjBtn pjInspectBtn' + (srv.inspect ? ' primary' : '') + '" ' +
+                'title="Click an element in your running app to change it — hover highlights, a click opens the BOOM card, Esc cancels">' +
+                (srv.inspect ? 'INSPECT ON (ESC)' : 'INSPECT') + '</button>' +
             '</div>' +
             (srv.eventsOpen
               ? '<pre class="pjInstrList">' + escapeHtml(instrumentLines(srv)) + '</pre>'
@@ -2103,6 +2289,11 @@ function mountProjects(el, hasBus) {
                 ? ' style="width:' + FRAME_WIDTHS[srv.deviceWidth] + 'px"' : '') + '></div>' +
           '</div>'
         : '') +
+
+      // C2: the BOOM card (opens on a pick, survives a server stop so the
+      // result stays readable) + the ledger of landed booms.
+      boomCardHtml() +
+      boomLedgerHtml() +
 
       '<div class="pjCard"><div class="pjBtnRow"><button type="button" class="pjBtn pjLiftBack">← BACK TO CREATE</button></div></div>';
 
@@ -2137,6 +2328,7 @@ function mountProjects(el, hasBus) {
         route: route.length ? route : undefined,
         saveAsTemplate: lift.saveAsTemplate,
         templateName: lift.templateName,
+        boomIntent: lift.boomIntent || undefined,   // C2: the demote handoff
       });
     });
 
@@ -2213,9 +2405,15 @@ function mountProjects(el, hasBus) {
     const frameReloadBtn = main.querySelector('.pjFrameReloadBtn');
     if (frameReloadBtn) frameReloadBtn.addEventListener('click', () => {
       srv.events = [];
+      // C2: main drops its inspect flag on the same navigate (the injected
+      // picker dies with the document) — mirror it so the toggle tells truth
+      srv.inspect = false;
       render();
       ApexBus.post('appFrameNavigate', { url: 'http://localhost:' + srv.port + '/' });
     });
+
+    // C2: the inspect toggle + the BOOM card/ledger wiring
+    wireBoom(p);
 
     main.querySelector('.pjLiftBack').addEventListener('click', () => goStep('create'));
   }
@@ -2278,7 +2476,9 @@ function mountProjects(el, hasBus) {
       const url = 'http://localhost:' + srv.port + '/';
       // B3: a different target (port change → another server) means main
       // reloads AND resets its gate — old-page noise would lie about the new
-      if (frame.url && frame.url !== url) { srv.events = []; patchInstruments(); }
+      // (and C2's injected picker died with the old page; main dropped its
+      // inspect flag at the same trigger, so the toggle follows)
+      if (frame.url && frame.url !== url) { srv.events = []; srv.inspect = false; patchInstruments(); }
       frame.url = url;
       frame.shown = true;
       // show doubles as the bounds sync (main reloads only on a CHANGED url)
@@ -2723,6 +2923,88 @@ function mountProjects(el, hasBus) {
     if (srv.events.length > 100) srv.events.splice(0, srv.events.length - 100);
     // patch, never render — a full render per event would eat the RUN caret
     if (state.step === 'liftoff') patchInstruments();
+  });
+
+  // ---- slice C2: the boom loop's bus traffic --------------------------------
+  // The inspect toggle's per-window truth (a refusal tells its story on the
+  // toggle's own card slot, not the RUN drawer's).
+  ApexBus.on('appFrameInspectState', (m) => {
+    if (!m) return;
+    const srv = state.server;
+    srv.inspect = Boolean(m.ok && m.inspect);
+    if (!m.ok && m.error && srv.error !== m.error) srv.error = m.error;
+    if (state.step === 'liftoff') render();
+  });
+
+  // A pick (or an in-page Esc) from the app frame's inspector — per-window
+  // postTo'd by main, already shaped fail-closed there (shapePickPayload).
+  ApexBus.on('appFramePick', (m) => {
+    if (!m) return;
+    const srv = state.server;
+    if (m.kind === 'cancel') {
+      srv.inspect = false;   // the page's Esc uninstalled the picker; main's flag dropped with it
+      if (state.step === 'liftoff') render();
+      return;
+    }
+    if (m.kind !== 'pick' || !state.createdProject) return;
+    const b = state.boom;
+    b.open = true;
+    b.context = m;
+    b.result = null;
+    b.candidates = null;
+    b.cardError = null;
+    // the click froze the pick — drop inspect so a stray second click can't
+    // clobber the card while the user is typing the intent
+    srv.inspect = false;
+    ApexBus.post('appFrameInspect', { on: false });
+    ApexBus.post('projectsBoomOpen', { projectId: state.createdProject.projectId });
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsBoomCard', (m) => {
+    if (!m) return;
+    state.boom.usage = m.usage || null;
+    state.boom.cardError = m.error || null;
+    if (state.step === 'liftoff' && state.boom.open) render();
+  });
+
+  ApexBus.on('projectsBoomStatus', (m) => {
+    if (!m) return;
+    const b = state.boom;
+    if (m.phase === 'running') {
+      b.busy = true;
+      b.candidates = m.candidates || null;
+      b.truncated = Boolean(m.truncated);
+    } else if (m.phase === 'stopped') {
+      b.busy = false;
+    }
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsBoomResult', (m) => {
+    if (!m) return;
+    state.boom.busy = false;
+    state.boom.result = m;
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsBoomLedger', (m) => {
+    if (!m) return;
+    if (state.createdProject && m.projectId !== state.createdProject.projectId) return;
+    state.boom.ledger = m.entries || [];
+    if (state.step === 'liftoff') render();
+  });
+
+  ApexBus.on('projectsBoomRevertResult', (m) => {
+    if (!m) return;
+    const b = state.boom;
+    b.revertBusy = false;
+    b.revertMsg = m.ok
+      ? 'Reverted (' + (m.mode || '') + ').'
+      : 'Not reverted — ' + (m.error || 'unknown error');
+    if (state.createdProject)
+      ApexBus.post('projectsBoomLedgerGet', { projectId: state.createdProject.projectId });
+    if (state.step === 'liftoff') render();
   });
 
   // smoke eyes (A4): the SEE step must be REACHABLE in a smoke run with no

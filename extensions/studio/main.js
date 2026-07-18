@@ -29,6 +29,9 @@ const spines = require('./lib/spines');
 const liftoff = require('./lib/liftoff');
 const importer = require('./lib/importer');
 const servers = require('./lib/servers');
+const resolver = require('./lib/resolver');
+const surgeon = require('./lib/surgeon');
+const boom = require('./lib/boom');
 
 const CONFIG_FILE = 'workspace.json';
 
@@ -1399,6 +1402,18 @@ function register(ctx) {
     readSpine(path.join(paths.designDir, 'components.json')),
     readSpine(path.join(paths.designDir, 'manifest.json')));
 
+  // C2 demote → delegate: the boom intent rides the SAME F2 composition as
+  // extra addendum tail (one composeKickoffBrief call, no new machinery) —
+  // PROJECT.md still wins whole, and an overflow still truncates the tail
+  // with liftoff.js's honest marker. Bounded like every kickoff input.
+  const boomHandoff = (intent) => {
+    const cut = String(intent || '').trim().slice(0, surgeon.MAX_INTENT_CHARS);
+    return cut
+      ? '\n\nBOOM-CHANGE HANDOFF (a click-to-edit intent judged bigger than one ' +
+        'surgical strike — treat it as a first work item):\n' + cut
+      : '';
+  };
+
   // Lift-off (a): register the project's folder into seatconfig.json's
   // `_workspaces`. The actual write is ctx.seats.registerWorkspace — a plain
   // synchronous ctx.seats method, not a bus verb (see its comment in
@@ -1470,7 +1485,9 @@ function register(ctx) {
       // F2: the brief is PROJECT.md verbatim PLUS the contract addendum —
       // composed (and cap-trimmed, PROJECT.md winning) in lib/liftoff.js so
       // main/tasks.js's own 20000-char slice never cuts anything silently.
-      const brief = liftoff.composeKickoffBrief(canonicalText, contractAddendum(paths));
+      // C2: a demoted boom's intent (if any) rides the addendum tail.
+      const brief = liftoff.composeKickoffBrief(canonicalText,
+        contractAddendum(paths) + boomHandoff(message && message.boomIntent));
       const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
       const title = 'Delegate: ' + (frontmatter.display_name || projectId);
       ctx.bus.inject({
@@ -1610,6 +1627,236 @@ function register(ctx) {
     try { serverManager.stop(requireServerProject(message)); }
     catch (err) { postServerFailure(message && message.projectId, err); }
   });
+
+  // ---- the boom flow (slice C2, § Wave C) ----------------------------------
+  // A pick from the app frame's inspector (main/appFrame.js appFramePick)
+  // opens the renderer's BOOM card; GO here runs the whole loop: resolver →
+  // one Surgeon disposable → parseReply (fail-closed) → demote or apply →
+  // ledger. The A3 prepare/approve machinery is COLLAPSED on purpose: the
+  // card IS the approval (projectsBoomGo carries approved:true), the usage
+  // snapshot posts when the card opens (projectsBoomOpen), there is no TTL —
+  // just single-flight and the 5-minute backstop. Every git touch goes
+  // through lib/boom.js's execFile seam (args array, never a shell);
+  // ctx.gitExecFile is the drill's recorder, child_process the real thing.
+  //
+  // Stated divergence (see lib/boom.js's header for the long form): the
+  // disposable seat primitive is tool-disabled and scratch-cwd by engine
+  // contract, and the engine is outside this slice — so the seat does NOT
+  // run in the project cwd; the top candidates' file contents ride the
+  // kickoff instead (bounded), which is what makes the complete-content
+  // apply discipline workable at all. No dead cwd field is passed (the F2
+  // seatCreate precedent: a field nothing reads would be a lie).
+  const BOOM_BACKSTOP_MS = 5 * 60 * 1000;
+  const gitExecFile = ctx.gitExecFile || require('child_process').execFile;
+  let activeBoom = null;   // { controller, backstop, projectId } — one boom at a time
+
+  const boomProjectPaths = (message) => {
+    const projectId = message && message.projectId;
+    const workspace = selectedWorkspace(ctx.stateDir);
+    const paths = contract.projectPaths(workspace, projectId);
+    if (!fs.existsSync(paths.projectDir))
+      throw new Error('Create the project before boom-changing it.');
+    return { projectId, paths };
+  };
+
+  const postBoomLedger = (projectId) => ctx.bus.post('projectsBoomLedger', {
+    projectId, entries: boom.readLedger(ctx.stateDir, projectId), error: null,
+  });
+
+  // Card open = the collapsed "prepare": usage snapshot only, no TTL, no
+  // prepared token — GO itself is the approval.
+  ctx.bus.on('projectsBoomOpen', (message) => {
+    try {
+      const { projectId } = boomProjectPaths(message);
+      const usage = ctx.usage && typeof ctx.usage.claudeSnapshot === 'function'
+        ? ctx.usage.claudeSnapshot() : null;
+      const usageFresh = Boolean(usage && usage.asOf && !usage.stale &&
+        Date.now() - usage.asOf <= 5 * 60 * 1000);
+      ctx.bus.post('projectsBoomCard', {
+        projectId,
+        usage: usage ? {
+          session: usage.session || null,
+          weekly: usage.weekly || null,
+          asOf: usage.asOf || null,
+          stale: !usageFresh,
+        } : null,
+        requiresApproval: true,
+      });
+      postBoomLedger(projectId);
+    } catch (err) {
+      ctx.bus.post('projectsBoomCard', {
+        projectId: message && message.projectId, usage: null,
+        requiresApproval: true, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsBoomLedgerGet', (message) => {
+    try { postBoomLedger(boomProjectPaths(message).projectId); }
+    catch (err) {
+      ctx.bus.post('projectsBoomLedger', {
+        projectId: message && message.projectId, entries: [], error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsBoomGo', (message) => {
+    try {
+      if (!message || message.approved !== true)
+        throw new Error('The boom pass runs a hidden Claude session — GO is the explicit approval.');
+      if (activeBoom) throw new Error('A boom is already in flight — one surgical strike at a time.');
+      if (!ctx.seats || typeof ctx.seats.startDisposable !== 'function')
+        throw new Error('Disposable seat service is unavailable.');
+      const intent = String(message.intent || '').trim();
+      if (!intent) throw new Error('Say what should change — the intent is the whole job.');
+      const { projectId, paths } = boomProjectPaths(message);
+
+      // The resolver, honestly: candidates carry their tier and confidence to
+      // the card AND into the kickoff verbatim — never a silent guess.
+      const resolved = resolver.resolveElement(paths.projectDir, message.context);
+      ctx.bus.post('projectsBoomStatus', {
+        phase: 'running', projectId,
+        candidates: resolved.candidates, truncated: resolved.truncated,
+      });
+
+      const frontmatter = projectFrontmatter(paths.projectDir, paths.canonical);
+      const kickoff = boom.composeBoomKickoff({
+        displayName: frontmatter.display_name || projectId,
+        intent,
+        context: message.context,
+        candidates: resolved.candidates,
+        projectRoot: paths.projectDir,
+      });
+
+      // The launch passthrough (slice 5), same as every other pass: omitted
+      // entirely when the STUDIO picker holds no pick.
+      const pick = modelPicker.readModelPick(ctx.stateDir);
+      const launch = (pick.model || pick.effort)
+        ? { model: pick.model || undefined, effort: pick.effort || undefined }
+        : null;
+
+      let finalText = '';
+      const done = (payload) => {
+        if (!activeBoom) return;
+        const seat = activeBoom;
+        activeBoom = null;
+        clearTimeout(seat.backstop);
+        try { seat.controller.close(); } catch { /* already gone */ }
+        ctx.bus.post('projectsBoomResult', {
+          projectId, intent, ok: false, error: null,
+          ...payload,
+        });
+      };
+
+      // The landing, ordered: parse (fail-closed) → demote check → apply-time
+      // re-wall/plan → snapshot (dirty read or backup-FIRST) → atomic apply →
+      // commit (git mode) → ledger append. Async for the git seam alone.
+      const land = async () => {
+        const parsed = surgeon.parseReply(finalText);
+        if (parsed.error) { done({ error: 'the surgeon reply failed the contract: ' + parsed.error }); return; }
+        const result = parsed.result;
+        const verdict = surgeon.detectDemote(result);
+        const mode = boom.isGitRepo(paths.projectDir) ? 'git' : 'backup';
+        if (verdict.demote) {
+          // Bigger than a boom: NO writes, a ledger entry that says so, and
+          // the card offers DELEGATE (the renderer pre-fills the Lift-off
+          // flow with this intent — boomHandoff above carries it).
+          const entries = boom.appendLedgerEntry(ctx.stateDir, projectId, {
+            intent, mode, token: null, demoted: true,
+            files: result.edits.map((e) => ({ file: e.file, kind: e.kind })),
+          });
+          done({ demoted: true, reasons: verdict.reasons, summary: result.summary });
+          ctx.bus.post('projectsBoomLedger', { projectId, entries, error: null });
+          return;
+        }
+        const plan = boom.planApply(paths.projectDir, result);
+        if (!plan.ok) { done({ error: plan.error }); return; }
+        const files = plan.files.map((f) => ({ file: f.file, kind: f.kind }));
+        let token = null;
+        let warning = null;
+        if (mode === 'git') {
+          // Snapshot BEFORE applying: the dirty list scopes the honesty note
+          // (a boom file that already had uncommitted edits gets them swept
+          // into the boom commit — said out loud, never silently), and the
+          // commit stages ONLY the boom's files (add -- <files>, never -A).
+          const dirty = await boom.gitDirtyFiles(gitExecFile, paths.projectDir);
+          const overlap = files.filter((f) => dirty.includes(f.file)).map((f) => f.file);
+          boom.applyEdits(plan.files);
+          token = await boom.gitCommitBoom(gitExecFile, paths.projectDir,
+            files.map((f) => f.file), intent);
+          if (overlap.length)
+            warning = 'These files had uncommitted changes that rode into the boom commit: ' +
+              overlap.join(', ');
+        } else {
+          token = String(Date.now());
+          boom.backupFiles(ctx.stateDir, projectId, plan.files, token);   // backup FIRST
+          boom.applyEdits(plan.files);
+        }
+        const entry = { ts: new Date().toISOString(), intent, files, mode, token };
+        const entries = boom.appendLedgerEntry(ctx.stateDir, projectId, entry);
+        done({ ok: true, summary: result.summary, edits: files, mode, token, warning });
+        ctx.bus.post('projectsBoomLedger', { projectId, entries, error: null });
+      };
+
+      const controller = ctx.seats.startDisposable({
+        kickoff,
+        ...(launch ? { launch } : {}),
+        onEvent: (event) => {
+          if (!activeBoom) return;
+          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
+          else if (event.type === 'result') {
+            land().catch((err) => done({ error: err.message }));
+          } else if (event.type === 'dead') {
+            done({ error: 'the surgeon seat exited before answering' });
+          }
+        },
+      });
+      activeBoom = {
+        controller, projectId,
+        backstop: setTimeout(() => done({ error: 'the boom pass timed out' }), BOOM_BACKSTOP_MS),
+      };
+    } catch (err) {
+      ctx.bus.post('projectsBoomResult', {
+        projectId: message && message.projectId, intent: message && message.intent,
+        ok: false, error: err.message,
+      });
+    }
+  });
+
+  ctx.bus.on('projectsBoomStop', () => {
+    if (!activeBoom) return;
+    const seat = activeBoom;
+    activeBoom = null;
+    clearTimeout(seat.backstop);
+    try { seat.controller.close(); } catch { /* already gone */ }
+    ctx.bus.post('projectsBoomStatus', { phase: 'stopped', projectId: seat.projectId });
+  });
+
+  // REVERT — the ledger's promise made real. Git mode refuses a dirty tree
+  // honestly; backup mode restores the copies atomically (and removes what
+  // the boom created). Both paths re-run the path wall on the ledger's own
+  // claims — a hand-edited state file earns a refusal, not a write.
+  ctx.bus.on('projectsBoomRevert', (message) => {
+    const finish = (payload) => ctx.bus.post('projectsBoomRevertResult', {
+      projectId: message && message.projectId, ok: false, error: null, ...payload,
+    });
+    try {
+      const { projectId, paths } = boomProjectPaths(message);
+      const entries = boom.readLedger(ctx.stateDir, projectId);
+      const entry = entries.find((e) => e.ts === (message && message.ts) &&
+        e.token === (message && message.token));
+      if (!entry) throw new Error('That ledger entry no longer exists.');
+      if (entry.demoted) throw new Error('A demoted boom applied nothing — there is nothing to revert.');
+      if (entry.mode === 'git') {
+        boom.gitRevertBoom(gitExecFile, paths.projectDir, entry.token)
+          .then(() => finish({ ok: true, mode: 'git' }))
+          .catch((err) => finish({ error: err.message }));
+      } else {
+        const out = boom.revertBackup(ctx.stateDir, projectId, paths.projectDir, entry);
+        finish({ ok: true, mode: 'backup', restored: out.restored, removed: out.removed });
+      }
+    } catch (err) { finish({ error: err.message }); }
+  });
 }
 
 // Slice B1: every dev server dies with the extension — main/extensions.js
@@ -1641,3 +1888,4 @@ module.exports.packageCreator = packageCreator;
 module.exports.liftoff = liftoff;
 module.exports.importer = importer;
 module.exports.servers = servers;
+module.exports.boom = boom;

@@ -9,6 +9,13 @@
 // Slice B3 extends it: instrument-event shaping (two kinds, hard caps), the
 // per-frame rate gate (20/s, drop beyond, one honest summary per second),
 // reset-on-navigate, and the appFrameEvent postTo wiring.
+// Slice C2 extends it again: the inspect seam (install/remove scripts via the
+// adapter's runScript, idempotence by page guard, reset on every page
+// replacement, honest refusal without the seam) and the pick channel —
+// shapePickPayload as the A5 validator's twin (caps, rebuilt fields,
+// fail-closed) and the magic-prefix routing order (prefix BEFORE the
+// error-level chip gate, which moved into the registry for exactly that:
+// raw console events now carry `level`, and only 'error' lines ever chip).
 // Zero Electron, zero LLM spend. Run: node test/appframe-drill.js
 'use strict';
 
@@ -112,12 +119,14 @@ function mockWindow() {
   };
 }
 
-// A recording view adapter — the exact contract main.js's factory returns.
+// A recording view adapter — the exact contract main.js's factory returns
+// (runScript is C2's addition: executeJavaScript on the hosted page).
 function stubView(allowedUrl) {
-  return { allowedUrl, loads: [], boundsSet: [], visibleSet: [], destroyed: 0,
+  return { allowedUrl, loads: [], boundsSet: [], visibleSet: [], destroyed: 0, scripts: [],
     loadURL(u) { this.loads.push(u); },
     setBounds(b) { this.boundsSet.push(b); },
     setVisible(v) { this.visibleSet.push(v); },
+    runScript(js) { this.scripts.push(js); },
     destroy() { this.destroyed++; } };
 }
 
@@ -285,14 +294,22 @@ gate('events forward shaped, to the frame\'s own window; junk raw events never l
   const win = mockWindow();
   rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
   const v = rig.views[0];
-  v.onEvent({ kind: 'console', text: 'a'.repeat(500), url: 'http://localhost:5173/x.js' });
+  v.onEvent({ kind: 'console', level: 'error', text: 'a'.repeat(500), url: 'http://localhost:5173/x.js' });
   assert.equal(rig.posted.length, 1);
   assert.equal(rig.posted[0].win, win, 'the event lands on the hosting window alone');
   assert.equal(rig.posted[0].msg.kind, 'console');
   assert.equal(rig.posted[0].msg.text.length, 300, 'the cap holds through the registry');
+  assert.equal(rig.posted[0].msg.level, undefined, 'level is routing input, never payload');
   v.onEvent({ kind: 'evil', text: 'x' });
   v.onEvent(null);
   assert.equal(rig.posted.length, 1, 'junk drops silently');
+  // C2 moved the error-level gate here: the factory now forwards EVERY
+  // console line with its level, and only 'error' ones chip.
+  v.onEvent({ kind: 'console', level: 'info', text: 'chatty page' });
+  v.onEvent({ kind: 'console', text: 'no level at all' });
+  assert.equal(rig.posted.length, 1, 'non-error console lines never chip');
+  v.onEvent({ kind: 'net', text: 'net events carry no level and still ride' });
+  assert.equal(rig.posted.length, 2);
 });
 
 gate('the rate gate: 20/s forward, overflow drops, ONE honest summary opens the next second', () => {
@@ -300,7 +317,7 @@ gate('the rate gate: 20/s forward, overflow drops, ONE honest summary opens the 
   const win = mockWindow();
   rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
   const v = rig.views[0];
-  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err ' + i });
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', level: 'error', text: 'err ' + i });
   assert.equal(rig.posted.length, 20, 'the 21st..25th dropped inside the window');
   rig.t += 1000;
   v.onEvent({ kind: 'net', text: 'late one' });
@@ -310,7 +327,7 @@ gate('the rate gate: 20/s forward, overflow drops, ONE honest summary opens the 
   assert.equal(rig.posted[21].msg.text, 'late one');
   // a clean window emits no summary
   rig.t += 1000;
-  v.onEvent({ kind: 'console', text: 'quiet second' });
+  v.onEvent({ kind: 'console', level: 'error', text: 'quiet second' });
   assert.equal(rig.posted.length, 23);
   assert.equal(rig.posted[22].msg.kind, 'console');
 });
@@ -320,14 +337,14 @@ gate('reset-on-navigate: a fresh page gets a fresh budget and no stale drop coun
   const win = mockWindow();
   rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
   const v = rig.views[0];
-  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err' });
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', level: 'error', text: 'err' });
   assert.equal(rig.posted.length, 20, 'saturated, 5 pending drops');
   rig.reg.navigate(win, { url: 'http://localhost:5173/' });   // the reload button
-  v.onEvent({ kind: 'console', text: 'fresh' });
+  v.onEvent({ kind: 'console', level: 'error', text: 'fresh' });
   assert.equal(rig.posted.length, 21, 'the budget reset — the event forwards');
   assert.equal(rig.posted[20].msg.text, 'fresh', 'and NO stale summary preceded it');
   // a changed-url show (reload path) resets the same way
-  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', text: 'err' });
+  for (let i = 0; i < 25; i++) v.onEvent({ kind: 'console', level: 'error', text: 'err' });
   const before = rig.posted.length;
   rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:4000', bounds: goodBounds });
   v.onEvent({ kind: 'net', text: 'new page' });
@@ -341,13 +358,13 @@ gate('per-frame budgets are independent; a destroyed frame forwards nothing', ()
   rig.reg.show(a, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
   rig.reg.show(b, { projectId: 'p2', url: 'http://localhost:4000', bounds: goodBounds });
   const va = rig.views[0], vb = rig.views[1];
-  for (let i = 0; i < 30; i++) va.onEvent({ kind: 'console', text: 'storm' });
+  for (let i = 0; i < 30; i++) va.onEvent({ kind: 'console', level: 'error', text: 'storm' });
   assert.equal(rig.posted.length, 20, 'window A saturated');
-  vb.onEvent({ kind: 'console', text: 'b speaks' });
+  vb.onEvent({ kind: 'console', level: 'error', text: 'b speaks' });
   assert.equal(rig.posted.length, 21, 'window B\'s budget is its own');
   assert.equal(rig.posted[20].win, b);
   rig.reg.destroyFor(b);
-  vb.onEvent({ kind: 'console', text: 'ghost' });
+  vb.onEvent({ kind: 'console', level: 'error', text: 'ghost' });
   assert.equal(rig.posted.length, 21, 'a straggler event after destroy is dead air');
 });
 
@@ -421,6 +438,202 @@ gate('register wires appFrameEvent onto bus.postTo at the hosting window', () =>
   assert.ok(ev, 'the shaped event rides the appFrameEvent verb');
   assert.equal(ev.win, win, 'postTo\'d at the hosting window, never broadcast');
   assert.deepEqual(ev.msg, { kind: 'net', text: 'ERR_CONNECTION_REFUSED (-102)', url: 'http://localhost:5173/' });
+});
+
+// ---- the pick payload (C2): the A5 validator's twin ------------------------
+
+const PREFIX = appFrame.PICK_PREFIX;
+const goodPick = () => ({
+  selector: '#hero > button.cta', classes: ['cta', 'big'],
+  text: 'Get started', tag: 'button', html: '<button class="cta big">Get started</button>',
+});
+const pickLine = (payload) => PREFIX + JSON.stringify(payload);
+
+gate('shapePickPayload admits the two known shapes, REBUILT field by field', () => {
+  const pick = appFrame.shapePickPayload(pickLine({ ...goodPick(), evil: 'extra', __proto__: null }));
+  assert.deepEqual(pick, { kind: 'pick', ...goodPick() }, 'known fields only, unknown keys dropped');
+  assert.deepEqual(appFrame.shapePickPayload(pickLine({ cancel: true })), { kind: 'cancel' });
+  assert.deepEqual(appFrame.shapePickPayload(pickLine({ ...goodPick(), classes: [] })).classes, [],
+    'a class-free element is a fine pick');
+});
+
+gate('shapePickPayload fails CLOSED on every hostile vector — drop whole, never repair', () => {
+  const over = (payload) => pickLine(payload);
+  const hostile = [
+    'no prefix at all',
+    PREFIX,                                        // empty JSON
+    PREFIX + 'not json',
+    PREFIX + '[1,2,3]',                            // array, not object
+    PREFIX + '"string"',
+    PREFIX + 'null',
+    over({ ...goodPick(), selector: '' }),         // empty selector
+    over({ ...goodPick(), selector: 'x'.repeat(257) }),
+    over({ ...goodPick(), text: 'x'.repeat(161) }),
+    over({ ...goodPick(), tag: '' }),
+    over({ ...goodPick(), tag: 'x'.repeat(25) }),
+    over({ ...goodPick(), html: 'x'.repeat(2001) }),
+    over({ ...goodPick(), classes: 'cta' }),       // not an array
+    over({ ...goodPick(), classes: Array(9).fill('c') }),   // 9 > 8
+    over({ ...goodPick(), classes: ['ok', 42] }),  // non-string class
+    over({ ...goodPick(), classes: ['x'.repeat(65)] }),
+    over({ selector: '#a', classes: [], text: '', tag: 'p' }),   // html missing
+    over({ ...goodPick(), selector: 42 }),
+    over({ cancel: 'true' }),                      // cancel must be literal true
+    PREFIX + JSON.stringify({ ...goodPick(), html: 'x'.repeat(1999) }).slice(0, 20),  // torn JSON
+    PREFIX + '{"selector":"#a","classes":[],"text":"","tag":"p","html":"' + 'x'.repeat(9000) + '"}',  // whole line over MAX_PICK_JSON
+    null, undefined, 42,
+  ];
+  for (const line of hostile)
+    assert.equal(appFrame.shapePickPayload(line), null,
+      'must refuse: ' + String(line).slice(0, 60));
+});
+
+// ---- inspect + the magic-prefix routing (C2) --------------------------------
+
+// The instrument rig plus the pick outlet — createView hands back onEvent,
+// postPick records what left the pick channel.
+function pickRig() {
+  const rig = { t: 100000, posted: [], picks: [], views: [] };
+  rig.reg = appFrame.createFrameRegistry({
+    createView: (win, allowedUrl, onEvent) => {
+      const v = stubView(allowedUrl); v.onEvent = onEvent; rig.views.push(v); return v;
+    },
+    postEvent: (win, msg) => rig.posted.push({ win, msg }),
+    postPick: (win, msg) => rig.picks.push({ win, msg }),
+    now: () => rig.t,
+  });
+  return rig;
+}
+
+gate('inspect: existing frame only, install/remove scripts through the adapter seam', () => {
+  const rig = pickRig();
+  const win = mockWindow();
+  const miss = rig.reg.inspect(win, { on: true });
+  assert.equal(miss.ok, false, 'inspect never conjures a frame — show owns creation');
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  const on = rig.reg.inspect(win, { on: true });
+  assert.equal(on.ok, true);
+  assert.equal(on.inspect, true);
+  assert.equal(v.scripts.length, 1);
+  assert.match(v.scripts[0], /__apexInspect/, 'the install script carries the double-inject guard');
+  assert.ok(v.scripts[0].includes(PREFIX), 'the install script posts with the magic prefix');
+  assert.equal(rig.reg.stateOf(win).inspect, true);
+  const off = rig.reg.inspect(win, { on: false });
+  assert.equal(off.inspect, false);
+  assert.match(v.scripts[1], /__apexInspect/, 'off runs the guarded uninstall');
+  assert.equal(rig.reg.stateOf(win).inspect, false);
+});
+
+gate('an adapter without runScript refuses inspect honestly', () => {
+  const reg = appFrame.createFrameRegistry({
+    createView: (win, allowedUrl) => {
+      const v = stubView(allowedUrl); delete v.runScript; return v;
+    },
+  });
+  const win = mockWindow();
+  reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const r = reg.inspect(win, { on: true });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /inspector/);
+});
+
+gate('magic-prefix routing: prefixed lines NEVER chip, unprefixed error lines chip as ever', () => {
+  const rig = pickRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  rig.reg.inspect(win, { on: true });
+  // a plain error line still chips normally
+  v.onEvent({ kind: 'console', level: 'error', text: 'boom happened' });
+  assert.equal(rig.posted.length, 1);
+  assert.equal(rig.picks.length, 0);
+  // a valid pick parses and rides the pick outlet alone
+  v.onEvent({ kind: 'console', level: 'log', text: pickLine(goodPick()) });
+  assert.equal(rig.picks.length, 1);
+  assert.equal(rig.picks[0].win, win, 'per-window like every frame post');
+  assert.equal(rig.picks[0].msg.kind, 'pick');
+  assert.equal(rig.picks[0].msg.selector, '#hero > button.cta');
+  assert.equal(rig.posted.length, 1, 'a prefixed line never chips');
+  // a prefixed line at ERROR level still never chips (prefix runs first)
+  v.onEvent({ kind: 'console', level: 'error', text: pickLine(goodPick()) });
+  assert.equal(rig.posted.length, 1);
+  assert.equal(rig.picks.length, 2);
+  // hostile prefixed payloads fail closed — dead air on BOTH wires
+  v.onEvent({ kind: 'console', level: 'log', text: PREFIX + '{"selector":42}' });
+  v.onEvent({ kind: 'console', level: 'error', text: PREFIX + 'not json' });
+  assert.equal(rig.posted.length, 1);
+  assert.equal(rig.picks.length, 2);
+});
+
+gate('picks only speak while inspect is on; an in-page Esc cancels AND drops the flag', () => {
+  const rig = pickRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  const v = rig.views[0];
+  // inspect off: a spoofed prefix line goes nowhere (and still never chips)
+  v.onEvent({ kind: 'console', level: 'error', text: pickLine(goodPick()) });
+  assert.equal(rig.picks.length, 0);
+  assert.equal(rig.posted.length, 0);
+  rig.reg.inspect(win, { on: true });
+  v.onEvent({ kind: 'console', level: 'log', text: pickLine({ cancel: true }) });
+  assert.equal(rig.picks.length, 1);
+  assert.equal(rig.picks[0].msg.kind, 'cancel');
+  assert.equal(rig.reg.stateOf(win).inspect, false, 'the page\'s Esc flipped the flag');
+  v.onEvent({ kind: 'console', level: 'log', text: pickLine(goodPick()) });
+  assert.equal(rig.picks.length, 1, 'after the cancel, picks are dead air again');
+});
+
+gate('every page replacement drops the inspect flag (the script died with the document)', () => {
+  const rig = pickRig();
+  const win = mockWindow();
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds });
+  rig.reg.inspect(win, { on: true });
+  rig.reg.navigate(win, { url: 'http://localhost:5173/' });   // the reload button
+  assert.equal(rig.reg.stateOf(win).inspect, false, 'navigate resets inspect');
+  rig.reg.inspect(win, { on: true });
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:4000', bounds: goodBounds });
+  assert.equal(rig.reg.stateOf(win).inspect, false, 'a changed-url show resets inspect');
+  // a bounds-sync re-show (same url) keeps it — nothing reloaded
+  rig.reg.inspect(win, { on: true });
+  rig.reg.show(win, { projectId: 'p1', url: 'http://localhost:4000', bounds: goodBounds });
+  assert.equal(rig.reg.stateOf(win).inspect, true, 'a same-url bounds sync is not a page replacement');
+});
+
+gate('register wires appFrameInspect and appFramePick onto per-window postTo', () => {
+  const handlers = new Map();
+  const sent = [];
+  const stubBus = {
+    on: (type, fn) => handlers.set(type, fn),
+    postTo: (win, type, msg) => sent.push({ win, type, msg }),
+  };
+  const win = mockWindow();
+  let onEv = null;
+  appFrame.register({
+    bus: stubBus,
+    windowFor: (sender) => (sender && sender.winIs) || null,
+    zoomOf: () => 1,
+    createView: (w, allowedUrl, onEvent) => { onEv = onEvent; return stubView(allowedUrl); },
+  });
+  assert.ok(handlers.has('appFrameInspect'));
+  handlers.get('appFrameShow')(
+    { type: 'appFrameShow', projectId: 'p1', url: 'http://localhost:5173', bounds: goodBounds },
+    { sender: { winIs: win } });
+  handlers.get('appFrameInspect')({ type: 'appFrameInspect', on: true }, { sender: { winIs: win } });
+  const st = sent.find((s) => s.type === 'appFrameInspectState');
+  assert.ok(st, 'the toggle answers on its own verb');
+  assert.equal(st.win, win);
+  assert.equal(st.msg.ok, true);
+  assert.equal(st.msg.inspect, true);
+  onEv({ kind: 'console', level: 'log', text: pickLine(goodPick()) });
+  const pick = sent.find((s) => s.type === 'appFramePick');
+  assert.ok(pick, 'the shaped pick rides the appFramePick verb');
+  assert.equal(pick.win, win, 'postTo\'d at the hosting window, never broadcast');
+  assert.equal(pick.msg.kind, 'pick');
+  // senderless inspect (smoke) drops silently, like every frame verb
+  const before = sent.length;
+  handlers.get('appFrameInspect')({ type: 'appFrameInspect', on: true }, {});
+  assert.equal(sent.length, before);
 });
 
 console.log('\nAPPFRAME DRILL: ' + passed + '/' + (passed + failed) + ' passed');

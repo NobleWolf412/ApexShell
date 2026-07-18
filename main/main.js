@@ -369,14 +369,15 @@ const appFrames = appFrame.register({
     };
     view.webContents.on('will-navigate', confine);
     view.webContents.on('will-redirect', confine);
-    // B3 instruments — LISTENERS ONLY (the debugger wire is Wave C's): the
-    // hosted page's error-level console lines and failed loads flow raw into
-    // the registry's shape/rate gate; every cap and bound lives there,
-    // drilled. Modern console-message shape: the event object itself carries
-    // level/message/sourceId (level is the string enum — only 'error' rides).
+    // B3/C2 instruments — LISTENERS ONLY (no debugger wire after all): every
+    // console line flows raw into the registry with its level riding along;
+    // the C2 pick-prefix filter and the B3 error-level chip gate BOTH live in
+    // appFrame.js now (drilled — the prefix must provably run first, and the
+    // C2 picker posts at plain log level, so the factory can no longer
+    // pre-filter on 'error'). Modern console-message shape: the event object
+    // itself carries level/message/sourceId (level is the string enum).
     view.webContents.on('console-message', (e) => {
-      if (e && e.level === 'error')
-        onEvent({ kind: 'console', text: e.message, url: e.sourceId });
+      if (e) onEvent({ kind: 'console', text: e.message, url: e.sourceId, level: e.level });
     });
     view.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
       if (code === -3) return;   // ERR_ABORTED — a navigate cancelled the load, not a failure
@@ -389,6 +390,10 @@ const appFrames = appFrame.register({
       loadURL: (u) => { view.webContents.loadURL(u).catch(() => { /* server died mid-load — the page shows its own error */ }); },
       setBounds: (b) => view.setBounds(b),
       setVisible: (v) => view.setVisible(v),
+      // C2 — the inspect seam's one Electron line: run the registry-owned
+      // picker script in the hosted page (rejects if the page is mid-navigate
+      // — the registry already dropped its inspect flag at that trigger).
+      runScript: (js) => { view.webContents.executeJavaScript(js).catch(() => { /* page went away under it */ }); },
       destroy: () => {
         try { win.contentView.removeChildView(view); } catch { /* window teardown already detached it */ }
         try { view.webContents.close(); } catch { /* already closed */ }

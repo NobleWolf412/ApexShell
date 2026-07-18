@@ -51,18 +51,28 @@ ApexShell/
 │   │                      and the bounds/reopen-preference persistence
 │   │                      (state/studio-window.json); Electron-free so the
 │   │                      multiwindow drill proves it
-│   ├── appFrame.js        the app frame (STUDIO v2 Wave B's one core touch):
+│   ├── appFrame.js        the app frame (STUDIO v2 Wave B+C core touch):
 │   │                      one main-owned WebContentsView per host window for
 │   │                      the studio's living preview — localhost-only URL
 │   │                      wall, bounds sanitation, per-window show/hide/
 │   │                      navigate/destroy registry, appFrame* bus verbs
-│   │                      (per-window postTo replies), and the B3 instrument
+│   │                      (per-window postTo replies), the B3 instrument
 │   │                      stream (console-error/failed-load events shaped,
 │   │                      capped, rate-bounded 20/s with an honest drop
 │   │                      summary, budget reset on navigate → appFrameEvent
-│   │                      per-window); Electron-free with an injectable view
+│   │                      per-window), and the C2 inspect seam — inspect()
+│   │                      injects a picker overlay into the hosted page via
+│   │                      the adapter's runScript; picks ride BACK on the
+│   │                      same console wire as '[apex-pick]'+JSON lines,
+│   │                      filtered by prefix BEFORE the error-level chip
+│   │                      gate (both gates live here, drilled — the factory
+│   │                      forwards every console line with its level),
+│   │                      validated by shapePickPayload (the A5 twin: caps,
+│   │                      rebuilt fields, fail-closed) → appFramePick
+│   │                      per-window; the flag drops on every page
+│   │                      replacement. Electron-free with an injectable view
 │   │                      factory (main.js supplies the sandboxed view, nav
-│   │                      confinement + the two thin listeners) so
+│   │                      confinement, the thin listeners + runScript) so
 │   │                      test/appframe-drill.js proves it headless
 │   ├── seats.js           seat lifecycle, presets, launch config, restore
 │   ├── terminal.js        built-in dock shell lifecycle + bounded replay
