@@ -1,7 +1,8 @@
 # STUDIO v2 — the one-stop app studio
 
-Status: proposed (Waves A and S shipped — see § Wave A / § Wave S; the file
-flips to implemented only when the last wave lands). Builds on
+Status: implemented (all waves shipped 2026-07-18 — A, S, B, C/D, E, F;
+slice-by-slice record in CHANGELOG § Unreleased, divergence notes on each
+wave's section below, deferred work in § Beyond v2). Builds on
 `design/app-builder-v1.md` (implemented). This
 spec is the gap audit between what v1 ships and the operator's stated
 outcome — *"the 1-stop shop for app building… it can show you what you're
@@ -209,7 +210,16 @@ careful, drilled); S2 — studio boot mode layout + pop-out affordance +
 bounds/preference persistence + the wave sweep folded in (small wave, two
 slices).
 
-## Wave B — the living preview (your real app, inside STUDIO)
+## Wave B — the living preview (your real app, inside STUDIO) (shipped)
+
+Shipped 2026-07-18 (slices B1-B3; CHANGELOG § Unreleased). Divergences from
+the text below: the runner rides an injectable spawner seam (child_process,
+not the PTY machinery — a dev server is a process to babysit, not a terminal
+to render); the instrument bar reads two thin webContents LISTENERS
+(console-message + did-fail-load), never the debugger API; ready detection
+adds a hard fallback timeout that ASSUMES up with an honest log note rather
+than killing a slow server; and the frame floats over the renderer — a
+partially scrolled-out preview rectangle does not clip (§ Beyond v2).
 
 - **Dev-server runner.** Per-project launch config (command, cwd, port,
   ready-regex) stored machine-side in `state/extensions/studio/servers.json`
@@ -231,7 +241,18 @@ Verification: a drill against a fixture static server (hermetic: spawn a
 tiny node http server, assert frame targeting/teardown via main-side state);
 smoke gains an `APEX_SMOKE_PREVIEW=1` affordance.
 
-## Wave C — boom changed (click-to-edit on real code)
+## Wave C — boom changed (click-to-edit on real code) (shipped)
+
+Shipped 2026-07-18 (slices C1-C2; CHANGELOG § Unreleased). Divergences from
+the text below: picks ride BACK on the existing console wire as
+`'[apex-pick]'+JSON` lines (no debugger channel — the B3 listener already
+flows to main, prefix-filtered before the chip gate); the Surgeon's edits
+carry each file's COMPLETE new content, not diffs (whole-file replace is the
+apply discipline the drills can hold airtight); and the disposable primitive
+is tool-disabled/scratch-cwd by engine contract, so the seat does NOT
+literally run in the project cwd — the top candidates' file contents ride
+the kickoff instead, bounded at the 16 KB small-file law (argued in
+`lib/boom.js`'s header; the walled-cwd disposable is § Beyond v2).
 
 The headline act, built on A+B:
 
@@ -266,7 +287,18 @@ files, all three tiers), surgeon-contract drills (hostile/oversized/
 malformed replies fail closed), ledger drills (change→revert round-trip),
 and a live gate with a real seat on a fixture app.
 
-## Wave D — the X-ray (front and back end, visible)
+## Wave D — the X-ray (front and back end, visible) (shipped)
+
+Shipped 2026-07-18 (slices D1-D2; CHANGELOG § Unreleased). Divergences from
+the text below: the step is named X-RAY, step id `xray` (`architecture` was
+already an interview-card key — the routing lesson); rendering is a
+validated-allowlist-grammar projection into plain HTML boxes + SVG arrows,
+NO mermaid library vendored (zero new deps held); the derived no-AI fallback
+renders immediately and Create ALWAYS stages `architecture.mmd` +
+provenance — the current AI source, or the fallback when none/stale, with
+provenance naming who drew what rode. The **actual view** (graphify/serena
+projected into the step) and the planned-vs-actual drift prompt did not land
+in v2 — only the planned view shipped (§ Beyond v2).
 
 - **Planned view.** An ARCHITECTURE step renders the blueprint's components/
   data/integrations as a generated diagram (one disposable turn → mermaid
@@ -282,7 +314,16 @@ and a live gate with a real seat on a fixture app.
   prompt with one-click blueprint amendment (through the normal
   patch-accept authority — the diagram never edits the blueprint itself).
 
-## Wave E — closing the loop (the actual one-stop shop)
+## Wave E — closing the loop (the actual one-stop shop) (shipped)
+
+Shipped 2026-07-18 (slice E1 — a one-slice wave; CHANGELOG § Unreleased).
+Divergences from the text below: milestone status is DERIVED live from the
+`taskList` broadcast (same-cwd task whose slugified title carries the
+milestone slug), never stored; "Open a chat here" sends the same composed
+brief as delegate through the one argued core seam (`main/seats.js`
+message-carried kickoff, capped 24 KB, never on resume) — with the stated
+bound that agy-dial blank seats have no first-turn slot (a PTY has no
+kickoff turn to ride).
 
 - **Build tracker.** The Lift-off screen becomes a living BUILD step:
   milestones from the blueprint's delivery area, each wired to its chain
@@ -295,7 +336,18 @@ and a live gate with a real seat on a fixture app.
   blueprint) → next milestone → … → the Sweep. Every stage in one pane, on
   one model picker, under one authority model.
 
-## Wave F — the product contract (design-grade output, editable anywhere)
+## Wave F — the product contract (design-grade output, editable anywhere) (shipped)
+
+Shipped 2026-07-18 (slices F1-F3, parallel-tracked beside B-E; CHANGELOG
+§ Unreleased). Divergences from the text below: only `design/tokens.json` is
+born at Create — `components.json` and `manifest.json` are created by the
+SCAFFOLD as it builds (the addendum says MUST-create per spine, honestly);
+the addendum rides the kickoff behind a pinned separator and absorbs any
+over-cap overflow itself (PROJECT.md is never cut); and design mode v1 is
+read-only + clipboard — pickers resolve and "copy change" writes a precise
+paste-ready instruction, but hot-apply/persist needs a dev-server write
+endpoint that does not exist yet (§ Beyond v2; honest limits in the
+template's header and `design/design-mode.md`).
 
 The operator's deepest requirement is about the OUTPUT, not the studio:
 *"the actual product the builder outputs needs to be unbelievably amazing…
@@ -343,9 +395,9 @@ arbitrary code (that's a research problem). The right answer is a
 
 ## Wave A — the slice cut (build-ready) (shipped)
 
-Prompts live in `design/studio-v2-prompts.md` (same protocol as v1's file;
-kept after Wave A shipped because Waves B-F extend it — the v1 precedent of
-deleting a prompts file applied to a COMPLETE build).
+The build-prompts file (`design/studio-v2-prompts.md`) was removed after the
+complete v2 build shipped — see git history (the v1 precedent: prompts files
+delete once their build is done).
 
 - **A1 — the Look card + schema v2.** Seventh interview area `look`
   (palette, type, density, tone, references — portable words, no binaries);
@@ -413,3 +465,25 @@ sandbox as mockups.
   property of apps built ON the contract. Imported/foreign projects get
   boom-change (Wave C) and the X-ray (Wave D), which work anywhere; the
   pickers require the spines.
+
+## Beyond v2 — deferred, honestly
+
+Named during the build, deliberately not shipped in it; each is a candidate
+slice, not a promise:
+
+- **The walled-cwd disposable** (engine slice): a disposable seat that runs
+  tool-enabled inside a named project cwd. C2's Surgeon compensates today by
+  riding candidate file contents on the kickoff (16 KB bound); with the
+  primitive, the seat reads and edits the project directly.
+- **A dev-server write endpoint for design mode** (per-stack scaffold
+  concern): design mode v1 is read-only + clipboard; a small dev-only
+  endpoint would let picker changes hot-apply and persist to the spines as
+  ordinary file writes, as § Wave F originally described.
+- **App-frame clipping on partial scroll** (B2's known limitation): the
+  WebContentsView floats over the renderer, so a preview rectangle partially
+  scrolled out of the pane overdraws instead of clipping. Cosmetic; fix if
+  it ever matters in practice.
+- **The X-ray's actual view + drift** (the unshipped half of § Wave D):
+  graphify/serena projected beside the planned diagram, with
+  planned-vs-actual drift feeding blueprint amendments through normal
+  authority. v2 shipped the planned view only.

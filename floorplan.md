@@ -12,9 +12,10 @@ the same change-set — a stale map is worse than none.
   `local.md` (Ollama), `agy.md`. Wire-verified operational detail + traps.
 - **Architecture** (this file): where everything lives and plugs in.
 - **Design history** (`design/`): one spec per wave (persona-builder-v1,
-  live-auditor-v1, app-builder-v1, consult-v1, studio-v2 + its live
-  prompts file studio-v2-prompts), the standing sweep protocol
-  (sweep-v1), and `design/reviews/` (archival persona-builder slice reviews).
+  live-auditor-v1, app-builder-v1, consult-v1, studio-v2 + its contract
+  satellites contract-spines and design-mode), port notes
+  (browser-switch-bones), the standing sweep protocol (sweep-v1), and
+  `design/reviews/` (archival persona-builder slice reviews).
 - **CHANGELOG.md**: version-stamped feature rollups.
 
 ## The three laws
