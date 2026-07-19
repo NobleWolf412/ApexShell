@@ -327,10 +327,20 @@ function register(ctx) {
         previewFailure('generate', err, { needsConfirmation: true });
         return;
       }
+      const changed = !current.preview || bundle.canonical !== current.preview.canonical;
       const draft = drafts.updateDraft(ctx.stateDir, current.id,
         message && message.expectedRevision, { preview: bundle });
       ctx.bus.post('personaPreviewResult', { ok: true, action: 'generated' });
-      ctx.bus.post('personaPreviewStatus', { draft, bundle: draft.preview, stale: false });
+      ctx.bus.post('personaPreviewStatus', {
+        draft, bundle: draft.preview, stale: false,
+        // Rendering is deterministic (no model in the loop): unchanged answers
+        // regenerate a byte-identical canonical. Without saying so, the click
+        // looks like a dead button (reported live 2026-07-18).
+        notice: changed
+          ? 'Regenerated from the saved interview — blueprint and canonical updated.'
+          : 'Regenerated — no change: the saved interview and setup choices produce this exact canonical. Edit an interview card or the setup choices to change the result.',
+        noticeTone: changed ? 'good' : 'warning',
+      });
     } catch (err) { previewFailure('generate', err); }
   });
 
@@ -369,7 +379,14 @@ function register(ctx) {
       const area = current.preview.blueprint && current.preview.blueprint[key];
       if (!area || typeof area.response !== 'string')
         throw new Error('Blueprint section is unavailable: ' + key);
-      const bundle = previewRenderer.regenerateSection(current.preview, key, area.response);
+      // Regenerate from the CURRENT interview answer — that is the button's
+      // whole point. Feeding back the blueprint's own stored response (the
+      // original wiring) rebuilt the text the canonical already held, so the
+      // button was a guaranteed no-op unless the section had manual edits.
+      const answer = current.answers && typeof current.answers[key] === 'string' &&
+        current.answers[key].trim() ? current.answers[key] : area.response;
+      const bundle = previewRenderer.regenerateSection(current.preview, key, answer);
+      const changed = bundle.canonical !== current.preview.canonical;
       const draft = drafts.updateDraft(ctx.stateDir, current.id,
         message && message.expectedRevision, { preview: bundle });
       ctx.bus.post('personaPreviewResult', { ok: true, action: 'section-regenerated' });
@@ -377,6 +394,12 @@ function register(ctx) {
         draft,
         bundle: draft.preview,
         stale: draft.preview.sourceHash !== previewRenderer.draftSourceHash(draft),
+        // Deterministic rendering means "no change" is a real outcome — say it,
+        // or the click reads as a dead button.
+        notice: changed
+          ? 'Section regenerated from the current interview answer.'
+          : 'Section regenerated — no change: its interview answer is identical to what the canonical already holds. Edit the card (BACK TO INTERVIEW) to change it.',
+        noticeTone: changed ? 'good' : 'warning',
       });
     } catch (err) { previewFailure('section-regenerate', err); }
   });
@@ -491,6 +514,11 @@ function register(ctx) {
         kickoff: tester.buildKickoff(draft, foundationText),
         cases,
       };
+      // Rough spend preview beside the usage snapshot (chars/4 — the honest
+      // heuristic; no counting endpoint on a CLI seat): the kickoff carries
+      // the full foundation + canonical, then one short turn per scenario.
+      const promptChars = preparedTest.kickoff.length +
+        cases.reduce((sum, c) => sum + (c.prompt ? c.prompt.length : 0), 0);
       ctx.bus.post('personaTestPrepared', {
         draftId: draft.id,
         revision: draft.revision,
@@ -501,6 +529,11 @@ function register(ctx) {
           asOf: usage.asOf || null,
           stale: !usageFresh,
         } : null,
+        estimate: {
+          promptChars,
+          promptTokens: Math.ceil(promptChars / 4),
+          turns: cases.length + 1,
+        },
         requiresApproval: true,
       });
     } catch (err) {

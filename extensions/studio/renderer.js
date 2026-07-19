@@ -844,6 +844,30 @@ function mountProjects(el, hasBus) {
     return bits.length ? 'Usage — ' + bits.join(' · ') : 'Usage check passed.';
   }
 
+  // Rough per-pass spend, shown beside the usage snapshot before RUN. Chars/4
+  // is the honest heuristic (no counting endpoint on a CLI seat); output is a
+  // typical range, not the contract's uselessly huge hard cap.
+  function mockupEstimateNote(estimate) {
+    if (!estimate || !estimate.promptTokens) return '';
+    const k = (n) => n >= 1000 ? (Math.round(n / 100) / 10) + 'k' : String(n);
+    return ' · This pass sends a ≈' + k(estimate.promptTokens) +
+      '-token prompt; a full mockup typically returns 2–8k output tokens.';
+  }
+
+  // The moving busy line — updated in place per progress post (a full render
+  // would reload the mockup iframes on every tick).
+  function mockupProgressText(mk) {
+    const base = 'Generating ' + (mk.selected || '') + '… ';
+    const p = mk.progress;
+    if (!p || !p.receivedChars) {
+      return base + (p && p.elapsedMs >= 3000
+        ? Math.round(p.elapsedMs / 1000) + 's — waiting for the first output (a full document can take a few minutes)'
+        : 'starting');
+    }
+    return base + Math.round(p.elapsedMs / 1000) + 's · ' +
+      (p.receivedChars / 1024).toFixed(1) + ' KB received';
+  }
+
   function wireAiSuggestBlock(card) {
     const prepareBtn = main.querySelector('.pjAiPrepare');
     const runBtn = main.querySelector('.pjAiRun');
@@ -935,10 +959,23 @@ function mountProjects(el, hasBus) {
     coHeadSub.textContent = cs.busy ? 'thinking…' : (cs.controllerActive ? 'live' : 'not connected');
   }
 
+  // The assistant's reply may end with an ```apex-studio {…} ``` fence that
+  // carries the patch JSON. Those patches already surface as accept/reject
+  // chips on the target card, so the fence itself is noise in the transcript —
+  // strip completed fences AND any in-flight opener so nothing leaks while a
+  // reply is still streaming.
+  function coStripPatchFence(text) {
+    const s = String(text || '');
+    const stripped = s.replace(/```apex-studio\s*[\s\S]*?```/g, '');
+    const openerIdx = stripped.indexOf('```apex-studio');
+    return (openerIdx >= 0 ? stripped.slice(0, openerIdx) : stripped).replace(/\s+$/, '');
+  }
+
   function coRenderLog() {
     const cs = state.codesigner;
     coLog.innerHTML = cs.log.map((m, i) => {
-      const text = (i === cs.streamingIndex) ? (m.text + cs.streaming) : m.text;
+      const raw = (i === cs.streamingIndex) ? (m.text + cs.streaming) : m.text;
+      const text = m.role === 'assistant' ? coStripPatchFence(raw) : raw;
       const cls = m.role === 'user' ? 'pjCoMsgUser' : 'pjCoMsgAi';
       return '<div class="pjCoMsg ' + cls + '">' + (escapeHtml(text) || '&hellip;') + '</div>';
     }).join('');
@@ -1361,9 +1398,10 @@ function mountProjects(el, hasBus) {
           (mk.busy ? '<button type="button" class="pjBtn pjMockStop">STOP</button>' : '') +
         '</div>' +
         (mk.prepared
-          ? '<div class="pjWsSub pjAiUsage">' + escapeHtml(usageNote(mk.prepared.usage)) + '</div>'
+          ? '<div class="pjWsSub pjAiUsage">' +
+              escapeHtml(usageNote(mk.prepared.usage) + mockupEstimateNote(mk.prepared.estimate)) + '</div>'
           : '') +
-        (mk.busy ? '<div class="pjWsSub pjAiUsage">Generating ' + escapeHtml(mk.selected || '') + '…</div>' : '') +
+        (mk.busy ? '<div class="pjWsSub pjAiUsage pjMockProgress">' + escapeHtml(mockupProgressText(mk)) + '</div>' : '') +
         (mk.resultError ? '<div class="pjErr" data-tone="warn">' + escapeHtml(mk.resultError) + '</div>' : '') +
       '</div>' +
       '<div class="pjCard">' +
@@ -1562,6 +1600,7 @@ function mountProjects(el, hasBus) {
     if (runBtn) runBtn.addEventListener('click', () => {
       if (runBtn.disabled || !mk.prepared) return;
       mk.busy = true;
+      mk.progress = null;   // fresh run, fresh ticker
       ApexBus.post('projectsMockupRun', {
         id: mk.prepared.draftId, screen: mk.prepared.screen,
         expectedRevision: mk.prepared.revision, approved: true,
@@ -1858,6 +1897,7 @@ function mountProjects(el, hasBus) {
           '<select class="pjSectionSelect pjDraftSelect">' + sectionOptions + '</select>' +
           '<div class="pjBtnRow">' +
             '<button type="button" class="pjBtn pjSectionRegenBtn">REGENERATE SECTION</button>' +
+            '<span class="pjSectionRegenNote" hidden></span>' +
           '</div>' +
         '</div>' +
         '<div class="pjErr pjCanonErr"></div>' +
@@ -1901,12 +1941,23 @@ function mountProjects(el, hasBus) {
     });
     main.querySelector('.pjSectionRegenBtn').addEventListener('click', () => {
       if (state.busy) return;
+      const key = main.querySelector('.pjSectionSelect').value;
       state.busy = true;
+      state.pendingSectionRegen = key;   // read once by the next preview status
       ApexBus.post('projectsPreviewRegenerateSection', {
-        id: draft.id, expectedRevision: draft.revision,
-        key: main.querySelector('.pjSectionSelect').value,
+        id: draft.id, expectedRevision: draft.revision, key,
       });
     });
+    // A successful regen posts projectsPreviewStatus, which re-renders this
+    // step. If the section's approved answer hasn't changed since the previous
+    // generation, the produced bytes are identical — surface a note either way
+    // so the button doesn't look like a no-op.
+    if (state.lastSectionRegen) {
+      const note = main.querySelector('.pjSectionRegenNote');
+      note.textContent = 'Regenerated: ' + sectionHeading(state.lastSectionRegen) + '.';
+      note.hidden = false;
+      state.lastSectionRegen = null;
+    }
     main.querySelector('.pjValidate').addEventListener('click', () => {
       ApexBus.post('projectsPreviewValidate', { id: draft.id });
     });
@@ -2698,6 +2749,12 @@ function mountProjects(el, hasBus) {
     state.confirmOverwrite = false;
     state.validation = null;   // a new bundle must be re-validated explicitly
     state.mockups.forDraft = null;  // canonical hash may have moved — refresh STALE bits
+    // Any pending section-regen just landed — the canonical step will show a
+    // one-line confirmation for it (see renderCanonical: pjSectionRegenNote).
+    if (state.pendingSectionRegen) {
+      state.lastSectionRegen = state.pendingSectionRegen;
+      state.pendingSectionRegen = null;
+    }
     state.step = 'canonical';  // every preview mutation lands in the canonical view
     render();
   });
@@ -2802,21 +2859,30 @@ function mountProjects(el, hasBus) {
 
   ApexBus.on('projectsMockupStatus', (m) => {
     if (m.phase === 'error') {
-      Object.assign(state.mockups, { prepared: null, busy: false, resultError: m.error });
+      Object.assign(state.mockups, { prepared: null, busy: false, resultError: m.error, progress: null });
       if (state.step === 'see') render();
       return;
     }
     if (m.phase === 'stopped') {
-      Object.assign(state.mockups, { prepared: null, busy: false });
+      Object.assign(state.mockups, { prepared: null, busy: false, progress: null });
       if (state.step === 'see') render();
+      return;
     }
-    // 'running' is already reflected client-side the instant RUN is clicked.
+    if (m.phase === 'running') {
+      // Progress ticks patch the busy line IN PLACE — a full render() would
+      // reload the mockup iframes on every tick. Missing node (other step
+      // visible) is fine; the state carries the latest tick for the repaint.
+      if (state.draft && m.draftId && m.draftId !== state.draft.id) return;
+      state.mockups.progress = { receivedChars: m.receivedChars || 0, elapsedMs: m.elapsedMs || 0 };
+      const node = main.querySelector('.pjMockProgress');
+      if (node) node.textContent = mockupProgressText(state.mockups);
+    }
   });
 
   ApexBus.on('projectsMockupResult', (m) => {
     if (state.draft && m.draftId !== state.draft.id) return;
     Object.assign(state.mockups, {
-      prepared: null, busy: false,
+      prepared: null, busy: false, progress: null,
       resultError: m.ok ? null : m.error,
     });
     // A successful write is followed by a fresh projectsMockupScreens post

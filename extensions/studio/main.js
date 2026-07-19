@@ -754,6 +754,21 @@ function register(ctx) {
     }
   });
 
+  // The one prompt both prepare (estimate) and run (send) build — same draft
+  // revision is enforced between the two, so the bytes are identical and the
+  // estimate can't drift from what actually ships.
+  const mockupPromptFor = (draft, screen) => {
+    const bundle = draft.preview;
+    return mockup.buildPrompt({
+      displayName: bundle.displayName,
+      blueprint: bundle.blueprint,
+      tokensSummary: design.compileTokens(bundle.blueprint.look).tokens.summary,
+      kind: mockup.deriveScreens(bundle.blueprint).kind,
+      screen,
+      notes: (draft.mockupNotes && draft.mockupNotes[screen.id]) || null,
+    });
+  };
+
   ctx.bus.on('projectsMockupPrepare', (message) => {
     try {
       const screen = mockup.cleanScreen(message && message.screen);
@@ -770,6 +785,10 @@ function register(ctx) {
         revision: draft.revision,
         preparedAt: Date.now(),
       };
+      // Rough spend preview beside the usage snapshot: prompt tokens ≈ chars/4
+      // (the honest heuristic — no counting endpoint on a CLI seat), output is
+      // a whole HTML document so a typical range beats a useless hard cap.
+      const promptChars = mockupPromptFor(draft, screen).length;
       ctx.bus.post('projectsMockupPrepared', {
         draftId: draft.id,
         screen,
@@ -780,6 +799,7 @@ function register(ctx) {
           asOf: usage.asOf || null,
           stale: !usageFresh,
         } : null,
+        estimate: { promptChars, promptTokens: Math.ceil(promptChars / 4) },
         requiresApproval: true,
       });
     } catch (err) {
@@ -812,22 +832,10 @@ function register(ctx) {
       // The provenance anchor: the approved canonical hash this mockup is
       // generated FROM. A later blueprint change flips the STALE badge.
       const canonicalHash = bundle.generatedCanonicalHash;
-      const derived = mockup.deriveScreens(bundle.blueprint);
-      // The A2 tokens summary — compiled, never re-implemented (lib/design.js
-      // is deterministic and total, so this costs nothing).
-      const tokensSummary = design.compileTokens(bundle.blueprint.look).tokens.summary;
-      // A5: a regen-with-notes IS this same verb — when the draft carries
-      // note chips for this screen they ride the prompt pinned to their
-      // elements' selector/text context; no notes, byte-identical to A3.
-      const screenNotes = (draft.mockupNotes && draft.mockupNotes[screen.id]) || null;
-      const prompt = mockup.buildPrompt({
-        displayName: bundle.displayName,
-        blueprint: bundle.blueprint,
-        tokensSummary,
-        kind: derived.kind,
-        screen,
-        notes: screenNotes,
-      });
+      // A5: a regen-with-notes IS this same verb — the draft's note chips for
+      // this screen ride the prompt via mockupPromptFor (same builder the
+      // prepare estimate used; same revision, so the same bytes).
+      const prompt = mockupPromptFor(draft, screen);
 
       // Slice 5's launch override, same passthrough as the suggest pass:
       // omitted entirely when the STUDIO picker holds no pick.
@@ -837,6 +845,20 @@ function register(ctx) {
         : null;
 
       let finalText = '';
+      // Live progress: a whole-document generation runs minutes — without a
+      // moving signal the pane is indistinguishable from a freeze (reported
+      // live 2026-07-18). The seat's own text stream is the signal; throttled
+      // so a chatty stream can't flood the bus.
+      const startedAt = Date.now();
+      let lastProgressAt = 0;
+      const postProgress = () => {
+        if (Date.now() - lastProgressAt < 500) return;
+        lastProgressAt = Date.now();
+        ctx.bus.post('projectsMockupStatus', {
+          phase: 'running', draftId: draft.id,
+          receivedChars: finalText.length, elapsedMs: Date.now() - startedAt,
+        });
+      };
       const done = (payload) => {
         if (!activeMockupSeat) return;
         const seat = activeMockupSeat;
@@ -853,8 +875,10 @@ function register(ctx) {
         ...(launch ? { launch } : {}),
         onEvent: (event) => {
           if (!activeMockupSeat) return;
-          if (event.type === 'text') finalText += (finalText ? '\n\n' : '') + (event.text || '');
-          else if (event.type === 'result') {
+          if (event.type === 'text') {
+            finalText += (finalText ? '\n\n' : '') + (event.text || '');
+            postProgress();
+          } else if (event.type === 'result') {
             const parsed = mockup.parseLlmReply(finalText);
             if (parsed.error) { done({ error: parsed.error }); return; }
             // Only a fully validated document ever reaches disk — and the
@@ -898,7 +922,9 @@ function register(ctx) {
         backstop: setTimeout(() => done({ error: 'the mockup pass timed out' }), MOCKUP_BACKSTOP_MS),
       };
       preparedMockup = null;
-      ctx.bus.post('projectsMockupStatus', { phase: 'running' });
+      ctx.bus.post('projectsMockupStatus', {
+        phase: 'running', draftId: draft.id, receivedChars: 0, elapsedMs: 0,
+      });
     } catch (err) {
       ctx.bus.post('projectsMockupResult', {
         draftId: message && message.id, screen: message && message.screen,

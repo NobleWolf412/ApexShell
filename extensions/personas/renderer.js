@@ -594,10 +594,20 @@
       : '';
     canonicalPreview.value = previewBundle.canonical;
     canonicalDirty = false;
-    previewState.textContent = message.stale
-      ? 'Interview answers changed after this preview. Regenerate all to bring them in.'
-      : 'Blueprint and canonical are generated from the saved interview.';
-    previewState.dataset.tone = message.stale ? 'warning' : 'good';
+    // An action-carried notice (regenerated / regenerated-but-identical) beats
+    // the ambient status line — deterministic rendering makes "no change" a
+    // real outcome the operator must SEE, or the button reads as dead.
+    if (message.notice) {
+      previewState.textContent = message.notice + (message.stale
+        ? ' Interview answers changed after this preview — REGENERATE ALL brings them in.'
+        : '');
+      previewState.dataset.tone = message.stale ? 'warning' : (message.noticeTone || 'good');
+    } else {
+      previewState.textContent = message.stale
+        ? 'Interview answers changed after this preview. Regenerate all to bring them in.'
+        : 'Blueprint and canonical are generated from the saved interview.';
+      previewState.dataset.tone = message.stale ? 'warning' : 'good';
+    }
     if (previewBundle.collaboration && previewBundle.collaboration.default_access === 'read-only') {
       const routineWrites = ['edit_files', 'send_external', 'change_system', 'delete_data']
         .filter((category) => previewBundle.blueprint.action_posture.actions[category] === 'allowed');
@@ -767,7 +777,15 @@
       testResults.appendChild(row);
       testRows.set(item.id, { row, observed, rating });
     }
-    testSummary.textContent = usageLabel(message.usage) +
+    // Spend preview beside the usage snapshot — chars/4 heuristic from main;
+    // the kickoff carries the whole foundation + canonical, so this is the
+    // Builder's priciest prompt and worth showing before the explicit start.
+    const est = message.estimate && message.estimate.promptTokens
+      ? ` · ≈${message.estimate.promptTokens >= 1000
+            ? (Math.round(message.estimate.promptTokens / 100) / 10) + 'k'
+            : message.estimate.promptTokens}-token prompt over ${message.estimate.turns} turns (plus short replies)`
+      : '';
+    testSummary.textContent = usageLabel(message.usage) + est +
       ` · ${message.cases.length} persona-derived cases prepared. Review the numbers, then start explicitly.`;
     testSummary.dataset.tone = message.usage && !message.usage.stale ? 'good' : 'warning';
     testPrepare.disabled = false;

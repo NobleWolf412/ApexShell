@@ -272,6 +272,8 @@ body.studioMode .studioView[data-builder="projects"] .pjRoot { padding-left: 0; 
 .studioView[data-builder="projects"] .pjCanonical:focus { outline: none; border-color: var(--accent); }
 .studioView[data-builder="projects"] .pjSectionRegen { margin-top: 14px; }
 .studioView[data-builder="projects"] .pjSectionSelect { margin-bottom: 0; }
+.studioView[data-builder="projects"] .pjSectionRegenNote { align-self: center;
+  font-size: 11px; font-weight: 700; letter-spacing: .12em; color: var(--good); }
 
 .studioView[data-builder="projects"] .pjValSummary { margin-top: 12px; font-size: 11px;
   font-weight: 700; letter-spacing: .12em; }
