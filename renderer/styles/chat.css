@@ -268,6 +268,37 @@
 }
 .msg.ai b { color: var(--text); }
 
+/* GFM tables (renderer/mdTable.js). The chat feed is proportional-font, so
+   raw `|---|---|` markdown looks jumbled — this renders them as a real grid.
+   white-space: normal on the table itself overrides the pre-wrap the .msg.ai
+   bubble sets for prose, so header/body rows don't inherit paragraph breaks. */
+.msg.ai table.mdTable {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12.5px;
+  white-space: normal;
+  overflow-x: auto;
+  display: block;
+  max-width: 100%;
+}
+.msg.ai table.mdTable th,
+.msg.ai table.mdTable td {
+  border: 1px solid var(--edge);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  word-break: break-word;
+}
+.msg.ai table.mdTable thead th {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 650;
+}
+.msg.ai table.mdTable tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+
 /* tool rows — the ⏺ lines the official panel shows */
 .toolRow {
   display: flex;

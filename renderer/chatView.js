@@ -68,15 +68,22 @@ window.ApexChat = (function () {
   // heading lines. Model output never reaches innerHTML unescaped. The shared
   // linkifier recognizes bounded Windows paths and visible-target HTTP(S).
   const linkify = (s) => ApexLinkify.linkifyEscaped(s);
+  // Inline transforms applied to a chunk of already-escaped prose — reused
+  // per-cell inside GFM tables so a link/code span/bold in a table cell reads
+  // the same as one in a paragraph.
+  const inlineMd = (s) => linkify(s)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+    .replace(/^(#{1,4}) (.+)$/gm, '<b>$2</b>');
   function md(s) {
     const parts = esc(s).split(/```(?:\w*\n)?/);
     let out = '';
     for (let i = 0; i < parts.length; i++) {
       if (i % 2 === 1) { out += '<pre>' + parts[i].replace(/\n$/, '') + '</pre>'; continue; }
-      out += linkify(parts[i])
-        .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-        .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-        .replace(/^(#{1,4}) (.+)$/gm, '<b>$2</b>');
+      // Tables render as real <table> elements so pipes/dashes don't turn
+      // into rubble under the chat's proportional font (mdTable.js). Non-
+      // table lines flow through the same inline pipeline as before.
+      out += ApexMdTable.render(parts[i], inlineMd);
     }
     return out;
   }
