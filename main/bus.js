@@ -14,6 +14,10 @@ const { ipcMain } = require('electron');
 
 const handlers = new Map();   // type -> [fn(payload, ctx), ...]
 const windows = new Set();    // every registered window's webContents
+const sinks = [];             // secondary consumers of post() — the mobile
+                              // lane (a non-window subscriber on the same
+                              // fan-out). Additive: every window keeps
+                              // receiving everything it always did.
 
 // A 'ready' is ONE freshly-loaded renderer asking for the world. Its re-posts
 // go to that sender alone: broadcasting them would replay seatNew/permission
@@ -62,14 +66,23 @@ function on(type, fn) {
 }
 
 // post('data', {...}) — main -> renderer: every live registered window, or
-// the readying window alone during a 'ready' dispatch
-function post(type, payload) {
+// the readying window alone during a 'ready' dispatch. Sinks (the mobile
+// lane) ride the normal broadcast fan only: ready re-posts stay targeted at
+// the window that asked (a phone requests its own seatList on connect), and
+// opts.windowOnly skips sinks for exactly one message — the desktop echo of
+// a phone-sent user turn, which the phone already rendered from the seatSend
+// echo and must not receive twice (design/mobile-face-bones.md, Hook 3).
+function post(type, payload, opts) {
   const msg = Object.assign({ type }, payload);
   if (replyTo) {
     if (!replyTo.isDestroyed()) replyTo.send('apex:msg', msg);
     return;
   }
   for (const wc of windows) if (!wc.isDestroyed()) wc.send('apex:msg', msg);
+  if (!(opts && opts.windowOnly))
+    for (const fn of sinks) {
+      try { fn(msg); } catch (e) { console.warn('[bus] sink error:', e.message); }
+    }
 }
 
 // postTo(win, 'winState', {...}) — main -> ONE window, outside any dispatch
@@ -84,10 +97,16 @@ function postTo(win, type, payload) {
   } catch { /* destroyed window — the getter throws; nothing to tell it */ }
 }
 
+// sink(fn) — register a secondary consumer of every broadcast post (the
+// mobile lane). A sink that throws is contained in post(); it must never
+// take a window down.
+function sink(fn) { sinks.push(fn); }
+
 // TEST AFFORDANCE (smoke only): drive a message through the exact routing a
 // renderer post would take — proves main-side handling without a renderer.
 // No sender, so even an injected 'ready' broadcasts (single-window smoke:
-// identical behavior).
+// identical behavior). The mobile lane rides the same door for phone frames
+// (sanitized first — main/mobile.js INBOUND).
 function inject(msg) { route(msg); }
 
-module.exports = { addWindow, removeWindow, on, post, postTo, inject };
+module.exports = { addWindow, removeWindow, on, post, postTo, inject, sink };

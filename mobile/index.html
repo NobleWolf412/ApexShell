@@ -1,0 +1,93 @@
+<!doctype html>
+<!-- Apex — the slim mobile face (2026-07-18). One page, phone-first, served
+     only on the tailnet by main/mobile.js. A second face on the same engine:
+     seats live on the desktop; this renders and drives them. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0e14">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="icon-192.png">
+<title>Apex</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="top">
+    <div id="brand"><img id="brandImg" src="apex-icon.png" alt="Apex"><span id="conn" class="dot off" title="connection"></span></div>
+    <div id="tabs"></div>
+  </header>
+
+  <main id="chat"></main>
+
+  <div id="workBar" hidden><span id="workText"></span><span id="workTime"></span></div>
+
+  <div id="permDock" hidden></div>
+
+  <div id="thumbStrip" hidden></div>
+
+  <div id="attachMenu" hidden>
+    <button id="attachPhoto">📷 Photos</button>
+    <button id="attachFile">📄 Files</button>
+  </div>
+
+  <footer id="composer">
+    <button id="attachBtn" title="attach">＋</button>
+    <input id="camInput" type="file" accept="image/*" multiple hidden>
+    <input id="fileInput" type="file" multiple hidden>
+    <textarea id="input" rows="1" placeholder="Message…" enterkeyhint="send"></textarea>
+    <button id="send">➤</button>
+  </footer>
+
+  <button id="viewTab" class="edgeTab left">VIEW</button>
+  <button id="aiTab" class="edgeTab right">AI</button>
+  <button id="todoTab" class="edgeTab right todo">TODO</button>
+
+  <aside id="viewDrawer" hidden>
+    <div class="drawerHead"><span id="viewName">Viewer</span><button id="viewClose">✕</button></div>
+    <div id="viewBody"><div class="sysnote">nothing shown yet — the seat's next visual lands here</div></div>
+  </aside>
+
+  <aside id="aiDrawer" hidden>
+    <div class="drawerHead"><span>AI bar</span><button id="aiClose">✕</button></div>
+    <div id="aiBody">
+      <div id="usageSec"><div class="sysnote">usage loading…</div></div>
+      <label class="dial"><span>Model</span><select id="dModel">
+        <option value="fable">fable</option><option value="opus">opus</option>
+        <option value="sonnet">sonnet</option><option value="haiku">haiku</option>
+      </select></label>
+      <label class="dial"><span>Effort <small>(restarts the seat)</small></span><select id="dEffort">
+        <option value="low">low</option><option value="medium">medium</option>
+        <option value="high">high</option><option value="xhigh">xhigh</option>
+        <option value="max">max</option>
+      </select></label>
+      <label class="dial"><span>Permissions</span><select id="dPerms">
+        <option value="manual">manual</option><option value="auto">auto</option>
+        <option value="acceptEdits">acceptEdits</option><option value="dontAsk">dontAsk</option>
+        <option value="bypassPermissions">bypass (restart)</option>
+      </select></label>
+      <button id="dChrome" class="chromeBtn">🌐 Browser: off</button>
+      <div class="sysnote" id="aiNote"></div>
+      <div class="rowBtns">
+        <button id="dWrap">🏁 End session</button>
+        <button id="dClose">✕ Close chat</button>
+      </div>
+      <button id="dRestart" class="restartBtn">⟳ Restart Apex (pick up new code)</button>
+    </div>
+  </aside>
+
+  <aside id="todoDrawer" hidden>
+    <div class="drawerHead">
+      <span>Task board</span><button id="todoClose">✕</button>
+    </div>
+    <div id="todoList"></div>
+  </aside>
+
+  <div id="newSeat" hidden>
+    <div class="drawerHead"><span>New chat</span><button id="newClose">✕</button></div>
+    <div id="presetList"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
