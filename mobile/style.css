@@ -180,6 +180,21 @@ button.allow { background: var(--allow); } button.deny { background: var(--deny)
   padding: 12px; border-radius: 10px; border: 1px solid var(--edge);
   background: var(--panel); color: var(--text); font-size: 15px; text-align: left;
 }
+/* the personality dial — same idiom as .dial, plus the free-text voice box */
+.voiceSec { display: flex; flex-direction: column; gap: 6px;
+  padding-top: 10px; border-top: 1px solid var(--edge); }
+.voiceSec textarea {
+  background: var(--panel); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 8px; padding: 10px; font-size: 15px; resize: vertical;
+  font-family: inherit;
+}
+.voiceRow { display: flex; gap: 8px; align-items: center; }
+.voiceRow .sysnote { flex: 1; }
+.voiceRow button {
+  padding: 8px 14px; border-radius: 8px; border: 1px solid var(--edge);
+  background: var(--panel); color: var(--text); font-size: 13px;
+}
+#voiceSave { border-color: var(--accent); color: var(--accent); }
 .chromeBtn.on { border-color: var(--accent); color: var(--accent); }
 
 .rowBtns { display: flex; gap: 10px; }

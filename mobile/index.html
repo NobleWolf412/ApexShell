@@ -67,6 +67,19 @@
         <option value="bypassPermissions">bypass (restart)</option>
       </select></label>
       <button id="dChrome" class="chromeBtn">🌐 Browser: off</button>
+      <div class="voiceSec">
+        <label class="dial"><span>Personality <small id="voiceWho"></small></span>
+          <select id="voicePreset"></select>
+        </label>
+        <textarea id="voiceText" maxlength="2000" rows="3"
+          placeholder="How should this persona speak? Free text — or pick a style above."></textarea>
+        <div class="voiceRow">
+          <span class="sysnote" id="voiceCount"></span>
+          <button id="voiceSave">Save voice</button>
+          <button id="voiceClear">Clear</button>
+        </div>
+        <div class="sysnote">applies to NEW chats with this persona — not the live one</div>
+      </div>
       <div class="sysnote" id="aiNote"></div>
       <div class="rowBtns">
         <button id="dWrap">🏁 End session</button>

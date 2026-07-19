@@ -18,6 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const bus = require('./bus');
 const store = require('./store');
+const { PERSONALITY_CAP } = require('./engine/voice');
 const { backfill } = require('./engine/transcripts');
 
 // APEX_MOBILE_PORT: smoke/test instances bind elsewhere so they never fight
@@ -79,6 +80,16 @@ const INBOUND = {
   seatList: () => ({ type: 'seatList' }),
   seatHistory: () => ({ type: 'seatHistory' }),
   seatPresets: () => ({ type: 'seatPresets' }),
+  seatConfigGet: () => ({ type: 'seatConfigGet' }),
+  // the personality dial (engine/voice.js): a per-PERSONA voice folded onto a
+  // seat's FIRST turn at launch — so a save applies to NEW chats, never the
+  // live one (the phone UI says so). Capped here AND downstream (seats.js
+  // slices to the same PERSONALITY_CAP); empty text clears the field, the
+  // desktop editor's own semantics.
+  seatConfigPersonality: (m) => (str(m.persona)
+    ? { type: 'seatConfigPersonality', persona: m.persona,
+        text: str(m.text).slice(0, PERSONALITY_CAP) }
+    : null),
   // Upstream's per-seat checklist module (main/todo.js) doesn't exist in this
   // fork — the board (main/tasks.js) is our checklist story. Swallow the
   // phone's request quietly instead of warn-spamming the bus with an
