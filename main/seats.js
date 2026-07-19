@@ -444,8 +444,11 @@ function register() {
       // handoff already composed their own wrapping and MUST NOT be reshaped).
       // Resume never sees a kickoff at all, so voice can't leak past its scope.
       const mKick = messageKickoff(msg);
-      const codexKickoff = mKick || (p && !msg.resume
-        ? wrapKickoff(p.kickoff || null, launch.personality)
+      // No preset guard: wrapKickoff(null, voice) is the "voice stands alone
+      // as the first turn" case (voice.js), so a blank/scratch seat with a
+      // saved personality still gets seasoned.
+      const codexKickoff = mKick || (!msg.resume
+        ? wrapKickoff(p && p.kickoff || null, launch.personality)
         : null);
       host.create(
         codexKickoff,
@@ -490,8 +493,10 @@ function register() {
     // See the codex branch — voice rides the preset kickoff, never a
     // message-carried one, never a resume.
     const mKick = messageKickoff(msg);
-    const claudeKickoff = mKick || (preset && !msg.resume
-      ? wrapKickoff(preset.kickoff || null, launch.personality)
+    // No preset guard — see the codex branch above. A blank seat with a
+    // saved personality wraps to a stand-alone voice line.
+    const claudeKickoff = mKick || (!msg.resume
+      ? wrapKickoff(preset && preset.kickoff || null, launch.personality)
       : null);
     host.create(
       claudeKickoff,

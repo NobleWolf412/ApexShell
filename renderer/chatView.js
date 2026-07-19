@@ -1436,7 +1436,19 @@ window.ApexChat = (function () {
         setStatus(c);
         break;
       }
-      case 'user': addUser(c, m.text); break;
+      case 'user': {
+        // engine/voice.js wraps the first turn with a `[voice] Speak in this style…`
+        // preface for the model's ears; the transcript should never show it.
+        // Strip the preface line (and the blank line beneath it); a voice-only
+        // kickoff has no visible body, so drop the whole turn.
+        let ut = m.text || '';
+        if (/^\[voice\] Speak in this style throughout the whole session:/.test(ut)) {
+          const nl = ut.indexOf('\n');
+          ut = nl < 0 ? '' : ut.slice(nl + 1).replace(/^\n+/, '');
+        }
+        if (ut) addUser(c, ut);
+        break;
+      }
       case 'block':
         if (m.kind === 'text') openText(c);
         c.activity = m.kind === 'thinking' ? 'thinking' : c.activity || 'writing';
@@ -1864,6 +1876,15 @@ window.ApexChat = (function () {
       ApexBus.post('seatConfigSet', { persona: personaSel.value, key: sel.dataset.key, value: sel.value });
     });
     box.querySelector('.cfgDefault').onclick = () => {
+      // Snapshot the whole panel, not just the dials — an un-saved voice edit
+      // in the textarea is what the operator sees, so treat it as part of
+      // "current" for this click. Matches the reset side's scope.
+      const voiceCur = voiceText.value.trim();
+      if (voiceCur !== voiceSaved.trim()) {
+        ApexBus.post('seatConfigPersonality', { persona: personaSel.value, text: voiceCur });
+        voiceSaved = voiceCur;
+        updateVoiceButtons();
+      }
       ApexBus.post('seatConfigDefault', { persona: personaSel.value });
       ApexToast(personaSel.value + ': current dials saved as its default');
     };
