@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+- **Builder feedback + spend estimates — no more dead-looking buttons**
+  (`extensions/personas/{main.js,renderer.js}`, `extensions/studio/{main.js,
+  renderer.js,style.css}`). Persona Builder: REGENERATE SECTION now feeds
+  `regenerateSection` the CURRENT interview answer (the original wiring fed
+  the blueprint's own frozen response back — a guaranteed no-op unless the
+  section carried manual edits), and both regenerate actions report their
+  outcome in the status line — rendering is deterministic, so "regenerated,
+  no change" is a real result the operator must SEE (reported live
+  2026-07-18: validate flagged gaps, regenerate "did nothing"). The STUDIO
+  canonical step gained the matching one-line regen confirmation
+  (`pjSectionRegenNote`). Spend previews before every explicit RUN: the
+  mockup pass builds its exact prompt at prepare time (same revision gate as
+  run, so the bytes can't drift) and shows ≈prompt tokens + a typical output
+  range beside the usage snapshot; the persona behavior test shows its
+  kickoff+cases estimate the same way (chars/4 — the honest heuristic, no
+  counting endpoint on a CLI seat). And the mockup pass now shows LIVE
+  progress — elapsed + KB received off the seat's own text stream, patched
+  into the busy line in place (a full render would reload the mockup
+  iframes) — a minutes-long document generation was previously
+  indistinguishable from a freeze.
+- **Mobile face — the phone as a second face over Tailscale** (ported from
+  upstream c99e2bb; walkthrough: `design/mobile-face-bones.md`). Seats keep
+  running on the desktop; a phone renders and drives them. Three additive
+  pieces: `main/bus.js` gains `sink()` + a `windowOnly` post opt (adapted to
+  our Wave-S multi-window fan-out — sinks ride the broadcast fan only, ready
+  re-posts stay window-targeted); `main/mobile.js` (the lane: tailnet-only
+  HTTP for the page + `backfill()` transcript replay + artifact serving off
+  the announcement allowlist, WS bridge whose inbound frames pass a strict
+  rebuilt-field-by-field whitelist — no PTY spawns, no launch configs, no
+  browser grants from a phone; loopback twin for a tailscale-serve HTTPS
+  proxy); `mobile/` (3-file vanilla client + installable manifest). Fork
+  deltas: `todoGet` swallowed quietly (no per-seat checklist module here —
+  the board is our checklist story). New dep: `ws`. Gates: syntax 3/3, full
+  hermetic suite green, smoke exit 0 with live probes — tailnet page 200,
+  loopback twin 200, manifest 200, traversal + artifact-leak guards held.
+  Widened past the upstream v1 for this fork: the new-seat drawer offers a
+  BLANK seat (whitelist accepts `persona: ''` — byte-identical to the desktop
+  + button; the lane still carries no launch config, so the operator's saved
+  defaults decide and nothing escalates), the TODO drawer renders the real
+  TASK BOARD (`taskList` request whitelisted; every board publish re-fires
+  the broadcast, so the drawer live-updates once opened) instead of
+  upstream's per-seat checklist this fork never had, and the dead 🌐 Browser
+  toggle hides itself (the browser-switch is doc-only here). Verified
+  against the live page in a phone viewport: blank-seat chip, board drawer,
+  wrap/close buttons reachable, WS round-trip for the board proven.
+
 - **Persona memory wrap — the state.md rewrite actually lands now**
   (`main/tasks.js`, `extensions/personas/{main.js,lib/wrap.js,lib/foundation.js,
   lib/creator.js}`, `test/live-cast/main.js`). Three stacked defects had left
