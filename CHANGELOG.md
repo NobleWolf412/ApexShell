@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- **Persona memory wrap — the state.md rewrite actually lands now**
+  (`main/tasks.js`, `extensions/personas/{main.js,lib/wrap.js,lib/foundation.js,
+  lib/creator.js}`, `test/live-cast/main.js`). Three stacked defects had left
+  every persona's `state.md` as cast-import placeholder text despite live
+  chains running: (1) `WRAP_BACKSTOP_MS` was 12s — the wrap turn is the
+  persona's multi-file MEMORY-WRITE turn (30–90s observed), so auto chains
+  closed the seat mid-write; now 120s (the consult backstop precedent —
+  `advance()` never waits on it, so chain latency is untouched). (2) The wrap
+  prompt's "nothing to record" escape hatch swallowed step 2's rewrite even
+  when files changed; the prompt (extracted to `lib/wrap.js` so drill and
+  extension share one text) now makes the state.md rewrite non-skippable,
+  placeholder text explicitly counting as stale. (3) `test/live-cast` could
+  never have caught either: it reported + disposed the instant the chain
+  finished (killing wraps mid-write) and never registered the personas wrap
+  prompt at all (extensions don't load there), so it drilled the generic
+  engine close-out — it now sets the real prompt via `extensionApi` and waits
+  for every chain seat's wrap to settle before snapshotting. Also: the
+  portable `DEFAULT_FOUNDATION` gains the tiered-memory + never-mix-repos
+  sections the kickoff already pointed at, and `seatKickoff` spells the exact
+  project-slug rule (ApexShell → apexshell) so the slug a persona writes
+  always matches the one consult's reader computes. Proven live 2026-07-18:
+  a real 3-step cast chain ended with all three personas rewriting/creating
+  `memory/projects/apexshell/state.md` (hash-verified by the drill).
+
 - **STUDIO v2, Wave E slice E1 — the living BUILD step + the chat-kickoff
   seam** (`extensions/studio/{main.js,renderer.js,style.css}` +
   `extensions/studio/lib/liftoff.js`; one argued core touch in

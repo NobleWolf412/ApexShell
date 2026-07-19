@@ -21,6 +21,29 @@ These rules apply to every persona in this workspace.
 - Preserve independent contexts during peer review.
 - Send structured evidence packets, not entire conversations, across handoffs.
 - Treat generated identity prose as a draft until the user accepts it.
+
+## Project-scoped memory (never mix repos)
+
+The repository you are working in is your PROJECT. Scope every memory read
+and write to \`memory/projects/<project>/\`, where <project> is the repo's
+folder name lowercased with runs of non-alphanumerics collapsed to single
+hyphens (ApexShell → apexshell). Never write one project's memory while
+working in another.
+
+## Memory is TIERED — read cheap, page in on demand
+
+1. \`memory/projects/<project>/state.md\` — working memory. ALWAYS read first;
+   keep it tiny (≤ ~40 lines): the active goal, recent decisions, and the
+   single next step.
+2. \`memory/projects/<project>/MEMORY.md\` — the index. ALWAYS read. One line
+   per durable note; it tells you WHAT exists, not the content.
+3. Note files — archival. Read ONLY the one or two the task actually touches.
+
+Never bulk-read the memory tree. On session wrap, REWRITE state.md so it
+reflects where the work stands NOW — it is rewritten, never appended — and
+record any durable note with its one-line MEMORY.md pointer. If state.md does
+not exist yet, the project is fresh: create it when there is state worth
+handing off.
 `;
 
 function normalizeContent(content) {

@@ -20,7 +20,15 @@ const handoff = require('./engine/handoff');
 
 const DONE_CAP = 50;          // pruned done/failed tasks kept for the history
 const TEXT_TAIL_CAP = 64 * 1024;   // per-turn text accumulator (keep the tail)
-const WRAP_BACKSTOP_MS = 12000;    // close a wrapped seat even if no result lands
+// Backstop on the wrap turn: close/release the seat even if no result ever
+// lands. The wrap is the persona's MEMORY-WRITE turn (rewrite state.md, record
+// notes, reflection) — multi-file tool work that routinely runs 30–90s, so a
+// short fuse here kills the writes mid-turn and the chain "runs clean" with no
+// state.md touched (observed live 2026-07-17 at the old 12s). The chain never
+// waits on this — advance() launches the next step immediately — so the only
+// cost of a generous bound is a hung seat lingering. 120s matches the consult
+// backstop (main/consult.js BACKSTOP_MS).
+const WRAP_BACKSTOP_MS = 120000;
 const MAX_ROUTE = 8;
 
 // Gates — every reason the chain stops for the user.

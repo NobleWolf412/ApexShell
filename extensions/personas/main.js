@@ -134,22 +134,9 @@ function register(ctx) {
   // without rewriting state.md (observed live 2026-07-17: full chain ran,
   // no state.md touched). Step 2 is self-guarding — a blank/local seat with
   // no foundation/identity simply skips it, so a global override is safe.
-  if (ctx.seats && typeof ctx.seats.setWrapPrompt === 'function') {
-    ctx.seats.setWrapPrompt([
-      '[seat-wrapup] This seat closes after this turn — do the close-out now:',
-      '1. Tie up loose ends from this session: finish or safely park in-flight',
-      '   work; commit anything that should not be lost.',
-      '2. IF you are a seated persona (you loaded a foundation.md and an identity',
-      '   with project memory): complete your MEMORY WRAP per that foundation NOW.',
-      '   Most important — REWRITE your project’s state.md so it reflects where',
-      '   the work stands right now (active goal, recent decisions, the single',
-      '   next step); it is rewritten, never appended. Record any durable note',
-      '   with its MEMORY.md pointer. If you have no persona memory, skip this step.',
-      '3. Leave a short handoff as your FINAL message: the state, the decisions',
-      '   made, and the next steps a future session needs to pick this up cold.',
-      'If there is genuinely nothing to tie up or record, say so in one line.',
-    ].join('\n'));
-  }
+  // Text lives in lib/wrap.js so test/live-cast can register the SAME prompt.
+  if (ctx.seats && typeof ctx.seats.setWrapPrompt === 'function')
+    ctx.seats.setWrapPrompt(require('./lib/wrap.js').WRAP_PROMPT);
 
   let activeImportAudit = null;
   let preparedTest = null;

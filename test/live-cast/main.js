@@ -65,15 +65,20 @@ app.whenReady().then(() => {
   // the REAL presets — real kickoffs (tiered memory), real persona home
   const presets = creator.listPresets(WS);
   for (const p of presets) seats.extensionApi.registerPreset(p, 'live-cast-drill');
-  log('presets: ' + presets.map((p) => p.name).join(', ') + '  (real dials from seatconfig)');
+  // the REAL wrap prompt too — the personas extension's main half is not
+  // loaded here, so without this the seats wrap on the generic engine default
+  // and the state.md-rewrite discipline is never actually drilled
+  seats.extensionApi.setWrapPrompt(require('../../extensions/personas/lib/wrap.js').WRAP_PROMPT);
+  log('presets: ' + presets.map((p) => p.name).join(', ') + '  (real dials from seatconfig, persona wrap prompt set)');
   tasks.register({ stateDir });
 
   const stateBefore = stateSnapshot();
   log('state.md snapshot: ' + JSON.stringify(stateBefore));
 
   const perms = [];
+  const chainSeats = new Set();   // every seat the chain opened — wrap-settle tracking
   seats.observeSeats((m) => {
-    if (m.type === 'seatNew') log('seat up: ' + m.id + ' "' + m.title + '"');
+    if (m.type === 'seatNew') { chainSeats.add(m.id); log('seat up: ' + m.id + ' "' + m.title + '"'); }
     if (m.type !== 'seatEvt') return;
     const ev = m.m;
     if (ev.type === 'init') log(m.id + ' init model=' + (ev.model || '?'));
@@ -90,7 +95,7 @@ app.whenReady().then(() => {
 
   require('../../main/bus').inject({
     type: 'taskCreate',
-    title: 'Add an explainer tooltip (title attribute) to the TERMINAL dock tab in renderer/index.html — it is the only dock tab without one; match the voice and depth of the VIEWER/TODO/AUDIT/SKILLS tab tooltips beside it. One-line change; run npm test after.',
+    title: 'In renderer/index.html, the blank-seat + rail button’s title tooltip reads "New chat - blank seat — double-click" with a plain hyphen after "New chat"; every other tooltip in the file uses an em dash. Fix that one character to match the house style. One-line change; run npm test after.',
     cwd: REPO,
     route: ['Architect', 'Coder', 'Auditor'],
     auto: true,
@@ -98,6 +103,8 @@ app.whenReady().then(() => {
   });
 
   const t0 = Date.now();
+  const WRAP_WAIT_MS = 180000;   // > tasks.js WRAP_BACKSTOP_MS (120s) + margin
+  let doneSeen = null;
   let lastLine = '';
   const timer = setInterval(() => {
     const t = tasks._test.tasks[0];
@@ -110,7 +117,21 @@ app.whenReady().then(() => {
       ' todos=' + (t.todos || []).filter((x) => x.done).length + '/' + (t.todos || []).length;
     if (line !== lastLine) { log(line); lastLine = line; }
     if (t.status === 'done' || (t.attention && t.attention.reason === 'complete')) {
-      report(t, 0); return;
+      // Chain done ≠ drill done: advance() fires each seat's WRAP turn (the
+      // state.md rewrite) and closes the seat on its result — reporting here
+      // would snapshot before the memory writes land and dispose() would kill
+      // them mid-write (the first run of this drill did exactly that). Wait
+      // until every chain seat has closed (wrap settled), backstopped past
+      // tasks.js's own WRAP_BACKSTOP_MS.
+      if (!doneSeen) { doneSeen = Date.now(); log('chain done — waiting for wrap turns to settle (memory writes)'); }
+      const open = [...chainSeats].filter((id) => seats.seatEntry(id));
+      if (!open.length || Date.now() - doneSeen > WRAP_WAIT_MS) {
+        if (open.length) log('wrap-wait backstop hit — still open: ' + open.join(', '));
+        report(t, 0); return;
+      }
+      const wline = 'wrapping: ' + open.join(', ') + ' still writing memory';
+      if (wline !== lastLine) { log(wline); lastLine = wline; }
+      return;
     }
     if (t.status === 'needs-attention' && t.attention && t.attention.reason !== 'complete') {
       log('GATE: ' + t.attention.reason + ' — ' + t.attention.detail);
