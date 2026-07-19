@@ -12,6 +12,7 @@ const bus = require('./bus');
 const store = require('./store');
 const artifacts = require('./artifacts');
 const { createSeatHost } = require('./engine/seatHost');
+const { wrapKickoff, normalize: normalizeVoice, PERSONALITY_CAP } = require('./engine/voice');
 
 // ---- seat presets: the shell ships ZERO named seats. Extensions register a
 // named rail button + kickoff prompt + optional working directory/wrap prompt.
@@ -248,6 +249,12 @@ function launchFor(persona) {
   if (typeof p.tools === 'string' && p.tools.trim()) launch.tools = p.tools.trim();
   if (typeof p.disallowedTools === 'string' && p.disallowedTools.trim())
     launch.disallowedTools = p.disallowedTools.trim();
+  // Per-persona VOICE (the "personality" section in the defaults panel). Same
+  // top-level shape as tools/disallowedTools — deliberately OUTSIDE the current/
+  // default layer machinery, so Set-as-default/Reset can't clobber it. The pure
+  // wrap composer (engine/voice.js) folds it onto the FIRST turn only.
+  const voice = normalizeVoice(p.personality);
+  if (voice) launch.personality = voice;
   return launch;
 }
 
@@ -432,8 +439,16 @@ function register() {
         const hit = (store.chatHistory()[persona] || []).find((e) => e.sessionId === msg.resume);
         if (hit && hit.title) ctitle = hit.title;
       }
+      // Voice is baked onto the preset kickoff only (a message-carried kickoff
+      // is the caller's whole first turn — the STUDIO BUILD step / a task chain
+      // handoff already composed their own wrapping and MUST NOT be reshaped).
+      // Resume never sees a kickoff at all, so voice can't leak past its scope.
+      const mKick = messageKickoff(msg);
+      const codexKickoff = mKick || (p && !msg.resume
+        ? wrapKickoff(p.kickoff || null, launch.personality)
+        : null);
       host.create(
-        messageKickoff(msg) || ((p && !msg.resume) ? (p.kickoff || null) : null),
+        codexKickoff,
         ctitle,
         { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), resume: msg.resume,
           launch: { model: 'codex', codexModel: launch.codexModel,
@@ -472,8 +487,14 @@ function register() {
     // already carries its persona in-history — kickoff is for FRESH preset
     // seats only. An unknown/retired preset name still opens a plain seat.
     const preset = presets.get(persona);
+    // See the codex branch — voice rides the preset kickoff, never a
+    // message-carried one, never a resume.
+    const mKick = messageKickoff(msg);
+    const claudeKickoff = mKick || (preset && !msg.resume
+      ? wrapKickoff(preset.kickoff || null, launch.personality)
+      : null);
     host.create(
-      messageKickoff(msg) || ((preset && !msg.resume) ? (preset.kickoff || null) : null),
+      claudeKickoff,
       title,
       { persona: persona || 'Seat', cwd: msgCwd || seatCwd(persona), launch, resume: msg.resume });
   };
@@ -600,9 +621,14 @@ function register() {
   };
   const postCfg = (cfg) => {
     const view = {};
-    for (const persona of [...presets.keys(), 'Seat'])
+    for (const persona of [...presets.keys(), 'Seat']) {
+      const p = cfg[persona] || {};
       view[persona] = { current: resolve(cfg, persona, 'current'),
-                        default: resolve(cfg, persona, 'default') };
+                        default: resolve(cfg, persona, 'default'),
+                        // Voice ships alongside the dials so the panel can render
+                        // its current state without a second round-trip.
+                        personality: normalizeVoice(p.personality) || '' };
+    }
     bus.post('seatConfig', { config: view });
   };
   const postPresets = () => bus.post('seatPresets', {
@@ -630,6 +656,21 @@ function register() {
     const cfg = readCfg();
     if (!cfg[msg.persona]) cfg[msg.persona] = {};
     cfg[msg.persona].default = resolve(cfg, msg.persona, 'current');
+    writeCfg(cfg);
+    postCfg(cfg);
+  });
+  bus.on('seatConfigPersonality', (msg) => {  // save/clear a persona's VOICE
+    if (!msg || typeof msg.persona !== 'string' || !msg.persona) return;
+    // Non-string / oversized text can't reach disk: the pure normalizer caps
+    // to PERSONALITY_CAP and rejects non-strings. Empty = clear the field.
+    const text = typeof msg.text === 'string'
+      ? (msg.text.length > PERSONALITY_CAP ? msg.text.slice(0, PERSONALITY_CAP) : msg.text)
+      : '';
+    const cfg = readCfg();
+    if (!cfg[msg.persona]) cfg[msg.persona] = {};
+    const trimmed = text.trim();
+    if (trimmed) cfg[msg.persona].personality = trimmed;
+    else delete cfg[msg.persona].personality;
     writeCfg(cfg);
     postCfg(cfg);
   });

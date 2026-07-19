@@ -651,3 +651,31 @@
 #seatCfg .cfgBtns button:hover { color: var(--text); border-color: var(--accent); }
 
 #seatCfg select:disabled { opacity: .38; cursor: default; }
+
+/* Voice ("personality") tile — the picker fills the textarea; the text is
+   what saves. Sits below the dials, above the Set-as-default row. */
+#seatCfg .cfgVoice { display: flex; flex-direction: column; gap: 6px; }
+#seatCfg .cfgVoice .cfgVoiceHead { display: grid;
+  grid-template-columns: 84px 1fr; align-items: center; gap: 0 10px; }
+#seatCfg .cfgVoiceText {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 4px;
+  font: 12px/1.5 inherit; padding: 6px 8px; outline: none; resize: vertical;
+  margin-left: 94px; min-height: 54px;
+}
+#seatCfg .cfgVoiceText:focus { border-color: var(--accent); }
+#seatCfg .cfgVoiceRow { display: flex; align-items: center; gap: 8px;
+  margin-left: 94px; font-size: 10.5px; color: var(--faint); }
+#seatCfg .cfgVoiceHint { flex: 1; }
+#seatCfg .cfgVoiceCount { font-variant-numeric: tabular-nums; }
+#seatCfg .cfgVoiceCount.over { color: var(--warning); }
+#seatCfg .cfgVoice button {
+  border: 1px solid var(--edge); background: var(--surface); color: var(--dim);
+  font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer;
+}
+#seatCfg .cfgVoice button:hover:not(:disabled) {
+  color: var(--text); border-color: var(--accent);
+}
+#seatCfg .cfgVoice button:disabled { opacity: .38; cursor: default; }
+#seatCfg .cfgVoiceSave { color: var(--accent); }
+#seatCfg .cfgVoiceSave:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 60%, var(--edge)); }

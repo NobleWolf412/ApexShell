@@ -1670,12 +1670,48 @@ window.ApexChat = (function () {
       dontAsk: 'Never ask — blocks anything not already allowed',
       bypassPermissions: 'Allow everything — never asks',
     };
+    // Voice presets — small, playful. The picker just fills the textarea; the
+    // TEXT is what's saved (custom = start blank and author your own). Keep in
+    // sync spiritually with main/engine/voice.js's PRESETS: the engine still
+    // normalizes/caps whatever ships, so a mismatch degrades safely.
+    const VOICE_PRESETS = {
+      '(none)':    '',
+      dry:        "Dry, understated, and terse. Short sentences. State facts without warmth or padding — no exclamation marks, no cheerleading.",
+      warm:       "Warm and friendly. Acknowledge what I'm asking before diving in. It's OK to be encouraging, but stay useful — no empty flattery.",
+      concise:    "Answer in as few words as possible. Skip preamble, skip summaries, skip 'let me know if…'. Direct answers only.",
+      chatty:     "Conversational and a little chatty — talk to me like a colleague at a whiteboard. Explain your thinking briefly out loud.",
+      mentor:     "Teach as you go. When you make a choice, name the tradeoff in one line. Assume I want to learn, not just be handed answers.",
+      salty:      "Blunt, no-nonsense, mildly grumpy. Cut through fluff. Push back when I'm wrong — respectfully but honestly.",
+      pirate:     "Answer in playful pirate voice — 'arr', 'ye', 'matey', the works. Keep the technical content correct; only the wrapping is piratical.",
+      hype:       "Enthusiastic and upbeat. Celebrate small wins, keep momentum going. Never sacrifice accuracy for cheerleading.",
+      professor:  "Precise and academic. Use full names, cite the specific mechanism or line. Prefer clarity over brevity.",
+      custom:     '',
+    };
+    const PERSONALITY_MAX = 2000;   // must match engine/voice.js PERSONALITY_CAP
     box.innerHTML =
       '<label><span class="cfgLbl">persona</span><select class="cfgPersona"></select><span class="cfgEff"></span></label>' +
       '<div class="cfgSep"></div>' +
       Object.keys(DIALS).map((k) =>
         '<label><span class="cfgLbl">' + k + '</span><select class="cfgDial" data-key="' + k + '"></select>' +
         '<span class="cfgEff" data-key="' + k + '"></span></label>').join('') +
+      '<div class="cfgSep"></div>' +
+      // Voice tile — the "personality" dial. Picker fills the textarea; the text
+      // is what saves. Persists top-level in seatconfig (safe from Set-as-default).
+      '<div class="cfgVoice">' +
+        '<label class="cfgVoiceHead"><span class="cfgLbl">personality</span>' +
+        '<select class="cfgVoicePreset" title="Pick a preset to fill the box — you can edit from there">' +
+          Object.keys(VOICE_PRESETS).map((n) =>
+            '<option value="' + n + '">' + n + '</option>').join('') +
+        '</select></label>' +
+        '<textarea class="cfgVoiceText" rows="3" spellcheck="false" ' +
+          'placeholder="How should this persona talk to you? (e.g. \'answer in one sentence\', \'be encouraging\', \'sound like a grumpy senior engineer\')"></textarea>' +
+        '<div class="cfgVoiceRow">' +
+          '<span class="cfgVoiceHint">Applied to the first turn of new chats. Reset-to-default doesn\'t clear it.</span>' +
+          '<span class="cfgVoiceCount"></span>' +
+          '<button class="cfgVoiceSave">Save voice</button>' +
+          '<button class="cfgVoiceClear">Clear</button>' +
+        '</div>' +
+      '</div>' +
       '<div class="cfgBtns"><button class="cfgDefault">Set as default</button>' +
       '<button class="cfgReset">Reset to default</button></div>';
     const personaSel = box.querySelector('.cfgPersona');
@@ -1703,6 +1739,72 @@ window.ApexChat = (function () {
       }
     }
     const RISKY = new Set(['bypassPermissions']);
+    const voicePresetSel = box.querySelector('.cfgVoicePreset');
+    const voiceText = box.querySelector('.cfgVoiceText');
+    const voiceCount = box.querySelector('.cfgVoiceCount');
+    const voiceSave = box.querySelector('.cfgVoiceSave');
+    const voiceClear = box.querySelector('.cfgVoiceClear');
+    // Track the "saved" text to grey out Save until something changed — small
+    // affordance, but the user just told us they want fun HERE; no reason to
+    // pretend a save happened when nothing did.
+    let voiceSaved = '';
+    function updateVoiceCount() {
+      const n = voiceText.value.length;
+      voiceCount.textContent = n + ' / ' + PERSONALITY_MAX;
+      voiceCount.classList.toggle('over', n >= PERSONALITY_MAX);
+    }
+    function updateVoiceButtons() {
+      const cur = voiceText.value;
+      voiceSave.disabled = (cur.trim() === voiceSaved.trim());
+      voiceClear.disabled = !cur && !voiceSaved;
+    }
+    function renderVoice(p) {
+      voiceSaved = String(p.personality || '');
+      voiceText.value = voiceSaved;
+      // Reflect a matching preset if one lines up; otherwise "(none)"/"custom".
+      const match = Object.keys(VOICE_PRESETS).find((n) =>
+        n !== '(none)' && n !== 'custom' &&
+        VOICE_PRESETS[n] === voiceSaved);
+      voicePresetSel.value = match ? match
+        : voiceSaved ? 'custom' : '(none)';
+      updateVoiceCount();
+      updateVoiceButtons();
+    }
+    voicePresetSel.addEventListener('change', () => {
+      const name = voicePresetSel.value;
+      if (name === 'custom') { voiceText.focus(); updateVoiceButtons(); return; }
+      voiceText.value = VOICE_PRESETS[name] || '';
+      updateVoiceCount();
+      updateVoiceButtons();
+    });
+    voiceText.addEventListener('input', () => {
+      if (voiceText.value.length > PERSONALITY_MAX)
+        voiceText.value = voiceText.value.slice(0, PERSONALITY_MAX);
+      updateVoiceCount();
+      updateVoiceButtons();
+      // A hand-edit that no longer matches a preset should re-flag as custom.
+      if (voiceText.value && voicePresetSel.value !== 'custom') {
+        const match = Object.keys(VOICE_PRESETS).find((n) =>
+          n !== '(none)' && n !== 'custom' && VOICE_PRESETS[n] === voiceText.value);
+        if (!match) voicePresetSel.value = 'custom';
+      } else if (!voiceText.value) {
+        voicePresetSel.value = '(none)';
+      }
+    });
+    voiceSave.addEventListener('click', () => {
+      const text = voiceText.value.trim();
+      ApexBus.post('seatConfigPersonality', { persona: personaSel.value, text });
+      voiceSaved = text;
+      updateVoiceButtons();
+      ApexToast(personaSel.value + ': voice ' + (text ? 'saved' : 'cleared'));
+    });
+    voiceClear.addEventListener('click', () => {
+      voiceText.value = '';
+      voicePresetSel.value = '(none)';
+      updateVoiceCount();
+      updateVoiceButtons();
+      voiceText.focus();
+    });
     function render() {
       // main sends RESOLVED layers — current and default are always concrete
       const p = cfg[personaSel.value] || { current: {}, default: {} };
@@ -1753,6 +1855,7 @@ window.ApexChat = (function () {
       for (const o of permD.options)
         o.disabled = (m === 'agy' && o.value === 'auto') ||
           (m.startsWith('codex') && ['auto', 'dontAsk'].includes(o.value));
+      renderVoice(p);
     }
     personaSel.onchange = render;
     box.addEventListener('change', (e) => {
