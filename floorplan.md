@@ -322,7 +322,10 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   `deriveMilestoneStatus`, never stored anywhere).
 - A step signals completion by ending its final message with one fenced
   ```apex-handoff``` JSON block: `status done | needs-decision | bounce`,
-  plus summary/findings/decision/artifacts. The content is UNTRUSTED —
+  plus summary/verified/findings/decision/artifacts (`verified` = the
+  mechanical gate the step ran and its result — claimed evidence a review
+  step reads to spend its budget past what the suite proves). The content
+  is UNTRUSTED —
   `handoff.js` validates against a strict allowlist; a packet can never
   name a target, route, cwd, or permission (targets come only from the
   task's stored route).

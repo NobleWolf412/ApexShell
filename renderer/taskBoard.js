@@ -305,7 +305,8 @@
           const row = document.createElement('div');
           row.className = 'tkFoldRow';
           row.textContent = s.persona + ' [' + s.status + '] — ' +
-            (s.packet.summary || s.packet.findings || s.packet.decision || '(no text)');
+            (s.packet.summary || s.packet.findings || s.packet.decision || '(no text)') +
+            (s.packet.verified ? ' · verified: ' + s.packet.verified : '');
           fold.appendChild(row);
         }
       }

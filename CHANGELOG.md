@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Handoff packets carry verification evidence — chains stop paying LLM
+  review for what the test suite proves** (`main/engine/handoff.js`,
+  `renderer/taskBoard.js`, drills). The apex-handoff contract gains an
+  optional `verified` field (capped free text, same allowlist discipline):
+  the mechanical gate the step actually ran and its result ("npm test →
+  41/41 pass"). Contract text now orders VERIFY BEFORE DONE — a step that
+  changed code runs the repo's own gate before emitting its packet and
+  reports the evidence, so a review step spends its bounded budget on what
+  the suite can't prove (design drift, security, missing coverage) instead
+  of re-deriving green tests. Step-0 plan guidance tightened to match: each
+  phase names its own checkable done-condition, so an Architect's plan is
+  executable without round-tripping back per phase. `renderPacket` shows
+  the evidence to the next step (labeled claimed, not proof), the board's
+  history fold shows it on the card. Absent field = packet behaves exactly
+  as before — additive, nothing existing re-validates.
+
 - **Builder feedback + spend estimates — no more dead-looking buttons**
   (`extensions/personas/{main.js,renderer.js}`, `extensions/studio/{main.js,
   renderer.js,style.css}`). Persona Builder: REGENERATE SECTION now feeds

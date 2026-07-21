@@ -71,7 +71,18 @@ gate('extra keys are stripped — packets can never smuggle targets', () => {
   const v = handoff.validatePacket({ status: 'done', summary: 's',
     persona: 'Evil', route: ['x'], cwd: 'C:\\evil', permissionMode: 'bypassPermissions' }, {});
   assert.deepEqual(Object.keys(v.packet).sort(),
-    ['artifacts', 'decision', 'findings', 'plan', 'planDone', 'status', 'summary']);
+    ['artifacts', 'decision', 'findings', 'plan', 'planDone', 'status', 'summary', 'verified']);
+});
+
+gate('verified evidence survives validation and renders for the next step', () => {
+  const v = handoff.validatePacket(
+    { status: 'done', summary: 's', verified: 'npm test → 41/41 pass' }, {});
+  assert.equal(v.packet.verified, 'npm test → 41/41 pass');
+  const rendered = handoff.renderPacket(v.packet, 'Coder');
+  assert.ok(rendered.includes('Verified: npm test → 41/41 pass'));
+  // absent stays absent — no phantom "Verified:" line for steps that changed no code
+  const bare = handoff.validatePacket({ status: 'done', summary: 's' }, {});
+  assert.ok(!handoff.renderPacket(bare.packet, 'Architect').includes('Verified:'));
 });
 
 gate('each status requires its field', () => {
