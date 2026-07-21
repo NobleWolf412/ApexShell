@@ -871,6 +871,77 @@ gate('E1: a delegate task carrying a milestone slug drives the derived status op
   assert.equal(liftoff.deriveMilestoneStatus('public-beta', bus.lastList(), projectDir), 'open');
 });
 
+// ---------------- the verify gate + auto-watch ----------------
+// Fresh world with the injectable seams: a controllable verify runner (the
+// real one shells out — hermetic drills never spawn) and a watch recorder.
+tasks.dispose();
+seats = makeSeats();
+seats.personaWatch = (name) => name === 'Coder';   // seatconfig `watch: true` stand-in
+bus = makeBus();
+const verifyRuns = [];
+let verifyResult = { code: 0, tail: 'all pass' };
+const watchedSeats = [];
+tasks.register({ bus, seats, stateDir,
+  runVerify: (cmd, cwd, cb) => { verifyRuns.push({ cmd, cwd }); cb(verifyResult.code, verifyResult.tail); },
+  watchStep: (id) => watchedSeats.push(id) });
+
+gate('verify gate green: the done packet runs the command, then advances', () => {
+  verifyResult = { code: 0, tail: 'all pass' };
+  bus.send('taskCreate', { title: 'gated', cwd: repo, route: ['Architect', 'Auditor'],
+    verify: 'npm test', auto: true, start: true });
+  const seatId = seats.created[seats.created.length - 1].id;
+  assert.ok(seats.created[seats.created.length - 1].opts.kickoff.includes('VERIFY GATE'),
+    'the kickoff announces the gate');
+  const before = seats.created.length;
+  turn(seatId, { status: 'done', summary: 'planned' });
+  assert.deepEqual(verifyRuns, [{ cmd: 'npm test', cwd: repo }]);
+  assert.equal(seats.created.length, before + 1, 'green advances the chain');
+  assert.equal(seats.created[before].opts.persona, 'Auditor');
+});
+
+gate('verify gate red: the same seat is re-asked with the failure tail; its green retry advances', () => {
+  verifyRuns.length = 0;
+  verifyResult = { code: 1, tail: '2 failing' };
+  bus.send('taskCreate', { title: 'gated red', cwd: repo, route: ['Architect', 'Auditor'],
+    verify: 'npm test', auto: true, start: true });
+  const seatId = seats.created[seats.created.length - 1].id;
+  const before = seats.created.length;
+  turn(seatId, { status: 'done', summary: 'work' });
+  assert.equal(seats.created.length, before, 'no advance on red');
+  const ask = seats.commands.filter((c) => c.type === 'seatSend' && c.id === seatId)
+    .map((c) => c.text).find((t) => /VERIFY GATE RED/.test(t));
+  assert.ok(ask && ask.includes('2 failing'), 'failure tail sent back to the seat');
+  assert.equal(bus.lastList().find((x) => x.title === 'gated red').steps[0].packet, null,
+    'the failed claim is cleared — the fix must re-emit');
+  verifyResult = { code: 0, tail: 'all pass' };
+  turn(seatId, { status: 'done', summary: 'fixed' });
+  assert.equal(seats.created.length, before + 1, 'green retry advances');
+});
+
+gate('verify gate exhausts: reds past the retry budget trip the verify-failed gate', () => {
+  verifyResult = { code: 1, tail: 'still failing' };
+  bus.send('taskCreate', { title: 'gated stuck', cwd: repo, route: ['Architect', 'Auditor'],
+    verify: 'npm test', auto: true, start: true });
+  const seatId = seats.created[seats.created.length - 1].id;
+  turn(seatId, { status: 'done', summary: 'w1' });   // red → re-ask 1
+  turn(seatId, { status: 'done', summary: 'w2' });   // red → re-ask 2
+  turn(seatId, { status: 'done', summary: 'w3' });   // red → budget spent, the gate
+  const t = bus.lastList().find((x) => x.title === 'gated stuck');
+  assert.equal(t.status, 'needs-attention');
+  assert.equal(t.attention.reason, 'verify-failed');
+  verifyResult = { code: 0, tail: 'all pass' };
+});
+
+gate('auto-watch: a watch-flagged persona gets the live auditor on its chain seat', () => {
+  bus.send('taskCreate', { title: 'watched', cwd: repo, route: ['Architect', 'Coder'],
+    auto: true, start: true });
+  const archSeat = seats.created[seats.created.length - 1].id;
+  assert.equal(watchedSeats.length, 0, 'Architect is not watch-flagged');
+  turn(archSeat, { status: 'done', summary: 'planned' });
+  const coderSeat = seats.created[seats.created.length - 1].id;
+  assert.deepEqual(watchedSeats, [coderSeat], 'the Coder chain seat is watched at launch');
+});
+
 tasks.dispose();
 console.log('\nTASKBOARD DRILL: ' + passed + '/' + (passed + failed) + ' passed');
 process.exit(failed ? 1 : 0);

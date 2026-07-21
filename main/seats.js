@@ -329,6 +329,17 @@ const presetInfo = (name) => {
                letter: p.letter || null } : null;
 };
 const presetNames = () => [...presets.keys()];
+// Auto-watch opt-in (workflow layer): seatconfig `watch: true` at the persona
+// block's TOP level — same plane as tools/disallowedTools, deliberately outside
+// the current/default dial layers so set-default/reset can't clobber it.
+// tasks.js asks at chain-step launch; a missing/unparseable file reads as
+// last-good (the launchFor discipline) and absent means off — the safe default.
+const personaWatch = (name) => {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
+  catch { cfg = lastGoodCfg || {}; }
+  return !!(cfg[name] && cfg[name].watch === true);
+};
 const seatCommand = (msg) => { if (host) host.handle(msg); };
 const seatEntry = (id) => host ? host.list().find((s) => s.id === id) || null : null;
 /** All live seats — the workflow layer uses this to find reuse candidates so a
@@ -842,6 +853,7 @@ module.exports = {
   startDisposable,
   presetInfo,
   presetNames,
+  personaWatch,
   seatCommand,
   seatEntry,
   listSeats,

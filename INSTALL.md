@@ -80,7 +80,8 @@ rarely hand-edit it — but here is its whole shape:
     "default": { "model": "fable", "effort": "high", "permissions": "manual" },
     "current": { "model": "fable", "effort": "high", "permissions": "manual" },
     "tools": "Read,Glob,Grep,WebSearch,WebFetch,Write,Bash,TodoWrite",
-    "disallowedTools": "mcp__serena__replace_symbol_body,mcp__serena__rename_symbol"
+    "disallowedTools": "mcp__serena__replace_symbol_body,mcp__serena__rename_symbol",
+    "watch": true                               // auto-watch: live auditor on this persona's chain steps
   }
 }
 ```
@@ -95,6 +96,11 @@ rarely hand-edit it — but here is its whole shape:
   read-only wall. `tools` is the CLI's built-in allowlist; `disallowedTools`
   is hard deny-rules and is the only lever that reaches MCP tools. Omit both
   for a full-toolset persona.
+- **`watch`** (top-level per persona, optional): auto-watch. `true` = whenever
+  a Task Board chain step launches this persona, the live auditor is flipped
+  on for that seat automatically (and off again when the step wraps). Meant
+  for implementer personas (Coder) so drift is caught mid-step without a
+  full review hand-off; the manual 👁 toggle is unaffected.
 
 ## 5. Wire the AI lanes — one guide per lane, connect/
 

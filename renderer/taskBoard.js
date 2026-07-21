@@ -24,6 +24,8 @@
     '<div class="tkRow"><input class="tkCwdIn" type="text" placeholder="repo folder (absolute path)" ' +
       'title="which repo this task works in — its seats launch here, and the task groups under this repo on the board">' +
       '<button class="tkBrowse" type="button" title="pick a folder">BROWSE</button></div>' +
+    '<input class="tkVerifyIn" type="text" maxlength="500" placeholder="verify command (optional — e.g. npm test)" ' +
+      'title="the verify gate: this command runs in the repo before every hand-off, and a done packet only advances the chain after it exits 0 — leave empty for no gate">' +
     '<div class="tkRow"><select class="tkRouteSel" title="a saved persona sequence — picking one fills the chips below">' +
       '<option value="">route template…</option></select>' +
       '<select class="tkPersonaSel" title="append a persona to the route — the task visits them in this order">' +
@@ -39,6 +41,7 @@
       '<button class="tkCancel" type="button" title="close the form without creating anything">cancel</button></div>';
   const titleIn = form.querySelector('.tkTitleIn');
   const cwdIn = form.querySelector('.tkCwdIn');
+  const verifyIn = form.querySelector('.tkVerifyIn');
   const routeSel = form.querySelector('.tkRouteSel');
   const personaSel = form.querySelector('.tkPersonaSel');
   const chipsEl = form.querySelector('.tkChips');
@@ -109,11 +112,11 @@
   // repo prefills from the focused chat's cwd — the common case is title → CREATE.
   const readLast = () => { try { return JSON.parse(localStorage.getItem('apex.task.last')) || {}; } catch { return {}; } };
   form.querySelector('.tkCreate').onclick = () => {
-    try { localStorage.setItem('apex.task.last', JSON.stringify({ cwd: cwdIn.value, route: chips.slice() })); }
+    try { localStorage.setItem('apex.task.last', JSON.stringify({ cwd: cwdIn.value, route: chips.slice(), verify: verifyIn.value })); }
     catch { /* remembering is best-effort */ }
     ApexBus.post('taskCreate', {
       title: titleIn.value, cwd: cwdIn.value, route: chips.slice(),
-      auto: autoIn.checked, start: true,
+      verify: verifyIn.value, auto: autoIn.checked, start: true,
     });
     // clear so reopening NEW TASK doesn't show the just-created title and invite
     // a duplicate (repo + route intentionally persist as the remembered defaults)
@@ -132,6 +135,7 @@
         chips = last.route.filter((p) => typeof p === 'string').slice(0, 8);
         renderChips();
       }
+      if (!verifyIn.value && typeof last.verify === 'string') verifyIn.value = last.verify;
       titleIn.focus();
     }
   };
@@ -150,7 +154,8 @@
     if (s.status === 'running') {
       bits.push(s.startedAt ? 'running ' + AGE(s.startedAt) : 'running');
       if (s.waiting === 'permission') bits.push('waiting on a permission');
-      else if (s.packet) bits.push('packet ✓ (' + s.packet.status + ')');
+      else if (s.verifyRunning) bits.push('verify gate running…');
+      else if (s.packet) bits.push('packet ✓ (' + s.packet.status + ')' + (s.verifyOk ? ' · verified ✓' : ''));
       else if (s.packetError) bits.push(s.packetError === 'no-packet' ? 'no packet yet' : s.packetError);
     } else bits.push(s.status);
     return bits.join(' · ');

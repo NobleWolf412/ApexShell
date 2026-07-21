@@ -105,6 +105,24 @@ function startWatch(id) {
   bus.post('auditState', { id, on: true, count: watched.get(id).count });
 }
 
+/** Workflow-layer seam (main/tasks.js): watch a chain step's seat — the
+ *  auto-watch a persona opts into via seatconfig `watch: true`. Sets chainOk
+ *  so runAudit's chain-seat suppression doesn't mute the very watch the chain
+ *  itself asked for; the manual 👁 on a chain seat stays suppressed as before.
+ *  No toast (chains flip these on routinely — the 👁 chip is the signal), and
+ *  no stop counterpart needed: the step's seat closes at wrap and seatGone
+ *  stops the watch. */
+function watchStep(id) {
+  let w = watched.get(id);
+  if (!w) {
+    w = { turns: [], curAssistant: '', timer: null, running: false,
+          controller: null, count: 0, estTokens: 0, chainOk: true };
+    watched.set(id, w);
+    seedFromTranscript(id, w);
+  } else w.chainOk = true;
+  bus.post('auditState', { id, on: true, count: w.count });
+}
+
 // Seed a fresh watch from the seat's on-disk transcript so the auditor sees
 // what happened BEFORE the watch was flipped on (the same backfill a resume
 // uses; kickoffs are already filtered out). Claude lane only — codex threads
@@ -181,8 +199,10 @@ function runAudit(id) {
   // it pending; finish() reschedules so the seat is re-reviewed (audit M6).
   if (w.running) { w.pending = true; return; }
   // suppress on chain steps — the Task Board chain has its own audit gate, no
-  // point double-billing the same work.
-  if (isChainSeat(id)) {
+  // point double-billing the same work. Exception: a watch the chain machinery
+  // itself started (watchStep — persona opted in via seatconfig `watch: true`)
+  // exists precisely to review chain turns, so chainOk passes.
+  if (!w.chainOk && isChainSeat(id)) {
     bus.post('auditFindings', { id, findings: [], error: null, count: w.count,
       estTokens: w.estTokens || 0, suppressed: true });
     return;
@@ -239,4 +259,4 @@ function dispose() {
   for (const id of [...watched.keys()]) stopWatch(id, 'gone');
 }
 
-module.exports = { register, dispose };
+module.exports = { register, dispose, watchStep };

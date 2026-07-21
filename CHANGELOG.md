@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **The verify gate + auto-watch — the chain proves its own work**
+  (`main/tasks.js`, `main/audit.js`, `main/seats.js`, `renderer/taskBoard.js`,
+  drills). Two closures of the honor-system gap the `verified` field left
+  open. (1) A task may carry a **verify command** (new form field, optional,
+  task-stored — never packet-carried, same allowlist law as targets): every
+  done-flow path now converges on `verifyThenAdvance`, which runs the command
+  in the task cwd (injectable `runVerify` seam for the hermetic drill; real
+  runner is child_process.exec, 10-min timeout) and only advances on exit 0.
+  Red clears the claim and re-asks the SAME seat with the failure tail
+  (2 tries, then a `verify-failed` gate); the kickoff announces the gate so
+  seats plan around it. (2) **Auto-watch**: seatconfig `watch: true` at a
+  persona block's top level (beside tools/disallowedTools) flips the live
+  auditor onto that persona's chain-step seats at launch via a new
+  `audit.watchStep` seam — with a `chainOk` flag that bypasses the
+  chain-seat suppression (which exists to stop double-billing the MANUAL 👁,
+  not the watch the chain itself asked for). The watch stops for free when
+  the step wraps and its seat closes. Gates: taskboard drill 56 (verify
+  green/red-retry/exhaustion + watch-at-launch), audit drill 19 (chainOk
+  bypass + seatGone cleanup).
 - **Handoff packets carry verification evidence — chains stop paying LLM
   review for what the test suite proves** (`main/engine/handoff.js`,
   `renderer/taskBoard.js`, drills). The apex-handoff contract gains an

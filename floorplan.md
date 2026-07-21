@@ -329,6 +329,19 @@ pane) + `main/engine/handoff.js` (pure packet contract).
   `handoff.js` validates against a strict allowlist; a packet can never
   name a target, route, cwd, or permission (targets come only from the
   task's stored route).
+- **The verify gate** (optional, per task): `task.verify` stores a shell
+  command (user input at creation / taskUpdate — NEVER packet-carried, same
+  law as targets). Every done-flow path converges on `verifyThenAdvance`:
+  the command runs in the task cwd (injectable `runVerify`, default
+  child_process.exec, 10-min timeout) and only exit 0 advances. Red clears
+  the claim and re-asks the SAME seat with the output tail (budgeted,
+  2 tries, then the `verify-failed` gate). Mechanical proof over the
+  packet's claimed `verified` evidence.
+- **Auto-watch** (per persona): seatconfig `watch: true` (top-level in the
+  persona block, beside tools/disallowedTools) flips the live auditor onto
+  that persona's chain-step seats at launch (`maybeWatch` →
+  `audit.watchStep`, chainOk — see the live auditor section); the watch dies
+  with the seat at wrap+close.
 - **Manual tasks**: the packet lands on the card; Delegate → advances.
   **Auto tasks** (`auto` flag): done → wrap+close the seat, launch the next
   step unasked; bounce → resume the PREVIOUS step's session with the
@@ -375,6 +388,11 @@ pane) + `main/engine/handoff.js` (pure packet contract).
 - Cost-bounded: cheap model, ~4s debounce, small window, opt-in only. The
   auditor sees the transcript ONLY, never the watched persona's memory —
   independence, same principle as the delegation audit step.
+- Chain seats are SUPPRESSED under the manual 👁 (the chain has its own audit
+  step — no double-billing) — EXCEPT a watch the chain machinery itself
+  started (`watchStep`, the auto-watch a persona opts into via seatconfig
+  `watch: true`): that one sets chainOk and reviews chain turns, because
+  mid-step drift-catching is its entire purpose.
 - Findings render as severity cards (risk/warn/info) with "send to chat"
   (drops into the seat's composer via `ApexChat.fillComposer`) and dismiss; a
   👁 chip marks a watched tab.

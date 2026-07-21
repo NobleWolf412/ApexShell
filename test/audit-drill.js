@@ -168,6 +168,20 @@ const lastOf = (type) => [...posts].reverse().find((p) => p.type === type);
     chainSeats.delete('sc'); handlers.auditToggle({ id: 'sc', on: false });
   });
 
+  await agate('watchStep (auto-watch): a chain seat the chain ITSELF watches is audited', async () => {
+    auditMod.watchStep('cw');
+    chainSeats.add('cw');
+    assert.equal(lastOf('auditState').m.on, true);
+    posts.length = 0; disposables.length = 0;
+    emit('cw', { type: 'text', text: 'chain step work' });
+    emit('cw', { type: 'result', ok: true });
+    await new Promise((r) => setTimeout(r, 4300));
+    assert.equal(disposables.length, 1, 'chainOk bypasses the chain suppression');
+    chainSeats.delete('cw');
+    observer({ type: 'seatGone', id: 'cw' });   // wrap+close stops the watch for free
+    assert.equal(lastOf('auditState').m.on, false);
+  });
+
   await agate('a fresh watch seeds its window from the seat transcript', async () => {
     // plant a real transcript where backfill looks: ~/.claude/projects/<any>/<session>.jsonl
     const os = require('os');

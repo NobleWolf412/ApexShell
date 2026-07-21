@@ -13,6 +13,7 @@
 // context) while every review step is always a fresh seat.
 'use strict';
 
+const cp = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const store = require('./store');
@@ -30,6 +31,14 @@ const TEXT_TAIL_CAP = 64 * 1024;   // per-turn text accumulator (keep the tail)
 // backstop (main/consult.js BACKSTOP_MS).
 const WRAP_BACKSTOP_MS = 120000;
 const MAX_ROUTE = 8;
+// The verify gate: a task may carry a shell command (task.verify — stored on
+// the task, NEVER packet-carried, same allowlist law as targets) that must
+// exit 0 before any done packet advances the chain. Mechanical truth over
+// claimed truth: the packet's `verified` field is evidence, this is proof.
+const VERIFY_TIMEOUT_MS = 600000;   // a real suite can take minutes; a hung one must not wedge the chain
+const VERIFY_CMD_CAP = 500;
+const VERIFY_TAIL_CAP = 2000;       // failure output shown to the fixing seat (keep the tail)
+const MAX_VERIFY_TRIES = 2;         // red → re-ask the same seat, twice, then the gate
 
 // Gates — every reason the chain stops for the user.
 // malformed-packet | no-packet | step-error | decision | bounce-limit | complete
@@ -140,6 +149,10 @@ function composeTaskBody(task, stepIndex) {
       '--- BEGIN PROJECT.md ---', task.brief, '--- END PROJECT.md ---');
   }
   lines.push('You are step ' + (stepIndex + 1) + ' of ' + total + ' on the route: ' + routeStr + '.');
+  // seats plan around the gate when they know it exists — no surprise reds
+  if (task.verify)
+    lines.push('VERIFY GATE: `' + task.verify + '` runs before every hand-off — ' +
+      'a done packet only advances the chain after it exits 0.');
   // reviewers see the bounce budget so they spend it on blockers, not polish
   if (stepIndex > 0)
     lines.push('Bounce budget: ' + (task.bounces || 0) + ' of ' + (task.maxBounces || 2) +
@@ -397,6 +410,7 @@ function startStep(task) {
                           sessionId: (entry && entry.sessionId) || null,
                           packet: null, packetError: null, repairSent: false, delegateWanted: false,
                           fromRail: true, reused: true,
+                          verifyOk: false, verifyTries: 0, verifyRunning: false,
                           startedAt: now(), endedAt: 0, waiting: null });
     const text = composeTaskBody(task, task.currentStep);
     api.seats.seatCommand({ type: 'seatSend', id: reuseId, text });
@@ -421,10 +435,12 @@ function startStep(task) {
     return;
   }
   bindings.set(seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+  maybeWatch(step.persona, seatId);
   // NOTE: fromRail is deliberately not in this Object.assign — the flag is
   // creation-time and immutable. A fresh createTaskSeat step is never rail.
   Object.assign(step, { status: 'running', seatId, sessionId: null, packet: null,
                         packetError: null, repairSent: false, delegateWanted: false,
+                        verifyOk: false, verifyTries: 0, verifyRunning: false,
                         startedAt: now(), endedAt: 0, waiting: null });
   task.status = 'running';
   task.attention = null;
@@ -460,6 +476,104 @@ function releaseWrap(seatId) {
   wraps.delete(seatId);
   bindings.delete(seatId);
   // deliberately no closeSeat — the rail chat stays alive for the user.
+}
+
+// ---------- the verify gate ----------
+// Every done-flow path converges here instead of calling advance() directly:
+// with no task.verify (or a green already recorded for THIS packet) it is a
+// plain advance; otherwise the command runs first and only exit 0 advances.
+function verifyThenAdvance(task) {
+  const step = task.steps[task.currentStep];
+  if (!task.verify || !step || step.verifyOk) { advance(task); return; }
+  if (step.verifyRunning) return;   // a run is in flight — it advances on green
+  runVerifyGate(task);
+}
+
+function defaultRunVerify(cmd, cwd, cb) {
+  let settled = false;
+  const finish = (code, tail) => { if (!settled) { settled = true; cb(code, tail); } };
+  try {
+    cp.exec(cmd, { cwd, timeout: VERIFY_TIMEOUT_MS, windowsHide: true,
+                   maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      // a timeout kill leaves err.code null — still red, still exit-coded
+      const code = err ? (Number.isInteger(err.code) ? err.code : 1) : 0;
+      const tail = (String(stdout || '') + '\n' + String(stderr || '')).trim().slice(-VERIFY_TAIL_CAP);
+      finish(code, err && err.killed ? '(timed out after ' + VERIFY_TIMEOUT_MS / 1000 + 's)\n' + tail : tail);
+    });
+  } catch (e) { finish(1, e.message); }
+}
+
+function verifyFailText(task, code, tail, canBounce) {
+  return [
+    '<apex-task id="' + task.id + '">',
+    'VERIFY GATE RED: `' + task.verify + '` exited ' + code + ' in ' + task.cwd + '.',
+    tail ? 'Output tail:\n--- BEGIN OUTPUT ---\n' + tail + '\n--- END OUTPUT ---' : '(no output captured)',
+    'The chain does not advance on red. Fix the failure, re-run the command until it',
+    'is green, then re-emit your apex-handoff packet with the result in "verified".',
+    handoff.contractText(canBounce),
+    '</apex-task>',
+  ].join('\n');
+}
+
+function runVerifyGate(task) {
+  const stepIndex = task.currentStep;
+  const step = task.steps[stepIndex];
+  const packetAtStart = step.packet;
+  step.verifyRunning = true;
+  toast('verify gate: running `' + task.verify + '` for "' + task.title + '"');
+  publish();
+  api.runVerify(task.verify, task.cwd, (code, tail) => {
+    // Async re-validation: the world may have moved while the command ran —
+    // task deleted, step retried/bounced, a newer packet superseding this one.
+    if (byId(task.id) !== task) return;
+    if (task.currentStep !== stepIndex || task.steps[stepIndex] !== step) return;
+    // superseded: a newer packet owns the verify flags now (its own run may be
+    // in flight) — this result is history, touch nothing
+    if (step.packet !== packetAtStart) return;
+    step.verifyRunning = false;
+    if (code === 0) {
+      step.verifyOk = true;   // keyed to this packet — onPacket clears it on the next one
+      toast('verify gate GREEN for "' + task.title + '"');
+      // paused mid-run: park the green; taskResume re-drives the done flow
+      if (task.status === 'paused') { publish(); return; }
+      advance(task);
+      return;
+    }
+    // paused mid-run: drop the red quietly — resume re-runs the gate fresh
+    if (task.status === 'paused') { publish(); return; }
+    step.verifyTries = (step.verifyTries || 0) + 1;
+    const seatAlive = step.seatId != null && api.seats.seatEntry(step.seatId)
+      && bindings.has(step.seatId);
+    if (seatAlive && step.verifyTries <= MAX_VERIFY_TRIES) {
+      // clear the failed claim so the fix's fresh packet re-enters the flow
+      step.packet = null;
+      step.packetError = null;
+      // manual lane: the user already said advance — the fix's packet should
+      // carry that intent through without another click
+      if (!task.auto) step.delegateWanted = true;
+      const text = verifyFailText(task, code, tail, stepIndex > 0);
+      api.seats.seatCommand({ type: 'seatSend', id: step.seatId, text });
+      api.bus.post('seatEvt', { id: step.seatId, m: { type: 'user', text } });
+      toast('verify gate RED (exit ' + code + ') — asked ' + step.persona + ' to fix it');
+      publish();
+      return;
+    }
+    attention(task, 'verify-failed', '`' + task.verify + '` exited ' + code +
+      (seatAlive ? ' after ' + step.verifyTries + ' attempt' + (step.verifyTries === 1 ? '' : 's') +
+                   ' — fix in its chat, or Retry'
+                 : ' and the seat is closed — Retry relaunches the step'));
+  });
+}
+
+// Auto-watch: flip the live auditor onto a chain step whose persona opted in
+// (seatconfig `watch: true` — see seats.js personaWatch). Best-effort and
+// guarded: the drill's stubbed seats seam has no personaWatch, and headless
+// runs have no audit module registered.
+function maybeWatch(persona, seatId) {
+  try {
+    if (typeof api.seats.personaWatch !== 'function' || !api.seats.personaWatch(persona)) return;
+    api.watchStep(seatId);
+  } catch { /* the watch is a bonus, never a launch blocker */ }
 }
 
 function advance(task) {
@@ -570,6 +684,7 @@ function bounce(task, fromIndex, packet) {
       });
       prev.seatId = seatId;
       bindings.set(seatId, { taskId: task.id, stepIndex: task.currentStep, buf: '' });
+      maybeWatch(prev.persona, seatId);
       const text = bounceText(task, from.persona, packet, task.currentStep);
       api.seats.seatCommand({ type: 'seatSend', id: seatId, text });
       // seatSend never echoes (the view draws its own bubble at send time) —
@@ -590,6 +705,9 @@ function onPacket(task, stepIndex, packet) {
   const step = task.steps[stepIndex];
   step.packet = packet;
   step.packetError = null;
+  // verify green is keyed to a packet, not a step — new claim, new proof
+  step.verifyOk = false;
+  step.verifyRunning = false;
   task.updatedAt = now();
   // fold the packet's plan into the task checklist (dedup, capped) and mark
   // what this step reports finished — the board renders it as the todo list
@@ -633,12 +751,12 @@ function onPacket(task, stepIndex, packet) {
     return;
   }
   // done
-  if (task.auto) { advance(task); return; }
+  if (task.auto) { verifyThenAdvance(task); return; }
   if (step.delegateWanted) {
     // the user already said Delegate — the packet was the only thing missing
     step.delegateWanted = false;
     toast('task "' + task.title + '": ' + step.persona + '\'s packet landed — handing off');
-    advance(task);
+    verifyThenAdvance(task);
     return;
   }
   toast('task "' + task.title + '": ' + step.persona + ' finished — ready to delegate');
@@ -812,6 +930,9 @@ function taskCreate(msg) {
   // step 0's kickoff only (composeTaskBody). Capped well above any real
   // canonical's size; absent for every existing caller.
   const brief = typeof msg.brief === 'string' ? msg.brief.trim().slice(0, 20000) : '';
+  // The verify gate command — stored on the TASK (user input), never accepted
+  // from a packet. Empty = no gate, exactly the pre-feature behavior.
+  const verify = typeof msg.verify === 'string' ? msg.verify.trim().slice(0, VERIFY_CMD_CAP) : '';
   const known = api.seats.presetNames();
   const unknown = routeSteps.filter((p) => !known.includes(p));
   if (unknown.length)
@@ -824,6 +945,7 @@ function taskCreate(msg) {
     auto: !!msg.auto,
     fromRail: false,               // explicit: non-rail chain (see assertFromRailInvariant)
     brief,
+    verify,
     route: routeSteps.map((persona) => ({ persona })),
     currentStep: 0,
     bounces: 0,
@@ -938,7 +1060,7 @@ function taskDelegate(msg) {
                         : 'its seat is closed' });
     return;
   }
-  advance(task);
+  verifyThenAdvance(task);
 }
 
 function taskRetry(msg) {
@@ -971,7 +1093,8 @@ function taskRetry(msg) {
     api.seats.closeSeat(step.seatId);
   }
   Object.assign(step, { seatId: null, packet: null, packetError: null,
-                        repairSent: false, delegateWanted: false, waiting: null });
+                        repairSent: false, delegateWanted: false, waiting: null,
+                        verifyOk: false, verifyTries: 0, verifyRunning: false });
   startStep(task);
 }
 
@@ -999,7 +1122,7 @@ function taskResume(msg) {
       attention(task, 'decision', step.packet.decision); return;
     }
     if (task.auto) {
-      if (step.packet.status === 'done') { advance(task); return; }
+      if (step.packet.status === 'done') { verifyThenAdvance(task); return; }
       if (step.packet.status === 'bounce') { bounce(task, task.currentStep, step.packet); return; }
     }
   }
@@ -1013,6 +1136,8 @@ function taskUpdate(msg) {
   if (typeof msg.patch.title === 'string' && msg.patch.title.trim())
     task.title = msg.patch.title.trim().slice(0, 200);
   if (typeof msg.patch.auto === 'boolean') task.auto = msg.patch.auto;
+  if (typeof msg.patch.verify === 'string')   // '' clears the gate
+    task.verify = msg.patch.verify.trim().slice(0, VERIFY_CMD_CAP);
   task.updatedAt = now();
   publish();
 }
@@ -1144,6 +1269,10 @@ function register(deps) {
   api = {
     bus: (deps && deps.bus) || require('./bus'),
     seats: (deps && deps.seats) || require('./seats'),
+    // both injectable for the headless drill: the real runner shells out, the
+    // real watch seam lives in main/audit.js (lazy — headless never loads it)
+    runVerify: (deps && deps.runVerify) || defaultRunVerify,
+    watchStep: (deps && deps.watchStep) || ((id) => require('./audit').watchStep(id)),
   };
   const stateDir = (deps && deps.stateDir) || path.join(__dirname, '..', 'state');
   TASKS_FILE = path.join(stateDir, 'tasks.json');
