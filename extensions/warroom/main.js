@@ -77,7 +77,9 @@ function register(ctx) {
 
   // ---- one persona turn ----------------------------------------------------
   function spawnSeat(persona, model) {
-    const box = { ctrl: null, buf: '', delta: '', timer: null, pending: false };
+    // Tag the box with its session identity: a late event from a stopped/closed
+    // seat must never drive a NEWER room's turn (finishTurn ignores foreign boxes).
+    const box = { ctrl: null, buf: '', delta: '', timer: null, pending: false, roomId: room ? room.id : null };
     const onEvent = (ev) => {
       if (!ev) return;
       if (ev.type === 'delta') { box.delta += ev.text || ''; ctx.bus.post('warroomDelta', { persona, text: ev.text || '' }); }
@@ -106,7 +108,8 @@ function register(ctx) {
     if (!box.pending) return;               // stray/late event
     box.pending = false;
     if (box.timer) { clearTimeout(box.timer); box.timer = null; }
-    if (!room) return;
+    // Belongs to a stopped/replaced session? Drop it — do NOT touch the live room.
+    if (!room || box.roomId !== room.id) return;
 
     if (ok) {
       const reply = (box.buf || box.delta).trim();
@@ -174,7 +177,9 @@ function register(ctx) {
 
   function finishSession() {
     room.cards = room.session.cards.slice();
-    for (const box of Object.values(room.seats)) { try { box.ctrl.close(); } catch { /* */ } if (box.timer) clearTimeout(box.timer); }
+    // Invalidate every box BEFORE closing: a controller may emit a terminal event
+    // as it closes, and a pending box must not resurrect into finishTurn.
+    for (const box of Object.values(room.seats)) { box.pending = false; try { box.ctrl.close(); } catch { /* */ } if (box.timer) clearTimeout(box.timer); }
     const file = writeReport();
     persist();
     postStatus();
