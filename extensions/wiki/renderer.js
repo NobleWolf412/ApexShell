@@ -44,7 +44,8 @@
         '<div class="wikiList"></div>' +
         '<pre class="wikiView" hidden></pre>' +
       '</section>' +
-    '</div>';
+    '</div>' +
+    '<div class="dockTab" data-tab="wiki">WIKI</div>';   // pull-handle: shell.js attachPull needs this
   document.body.appendChild(pane);
   if (window.ApexShell && ApexShell.registerDockPane) ApexShell.registerDockPane(pane, { order: 30 });
 

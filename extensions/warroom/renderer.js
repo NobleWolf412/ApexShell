@@ -65,7 +65,10 @@
         '<div class="wrReportPath"></div>' +
         '<div class="wrIdeas"></div>' +
       '</section>' +
-    '</div>';
+    '</div>' +
+    // the dock pull-handle: shell.js attachPull() binds to this; without a
+    // .dockTab element registerDockPane throws and the tab never draws.
+    '<div class="dockTab" data-tab="warroom">WAR ROOM</div>';
   document.body.appendChild(pane);
   if (window.ApexShell && ApexShell.registerDockPane) ApexShell.registerDockPane(pane, { order: 40 });
 
