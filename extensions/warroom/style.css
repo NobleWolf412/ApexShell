@@ -1,0 +1,78 @@
+/* War Room dock pane — theme-var driven; persona colors are overridable custom props. */
+.warroomPane {
+  --wr-brainstormer: #e0a458;   /* amber — the idea engine */
+  --wr-architect:    #6aa9e9;   /* blue — the builder */
+  --wr-auditor:      #5cc08a;   /* green — grounded in the code */
+  --wr-advocate:     #43bcc0;   /* teal — the value axis */
+  --wr-contrarian:   #e0736b;   /* red — the devil's advocate */
+}
+.wrBody { padding: 12px 12px 16px; overflow-y: auto; font-size: 12.5px; color: var(--text); }
+.wrKicker { font-size: 10px; letter-spacing: .12em; color: var(--faint); margin-bottom: 6px; }
+.wrNote { font-size: 11px; line-height: 1.45; color: var(--dim); margin: 0 0 12px; }
+
+.wrCard { background: var(--surface); border: 1px solid var(--edge); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+.wrLabel { font-size: 10px; letter-spacing: .1em; color: var(--faint); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+
+.wrRow { display: flex; gap: 6px; align-items: center; }
+.wrBtn { border: 1px solid var(--edge); background: var(--bg); color: var(--dim); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; }
+.wrBtn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.wrBtn:disabled { opacity: .4; cursor: default; }
+.wrStart { width: 100%; margin-top: 8px; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--text); border-color: var(--accent); }
+.wrStop { color: var(--warning); border-color: var(--warning); }
+.wrRepo { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.wrBody input, .wrBody textarea, .wrBody select {
+  box-sizing: border-box; background: var(--bg); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 6px 8px; font: inherit; outline: none;
+}
+.wrBody textarea, .wrTopic, .wrCtxFiles { width: 100%; margin-bottom: 6px; resize: vertical; }
+.wrBody input:focus, .wrBody textarea:focus, .wrBody select:focus { border-color: var(--accent); }
+
+.wrConfig { margin: 6px 0; padding: 8px; border: 1px dashed var(--edge); border-radius: 6px; }
+.wrCfgRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 11.5px; color: var(--dim); }
+.wrCfgRow select, .wrCfgRow input { flex: 0 0 auto; width: 46%; margin: 0; }
+
+.wrStrip { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.wrPips { display: flex; gap: 4px; flex: 1; }
+.wrPip { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); border: 1px solid var(--edge); border-radius: 4px; padding: 2px 5px; }
+.wrPip.wr-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.wrMeter { position: relative; width: 92px; height: 16px; border: 1px solid var(--edge); border-radius: 4px; overflow: hidden; background: var(--bg); }
+.wrMeterFill { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, var(--accent) 40%, transparent); transition: width .3s; }
+.wrMeterFill.wr-hot { background: color-mix(in srgb, var(--warning) 50%, transparent); }
+.wrMeterTx { position: relative; display: block; text-align: center; font-size: 9.5px; line-height: 16px; color: var(--text); }
+
+.wrStream { max-height: 300px; overflow-y: auto; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.wrMsg { border-left: 3px solid var(--edge); padding: 2px 0 2px 8px; }
+.wrMsg[data-persona="brainstormer"] { border-color: var(--wr-brainstormer); }
+.wrMsg[data-persona="architect"]   { border-color: var(--wr-architect); }
+.wrMsg[data-persona="auditor"]      { border-color: var(--wr-auditor); }
+.wrMsg[data-persona="advocate"]     { border-color: var(--wr-advocate); }
+.wrMsg[data-persona="contrarian"]   { border-color: var(--wr-contrarian); }
+.wrMsg[data-persona="operator"]     { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.wrWho { display: block; font-size: 10.5px; letter-spacing: .04em; margin-bottom: 2px; }
+.wrMsg[data-persona="brainstormer"] .wrWho { color: var(--wr-brainstormer); }
+.wrMsg[data-persona="architect"] .wrWho   { color: var(--wr-architect); }
+.wrMsg[data-persona="auditor"] .wrWho      { color: var(--wr-auditor); }
+.wrMsg[data-persona="advocate"] .wrWho     { color: var(--wr-advocate); }
+.wrMsg[data-persona="contrarian"] .wrWho   { color: var(--wr-contrarian); }
+.wrTx { font-size: 12px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.wrMsg.wr-cur .wrTx::after { content: '▍'; color: var(--accent); animation: wrBlink 1s steps(2) infinite; }
+@keyframes wrBlink { 50% { opacity: 0; } }
+
+.wrSayRow { margin-top: 4px; }
+.wrSay { flex: 1; margin: 0; }
+
+.wrReportPath { font-size: 10px; color: var(--faint); margin-bottom: 6px; word-break: break-all; }
+.wrIdeas { display: flex; flex-direction: column; gap: 8px; }
+.wrIdea { border: 1px solid var(--edge); border-radius: 6px; padding: 8px; }
+.wrIdea.wr-approved { border-color: var(--wr-auditor); background: color-mix(in srgb, var(--wr-auditor) 8%, transparent); }
+.wrIdea.wr-dismissed { opacity: .5; }
+.wrIdeaHead { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.wrIdeaHead b { font-size: 12.5px; color: var(--text); }
+.wrBadges { display: flex; gap: 4px; flex: 0 0 auto; }
+.wrBadge { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); border: 1px solid var(--edge); border-radius: 3px; padding: 1px 4px; }
+.wrPitch { font-size: 12px; line-height: 1.45; color: var(--text); margin: 5px 0; }
+.wrMeta { font-size: 10.5px; color: var(--dim); line-height: 1.4; margin-top: 2px; }
+.wrChamps { color: var(--faint); }
+.wrIdeaBtns { margin-top: 6px; }
+.wrEmpty { font-size: 11px; color: var(--faint); padding: 4px 2px; }
