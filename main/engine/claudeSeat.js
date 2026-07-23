@@ -83,9 +83,15 @@ function buildArgs({ resume, model, effort, permissionMode, noSessionPersistence
   if (resume) args.push('--resume', resume);
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
-  // ALWAYS explicit (J21/J28) — and the fallback is `manual`, never a
-  // don't-ask mode. The shipped-`auto` default was R20's whole story.
-  args.push('--permission-mode', permissionMode || 'manual');
+  // ALWAYS explicit (J21/J28) — and the fallback is the prompt-for-everything
+  // mode, never a don't-ask mode. The shipped-`auto` default was R20's whole story.
+  // CLI-compat: newer `claude` renamed the old `manual` mode to `default` and now
+  // REJECTS `manual` (breaking every disposable seat, which hardcodes it). Apex
+  // still speaks `manual` internally (dials, seatconfig, launchFor fallback), so
+  // translate here at the CLI boundary. Every other Apex mode — auto / acceptEdits
+  // / dontAsk / bypassPermissions — is already a valid CLI value and passes through.
+  const cliMode = (permissionMode && permissionMode !== 'manual') ? permissionMode : 'default';
+  args.push('--permission-mode', cliMode);
   return args;
 }
 
