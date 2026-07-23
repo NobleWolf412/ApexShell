@@ -69,7 +69,9 @@
     // the dock pull-handle: shell.js attachPull() binds to this; without a
     // .dockTab element registerDockPane throws and the tab never draws.
     '<div class="dockTab" data-tab="warroom">WAR ROOM</div>';
-  document.body.appendChild(pane);
+  // Do NOT pre-parent: registerDockPane inserts the pane into .sideWrap itself
+  // (only when it has no parent). Appending to body first strands it in the wrong
+  // container and the absolutely-positioned tab misaligns over its neighbour.
   if (window.ApexShell && ApexShell.registerDockPane) ApexShell.registerDockPane(pane, { order: 40 });
 
   const $ = (s) => pane.querySelector(s);

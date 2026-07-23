@@ -46,7 +46,8 @@
       '</section>' +
     '</div>' +
     '<div class="dockTab" data-tab="wiki">WIKI</div>';   // pull-handle: shell.js attachPull needs this
-  document.body.appendChild(pane);
+  // registerDockPane inserts into .sideWrap itself; pre-appending to body strands
+  // the pane in the wrong container and misaligns its dock tab.
   if (window.ApexShell && ApexShell.registerDockPane) ApexShell.registerDockPane(pane, { order: 30 });
 
   const $ = (s) => pane.querySelector(s);
