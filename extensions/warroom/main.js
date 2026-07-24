@@ -267,6 +267,8 @@ function register(ctx) {
     card.status = m.status === 'approved' ? 'approved' : m.status === 'dismissed' ? 'dismissed' : 'proposed';
     persist();
     postStatus();
+    const verb = card.status === 'approved' ? 'Approved' : card.status === 'dismissed' ? 'Dismissed' : 'Cleared';
+    ctx.bus.post('toast', { text: verb + ': ' + card.title });
   });
 
   ctx.bus.on('warroomExport', () => {

@@ -61,7 +61,10 @@
       '</section>' +
 
       '<section class="wrCard wrIdeasCard" hidden>' +
-        '<div class="wrLabel">IDEAS <button class="wrBtn wrReport" type="button">Write report</button></div>' +
+        '<div class="wrLabel"><span class="wrIdeasCount">IDEAS</span>' +
+          '<span class="wrIdeasTools">' +
+            '<button class="wrBtn wrFilter" type="button" title="show only the ideas you approved">Approved only</button>' +
+            '<button class="wrBtn wrReport" type="button">Write report</button></span></div>' +
         '<div class="wrReportPath"></div>' +
         '<div class="wrIdeas"></div>' +
       '</section>' +
@@ -81,6 +84,7 @@
   const liveCard = $('.wrLiveCard'), pipsEl = $('.wrPips'), streamEl = $('.wrStream');
   const meterFill = $('.wrMeterFill'), meterTx = $('.wrMeterTx');
   const ideasCard = $('.wrIdeasCard'), ideasEl = $('.wrIdeas'), reportPathEl = $('.wrReportPath');
+  const countEl = $('.wrIdeasCount'), filterBtn = $('.wrFilter');
   const sayEl = $('.wrSay');
 
   for (const sel of $$('.wrM')) {
@@ -109,6 +113,7 @@
   $('.wrWrap').onclick = () => ApexBus.post('warroomWrapup', {});
   $('.wrStop').onclick = () => ApexBus.post('warroomStop', {});
   $('.wrReport').onclick = () => ApexBus.post('warroomExport', {});
+  filterBtn.onclick = () => { approvedOnly = !approvedOnly; renderIdeas(lastCards); };
   const sendSay = () => { const t = sayEl.value.trim(); if (t) { ApexBus.post('warroomSay', { text: t }); sayEl.value = ''; } };
   $('.wrSayBtn').onclick = sendSay;
   sayEl.onkeydown = (e) => { if (e.key === 'Enter') sendSay(); };
@@ -155,25 +160,39 @@
     meterFill.classList.toggle('wr-hot', pct > 85);
     meterTx.textContent = Math.round((est || 0) / 1000) + 'k / ' + Math.round((budget || 0) / 1000) + 'k';
   }
+  let approvedOnly = false;
+  let lastCards = [];
   function renderIdeas(cards, repo) {
+    lastCards = cards || [];
     ideasEl.textContent = '';
-    if (!cards || !cards.length) { ideasEl.innerHTML = '<div class="wrEmpty">No ideas yet.</div>'; return; }
-    cards.forEach((c) => {
+    const approvedN = lastCards.filter((c) => c.status === 'approved').length;
+    countEl.textContent = 'IDEAS' + (approvedN ? ' · ' + approvedN + ' approved' : '');
+    filterBtn.classList.toggle('wr-on', approvedOnly);
+    const shown = approvedOnly ? lastCards.filter((c) => c.status === 'approved') : lastCards;
+    if (!lastCards.length) { ideasEl.innerHTML = '<div class="wrEmpty">No ideas yet.</div>'; return; }
+    if (!shown.length) { ideasEl.innerHTML = '<div class="wrEmpty">No approved ideas yet — click Approve on the ones you want to keep.</div>'; return; }
+    shown.forEach((c) => {
+      const status = c.status || 'proposed';
       const card = document.createElement('div');
-      card.className = 'wrIdea wr-' + (c.status || 'proposed');
+      card.className = 'wrIdea wr-' + status;
       const badges = [c.feasibility]; if (c.exists) badges.push('exists');
+      const pill = status === 'approved' ? '<span class="wrStatusPill wr-ap">✓ Approved</span>'
+        : status === 'dismissed' ? '<span class="wrStatusPill wr-di">Dismissed</span>' : '';
       card.innerHTML =
         '<div class="wrIdeaHead"><b>' + esc(c.title) + '</b>' +
-          '<span class="wrBadges">' + badges.map((b) => '<span class="wrBadge">' + esc(b) + '</span>').join('') + '</span></div>' +
+          '<span class="wrBadges">' + pill + badges.map((b) => '<span class="wrBadge">' + esc(b) + '</span>').join('') + '</span></div>' +
         (c.pitch ? '<div class="wrPitch">' + esc(c.pitch) + '</div>' : '') +
         (c.novelty ? '<div class="wrMeta">✦ ' + esc(c.novelty) + '</div>' : '') +
         (c.evidence ? '<div class="wrMeta">⌖ ' + esc(c.evidence) + '</div>' : '') +
         '<div class="wrMeta wrChamps">argued by: ' + esc((c.champions || []).map((k) => LABEL[k] || k).join(', ')) + '</div>' +
         '<div class="wrRow wrIdeaBtns">' +
-          '<button class="wrBtn wrApprove" type="button">Approve</button>' +
-          '<button class="wrBtn wrDismiss" type="button">Dismiss</button></div>';
-      card.querySelector('.wrApprove').onclick = () => ApexBus.post('warroomIdeaStatus', { id: c.id, status: 'approved' });
-      card.querySelector('.wrDismiss').onclick = () => ApexBus.post('warroomIdeaStatus', { id: c.id, status: 'dismissed' });
+          '<button class="wrBtn wrApprove' + (status === 'approved' ? ' wr-on' : '') + '" type="button">' + (status === 'approved' ? '✓ Approved' : 'Approve') + '</button>' +
+          '<button class="wrBtn wrDismiss' + (status === 'dismissed' ? ' wr-on' : '') + '" type="button">' + (status === 'dismissed' ? 'Dismissed' : 'Dismiss') + '</button></div>';
+      // click toggles: a second click on an active verb clears it back to proposed
+      card.querySelector('.wrApprove').onclick = () =>
+        ApexBus.post('warroomIdeaStatus', { id: c.id, status: status === 'approved' ? 'proposed' : 'approved' });
+      card.querySelector('.wrDismiss').onclick = () =>
+        ApexBus.post('warroomIdeaStatus', { id: c.id, status: status === 'dismissed' ? 'proposed' : 'dismissed' });
       ideasEl.appendChild(card);
     });
   }

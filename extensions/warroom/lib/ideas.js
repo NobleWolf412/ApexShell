@@ -144,6 +144,15 @@ function renderReport({ topic, date, models, estTokens, budget, rounds, stopReas
     Math.round((budget || 0) / 1000) + 'k budget');
   if (models) L.push('- **Seats:** ' + Object.keys(models).map((k) => label(k) + ' (' + models[k] + ')').join(', '));
   L.push('');
+  // The keep-list up top: whatever the operator approved, so the report doubles
+  // as the retrieval. Omitted entirely when nothing has been approved yet.
+  const approved = ranked.filter((c) => c.status === 'approved');
+  if (approved.length) {
+    L.push('## ✅ Approved (' + approved.length + ')');
+    L.push('');
+    approved.forEach((c, i) => L.push((i + 1) + '. **' + c.title + '**' + (c.pitch ? ' — ' + c.pitch : '')));
+    L.push('');
+  }
   L.push('## Ideas (' + ranked.length + ', ranked)');
   L.push('');
   if (!ranked.length) L.push('_No ideas survived this session._');

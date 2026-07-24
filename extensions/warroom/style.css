@@ -76,3 +76,14 @@
 .wrChamps { color: var(--faint); }
 .wrIdeaBtns { margin-top: 6px; }
 .wrEmpty { font-size: 11px; color: var(--faint); padding: 4px 2px; }
+
+/* curation feedback: status pills, active verbs, the approved-only filter */
+.wrIdeasTools { display: flex; gap: 4px; }
+.wrIdeasCount { font-size: 10px; letter-spacing: .1em; color: var(--faint); }
+.wrBtn.wr-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.wrApprove.wr-on { color: var(--wr-auditor); border-color: var(--wr-auditor); background: color-mix(in srgb, var(--wr-auditor) 18%, transparent); }
+.wrStatusPill { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; border-radius: 3px; padding: 1px 5px; align-self: center; }
+.wrStatusPill.wr-ap { color: var(--wr-auditor); border: 1px solid var(--wr-auditor); }
+.wrStatusPill.wr-di { color: var(--faint); border: 1px solid var(--edge); }
+.wrIdea.wr-approved { border-color: var(--wr-auditor); background: color-mix(in srgb, var(--wr-auditor) 13%, transparent); }
+.wrIdea.wr-dismissed .wrIdeaHead b { text-decoration: line-through; }
